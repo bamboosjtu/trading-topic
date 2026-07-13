@@ -1,0 +1,70 @@
+# ─── Python ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# ─── 虚拟环境 ─────────────────────────────────────────
+.venv/
+venv/
+env/
+venv-finance/
+*venv*/
+
+# ─── Jupyter Notebook ─────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ─── IDE / 编辑器 ─────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── 操作系统 ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ─── 环境变量 & 密钥 ──────────────────────────────────
+.env
+.env.*
+*.token
+
+# ─── 实验生成文件 ────────────────────────────────────
+*.png
+*.jpg
+*.svg
+*.pdf
+
+# ─── 外部学习仓库 ────────────────────────────────────
+# quant-for-beginners 是独立克隆的 GitHub 仓库，不属于本项目
+quant-for-beginners/
+
+# ─── 数据文件 ─────────────────────────────────────────
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.csv
+*.xlsx
+*.parquet
+*.feather
+
+# ─── 日志 ─────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Claude Code ──────────────────────────────────────
+# 保留 skills 和 workflows（可团队共享）
+# 忽略本地配置和缓存
+.claude/settings.local.json
+.claude/cache/
+.claude/worktrees/
