@@ -38,12 +38,6 @@ Desktop.ini
 .env.*
 *.token
 
-# ─── 实验生成文件 ────────────────────────────────────
-*.png
-*.jpg
-*.svg
-*.pdf
-
 # ─── 外部学习仓库 ────────────────────────────────────
 # quant-for-beginners 是独立克隆的 GitHub 仓库，不属于本项目
 quant-for-beginners/

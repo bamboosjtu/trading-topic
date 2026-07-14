@@ -1,0 +1,38 @@
+{
+  "data_start": "20060101",
+  "repo_start_query": "20160101",
+  "repo_start_actual": "20160726",
+  "data_end": "20260720",
+  "stocks": {
+    "601398": "工商银行",
+    "601939": "建设银行",
+    "601288": "农业银行",
+    "601988": "中国银行",
+    "600036": "招商银行",
+    "601166": "兴业银行",
+    "600016": "民生银行"
+  },
+  "indices": {
+    "H00300": "沪深300全收益",
+    "H00905": "中证500全收益",
+    "000300": "沪深300价格",
+    "000905": "中证500价格"
+  },
+  "sources": {
+    "stock_prices": "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get",
+    "dividends": "https://vip.stock.finance.sina.com.cn/corp/go.php/vISSUE_ShareBonus/",
+    "csi_indices": "https://www.csindex.com.cn/csindex-home/perf/index-perf",
+    "repo_204001": "https://query.sse.com.cn/commonQuery.do"
+  },
+  "row_counts": {
+    "stock_prices": 32662,
+    "dividends": 167,
+    "csi_indices": 19959,
+    "repo_204001": 2423
+  },
+  "notes": [
+    "股票价格为不复权日线；分红按税前每股口径单独保存。",
+    "H00300/H00905 为中证官方全收益指数，已包含样本现金分红。",
+    "204001 为上交所一天期回购定盘利率代理，不是个体实际成交价。"
+  ]
+}

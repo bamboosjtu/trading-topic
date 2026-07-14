@@ -1,0 +1,85 @@
+{
+  "status": "passed",
+  "fixed_sample": "2020-01 to 2026-07",
+  "checks": [
+    {
+      "asset": "工商银行",
+      "price_rows": 4772,
+      "dividend_events": 22,
+      "price_only_xirr_pct": 11.108316834765144,
+      "total_return_xirr_pct": 17.238508639618814,
+      "nav_identity_max_error": 7.327471962526033e-15
+    },
+    {
+      "asset": "建设银行",
+      "price_rows": 4555,
+      "dividend_events": 22,
+      "price_only_xirr_pct": 12.645359907544302,
+      "total_return_xirr_pct": 18.874124029569423,
+      "nav_identity_max_error": 4.884981308350689e-15
+    },
+    {
+      "asset": "农业银行",
+      "price_rows": 3884,
+      "dividend_events": 18,
+      "price_only_xirr_pct": 16.977383721157562,
+      "total_return_xirr_pct": 23.53429922516435,
+      "nav_identity_max_error": 1.1546319456101628e-14
+    },
+    {
+      "asset": "中国银行",
+      "price_rows": 4855,
+      "dividend_events": 22,
+      "price_only_xirr_pct": 13.768574748456109,
+      "total_return_xirr_pct": 20.221993663806412,
+      "nav_identity_max_error": 5.329070518200751e-15
+    },
+    {
+      "asset": "招商银行",
+      "price_rows": 4932,
+      "dividend_events": 27,
+      "price_only_xirr_pct": 0.34106064329393576,
+      "total_return_xirr_pct": 5.8970965717296675,
+      "nav_identity_max_error": 9.103828801926284e-15
+    },
+    {
+      "asset": "兴业银行",
+      "price_rows": 4701,
+      "dividend_events": 21,
+      "price_only_xirr_pct": -0.020128084382400154,
+      "total_return_xirr_pct": 6.397101804035842,
+      "nav_identity_max_error": 3.774758283725532e-15
+    },
+    {
+      "asset": "民生银行",
+      "price_rows": 4963,
+      "dividend_events": 35,
+      "price_only_xirr_pct": -4.687870873891757,
+      "total_return_xirr_pct": 0.8514525747006383,
+      "nav_identity_max_error": 3.1086244689504383e-15
+    },
+    {
+      "asset": "沪深300",
+      "price_rows": 4989,
+      "dividend_events": "官方全收益指数内含",
+      "price_only_xirr_pct": 2.8805947208135887,
+      "total_return_xirr_pct": 5.496313715108838,
+      "nav_identity_max_error": 0.0
+    },
+    {
+      "asset": "中证500",
+      "price_rows": 4990,
+      "dividend_events": "官方全收益指数内含",
+      "price_only_xirr_pct": 5.5700274080833845,
+      "total_return_xirr_pct": 7.283529156223549,
+      "nav_identity_max_error": 0.0
+    }
+  ],
+  "repo": {
+    "start": "2016-07-26",
+    "end": "2026-07-20",
+    "rows": 2423,
+    "assumption": "前一交易日204001定盘利率按实际日历天数计息至下一交易日"
+  },
+  "adjustment_policy": "银行使用不复权价格加显式税前分红再投资；指数使用官方全收益指数；不使用前复权价格作为历史买入价。"
+}
