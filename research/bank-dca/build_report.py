@@ -1,4 +1,4 @@
-"""从 report/data 快照重算全部指标、图表和 Markdown 报告。"""
+"""从 research/bank-dca/data 快照重算指标、图表和 Markdown 报告。"""
 
 from __future__ import annotations
 
@@ -56,7 +56,8 @@ def load_snapshot():
     missing = [name for name in required if not (DATA_DIR / name).exists()]
     if missing:
         raise FileNotFoundError(
-            f"缺少数据快照 {missing}；请先运行 python report/data_fetch.py"
+            "缺少数据快照 "
+            f"{missing}；请先运行 python research/bank-dca/data_fetch.py"
         )
 
     stocks = pd.read_csv(DATA_DIR / "stock_prices.csv", parse_dates=["date"])
@@ -519,12 +520,12 @@ def build_markdown(fixed, audit, rolling_summary, manifest):
 
 ## 八、数据与复现
 
-- 数据获取：`report/data_fetch.py`
-- 回测引擎：`report/analysis.py`
-- 报告生成：`report/build_report.py`
-- 口径校验：`report/verify_returns.py`
-- 自动测试：`report/test_analysis.py`
-- 数据快照：`report/data/`
+- 数据获取：`research/bank-dca/data_fetch.py`
+- 回测引擎：`research/bank-dca/analysis.py`
+- 报告生成：`research/bank-dca/build_report.py`
+- 口径校验：`research/bank-dca/verify_returns.py`
+- 自动测试：`research/bank-dca/test_analysis.py`
+- 数据快照：`research/bank-dca/data/`
 
 来源：
 

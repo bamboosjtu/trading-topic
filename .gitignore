@@ -42,11 +42,9 @@ Desktop.ini
 # quant-for-beginners 是独立克隆的 GitHub 仓库，不属于本项目
 quant-for-beginners/
 
-# ─── 数据文件 ─────────────────────────────────────────
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+# ─── Lab 数据文件 ─────────────────────────────────────
+labs/data/*
+!labs/data/README.md
 *.csv
 *.xlsx
 *.parquet

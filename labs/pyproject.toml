@@ -1,0 +1,16 @@
+[project]
+name = "labs"
+version = "0.1.0"
+description = "投资研究实验室的学习实验与研究运行环境"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "akshare>=1.18.74",
+    "ccxt>=4.5.68",
+    "matplotlib>=3.11.1",
+    "mootdx>=0.11.7",
+    "notebook>=7.6.1",
+    "pandas>=3.0.5",
+    "tushare>=1.4.29",
+    "yfinance>=1.5.1",
+]

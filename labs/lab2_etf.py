@@ -9,8 +9,8 @@ lab2_etf.py — A股定投回测工具
     - 总投入、最终市值、总收益率
 
 用法：
-  python lab-scripts/lab2_etf.py 600036
-  python lab-scripts/lab2_etf.py           （交互式输入）
+  uv run --project labs python labs/lab2_etf.py 600036
+  uv run --project labs python labs/lab2_etf.py           （交互式输入）
 
 数据源：mootdx（通达信协议，前复权日线，分红再投资自动体现在前复权价格中）
 """
@@ -31,7 +31,7 @@ plt.rcParams["axes.unicode_minus"] = False
 MONTHLY_AMOUNT = 3000       # 每月定投金额（元）
 START_YM = pd.Period("2020-01", "M")
 END_YM   = pd.Period("2026-07", "M")
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 tdx = Quotes.factory(market="std")
@@ -295,7 +295,7 @@ def plot_result(code, name, daily_df, monthly_records, summary):
         ax.set_xlim(daily_df["date"].iloc[0], daily_df["date"].iloc[-1])
 
     plt.tight_layout()
-    chart_path = os.path.join(OUTPUT_DIR, "..", f"lab2_dca_{code}.png")
+    chart_path = os.path.join(OUTPUT_DIR, f"lab2_dca_{code}.png")
     plt.savefig(chart_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"\n  -> 图表已保存: lab2_dca_{code}.png")

@@ -1,6 +1,6 @@
 """
 批量回测所有银行股 — 定投收益排名
-调用 lab2_etf 的模拟引擎，遍历 data/银行股清单.csv 中所有有效银行股
+调用 lab2_etf 的模拟引擎，遍历 labs/data/银行股清单.csv 中所有有效银行股
 """
 import os
 import sys
@@ -14,7 +14,7 @@ sys.path.insert(0, SCRIPT_DIR)
 from lab2_etf import fetch_history, simulate_dca, get_stock_name, tdx
 
 # ── 加载银行股清单 ──────────────────────────────────────────
-DATA_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "data")
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 bank_csv = os.path.join(DATA_DIR, "银行股清单.csv")
 df_banks = pd.read_csv(bank_csv, dtype={"code": str})
 df_banks["code"] = df_banks["code"].str.zfill(6)
@@ -110,7 +110,7 @@ print(f"  最大回撤均值: {df_result['max_dd_pct'].mean():.1f}%")
 # 保存
 out_path = os.path.join(DATA_DIR, "银行股定投回测排名.csv")
 df_result.to_csv(out_path, index=False, encoding="utf-8-sig")
-print(f"\n  -> 排名已保存: data/银行股定投回测排名.csv")
+print(f"\n  -> 排名已保存: labs/data/银行股定投回测排名.csv")
 
 if errors:
     print(f"\n  [!] {len(errors)} 只失败:")
