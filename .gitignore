@@ -42,11 +42,13 @@ Desktop.ini
 # quant-for-beginners 是独立克隆的 GitHub 仓库，不属于本项目
 quant-for-beginners/
 
-# ─── 数据文件 ─────────────────────────────────────────
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+# ─── Lab 数据文件 ─────────────────────────────────────
+# Lab 0 共享数据（source_healthcheck 等）
+labs/data/*
+!labs/data/README.md
+# 各 Lab 子目录自带 data/，默认不入库
+labs/00_金融数据获取/data/
+labs/01_银行股定投回测/data/
 *.csv
 *.xlsx
 *.parquet
@@ -57,8 +59,10 @@ data/processed/*
 logs/
 
 # ─── Claude Code ──────────────────────────────────────
-# 保留 skills 和 workflows（可团队共享）
-# 忽略本地配置和缓存
+# 保留 workflows（可团队共享），skills 以 .agents/skills/ 为准
+# .claude/skills/ 是本地 Junction，不提交
 .claude/settings.local.json
+.claude/skills/
 .claude/cache/
 .claude/worktrees/
+.workbuddy/
