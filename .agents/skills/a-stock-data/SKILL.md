@@ -45,7 +45,7 @@ version: 3.4.0
 >
 > **V3.0 Breaking Change**：彻底移除 akshare 依赖，所有数据源改为直连 HTTP API（零第三方数据依赖，仅 mootdx 保留 TCP）。
 
-**使用方式：** 将本文件放入 `~/.Codex/skills/a-stock-data/SKILL.md`，Codex 会自动识别并在 A 股相关对话中激活。
+**仓库内使用：** 本文件以 `.agents/skills/a-stock-data/SKILL.md` 为唯一源；`.claude/skills/` 兼容入口由仓库脚本生成。
 
 ```
 行情层（实时，不封IP）
@@ -2787,7 +2787,7 @@ A: 同花顺 `stock_board_industry_summary_ths` 接口 2026 年初加了反爬 4
 ### Q: 在海外服务器跑，mootdx 接口超时？
 A: mootdx 走 TCP 直连通达信行情服务器，需国内 IP 才稳定。海外环境建议走代理。腾讯财经和百度股市通不受影响。
 
-### Q: 不用 Codex，能用吗？
+### Q: 不用 Claude Code，能用吗？
 A: 能。SKILL.md 本质是 Markdown + 内嵌 Python 代码。Codex、OpenClaw 或任何 AI 编程助手都能读取。你也可以直接把 Python 代码段复制出来在自己的脚本里跑。
 
 ---
@@ -2795,11 +2795,11 @@ A: 能。SKILL.md 本质是 Markdown + 内嵌 Python 代码。Codex、OpenClaw �
 ## 安装说明
 
 ```bash
-# 1. 创建 skill 目录
-mkdir -p ~/.Codex/skills/a-stock-data
+# 1. 在仓库外单独安装到 Claude Code 时，创建 skill 目录
+mkdir -p ~/.claude/skills/a-stock-data
 
 # 2. 将本文件复制为 SKILL.md
-cp SKILL.md ~/.Codex/skills/a-stock-data/SKILL.md
+cp SKILL.md ~/.claude/skills/a-stock-data/SKILL.md
 
 # 3. 安装 Python 依赖
 pip install mootdx requests pandas stockstats
@@ -2807,7 +2807,7 @@ pip install mootdx requests pandas stockstats
 # 4. (可选) 配置 iwencai API Key
 export IWENCAI_API_KEY="your_key_here"
 
-# 5. 启动 Codex，说"查一下688017的估值"即可自动激活
+# 5. 启动 Claude Code，说"查一下688017的估值"即可自动激活
 ```
 
 ---

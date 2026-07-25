@@ -1,11 +1,11 @@
 ---
 name: quality-screen
-description: "AI Berkshire skill: 去劣筛选：7条指标快速排除非一流公司. Source: skills/quality-screen.md."
+description: "AI Berkshire skill: 去劣筛选：7条指标快速排除非一流公司. Canonical source: .agents/skills/quality-screen/SKILL.md."
 ---
 
 ## Codex adapter note
 
-This skill is generated from `skills/quality-screen.md` so Codex and Codex users share one canonical workflow.
+The canonical repository copy is `.agents/skills/quality-screen/SKILL.md`; the generated `.claude/skills/` junction lets Claude Code and Codex use the same workflow.
 
 - Treat `$ARGUMENTS` as the user's request in the current Codex thread.
 - When the source mentions Codex-only surfaces such as Task, Agent, WebSearch, Bash, Read, or Write, use the closest Codex capability available in this session: subagents when available, web search when needed, shell commands for local tools, and normal file edits for workspace files.

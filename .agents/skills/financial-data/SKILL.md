@@ -1,11 +1,11 @@
 ---
 name: financial-data
-description: "AI Berkshire skill: 财务数据获取与交叉验证规范. Source: skills/financial-data.md."
+description: "AI Berkshire skill: 财务数据获取与交叉验证规范. Canonical source: .agents/skills/financial-data/SKILL.md."
 ---
 
 ## Codex adapter note
 
-This skill is generated from `skills/financial-data.md` so Codex and Codex users share one canonical workflow.
+The canonical repository copy is `.agents/skills/financial-data/SKILL.md`; the generated `.claude/skills/` junction lets Claude Code and Codex use the same workflow.
 
 - Treat `$ARGUMENTS` as the user's request in the current Codex thread.
 - When the source mentions Codex-only surfaces such as Task, Agent, WebSearch, Bash, Read, or Write, use the closest Codex capability available in this session: subagents when available, web search when needed, shell commands for local tools, and normal file edits for workspace files.

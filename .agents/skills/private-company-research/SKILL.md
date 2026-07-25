@@ -1,11 +1,11 @@
 ---
 name: private-company-research
-description: "AI Berkshire skill: 未上市公司研究：多Agent并行深度研究框架. Source: skills/private-company-research.md."
+description: "AI Berkshire skill: 未上市公司研究：多Agent并行深度研究框架. Canonical source: .agents/skills/private-company-research/SKILL.md."
 ---
 
 ## Codex adapter note
 
-This skill is generated from `skills/private-company-research.md` so Codex and Codex users share one canonical workflow.
+The canonical repository copy is `.agents/skills/private-company-research/SKILL.md`; the generated `.claude/skills/` junction lets Claude Code and Codex use the same workflow.
 
 - Treat `$ARGUMENTS` as the user's request in the current Codex thread.
 - When the source mentions Codex-only surfaces such as Task, Agent, WebSearch, Bash, Read, or Write, use the closest Codex capability available in this session: subagents when available, web search when needed, shell commands for local tools, and normal file edits for workspace files.

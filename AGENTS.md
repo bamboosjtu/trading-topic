@@ -22,8 +22,8 @@
 | `research/<topic>/` | 一个主题的可复现研究闭环        | 可包含小型审计快照、代码、测试、图表和报告                       |
 | `reports/`          | 面向读者的最终研究成稿         | 不放通用代码、缓存和临时数据                              |
 | `docs/product/`     | 产品需求、架构和决策记录        | 文档必须包含范围、非目标和验收标准                           |
-| `.agents/skills/`   | Codex 投资研究工作流       | 使用相关 skill 前完整阅读其 `SKILL.md`                |
-| `.claude/skills/`   | Claude 对应工作流        | 不假设与 `.agents/skills/` 自动同步                 |
+| `.agents/skills/`   | 投资研究 Skill 唯一源目录   | 受版本控制；使用相关 skill 前完整阅读其 `SKILL.md`         |
+| `.claude/skills/`   | Claude Code 本地兼容入口 | 由 `.agents/sync-claude-skills.ps1` 生成 Junction，不单独维护 |
 
 不要重新创建含义模糊的根目录 `report/`。可复现研究放入 `research/<topic>/`，最终文章放入 `reports/`。
 
@@ -104,4 +104,3 @@ Skills 是工作流，不是证据来源。即使 skill 给出了分析框架，
 - 代码输出、图表和报告关键数字一致；
 - `git diff` 只包含任务范围内的变更；
 - 最终说明列出变更、验证结果及仍未消除的风险。
-

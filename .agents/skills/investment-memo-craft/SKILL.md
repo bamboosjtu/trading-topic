@@ -1,6 +1,6 @@
 ---
 name: investment-memo-craft
-description: Codex-only writing and layout overlay for AI Berkshire investment research reports. Use whenever Codex creates, rewrites, revises, or critiques company/industry/fund research reports, especially long-form Markdown reports that need financial rigor, readable business mechanics, contrarian analysis, valuation-to-action guidance, investor-specific recommendations, restrained typography, and clear buy/hold/sell signals. Do not use this to modify Codex slash-command sources.
+description: Codex-only writing and layout overlay for AI Berkshire investment research reports. Use whenever Codex creates, rewrites, revises, or critiques company/industry/fund research reports, especially long-form Markdown reports that need financial rigor, readable business mechanics, contrarian analysis, valuation-to-action guidance, investor-specific recommendations, restrained typography, and clear buy/hold/sell signals. Do not use this to modify Claude Code slash-command sources.
 ---
 
 # Investment Memo Craft
@@ -13,7 +13,7 @@ Use this as a writing and judgment overlay. It does not replace financial-data r
 
 For long-form AI Berkshire outputs, title the artifact as a "research report" by default. Use "investment memo" only when the user explicitly asks for a memo format.
 
-This is a Codex-only hand-written skill kept under `codex-skills/` for simple installation. Do not add a same-named `skills/investment-memo-craft.md` source unless intentionally adopting this workflow for Codex too.
+This is a Codex-only hand-written skill whose canonical repository copy is `.agents/skills/investment-memo-craft/SKILL.md`. Do not add a same-named cross-platform source unless intentionally adopting this workflow for Claude Code too.
 
 ## Core Workflow
 

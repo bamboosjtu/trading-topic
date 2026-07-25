@@ -1,11 +1,11 @@
 ---
 name: management-deep-dive
-description: "AI Berkshire skill: 管理层纵深研究：买股票就是买人. Source: skills/management-deep-dive.md."
+description: "AI Berkshire skill: 管理层纵深研究：买股票就是买人. Canonical source: .agents/skills/management-deep-dive/SKILL.md."
 ---
 
 ## Codex adapter note
 
-This skill is generated from `skills/management-deep-dive.md` so Codex and Codex users share one canonical workflow.
+The canonical repository copy is `.agents/skills/management-deep-dive/SKILL.md`; the generated `.claude/skills/` junction lets Claude Code and Codex use the same workflow.
 
 - Treat `$ARGUMENTS` as the user's request in the current Codex thread.
 - When the source mentions Codex-only surfaces such as Task, Agent, WebSearch, Bash, Read, or Write, use the closest Codex capability available in this session: subagents when available, web search when needed, shell commands for local tools, and normal file edits for workspace files.
