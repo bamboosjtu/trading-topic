@@ -1,0 +1,19 @@
+node_modules/
+out/
+dist/
+.vite/
+.userData/
+*.log
+.DS_Store
+
+# Sidecar
+sidecar/.venv/
+sidecar/__pycache__/
+sidecar/**/__pycache__/
+sidecar/.pytest_cache/
+sidecar/.ruff_cache/
+
+# SQLite 本地数据库（开发期生成）
+*.db
+*.sqlite
+*.sqlite-journal
