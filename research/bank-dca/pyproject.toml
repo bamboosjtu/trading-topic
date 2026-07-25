@@ -1,0 +1,24 @@
+[project]
+name = "bank-dca-research"
+version = "0.1.0"
+description = "可复现的银行股定投与基准比较研究包"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.1",
+    "pandas>=3.0.5",
+    "requests>=2.34.2",
+]
+
+[project.scripts]
+bank-dca-fetch = "bank_dca_research.data_fetch:write_snapshot"
+bank-dca-verify = "bank_dca_research.verify_returns:main"
+bank-dca-report = "bank_dca_research.build_report:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bank_dca_research"]

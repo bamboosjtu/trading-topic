@@ -5,97 +5,114 @@
 > 更新日期：2026-07-25
 >
 > 配套需求：[PRD_R1.md](PRD_R1.md)
+>
+> 仓库边界决策：[Labs、Research、Src 隔离](../decisions/0001-labs-research-src-isolation.md)
 
 ## 1. 架构目标
 
-R1 采用单机、单端、本地优先架构，优先保证：
+R1 采用单机、单端、本地优先架构，并遵守一个优先级高于代码复用的约束：
 
-1. 金融计算只有一份事实标准；
-2. 回测、账本和公司行动可以独立测试；
-3. 研究包能用固定数据证明核心库正确；
-4. 用户数据不依赖远程服务；
-5. 应用不具备交易执行能力。
+> **Labs、Research、Src 是三个独立生命周期的域，不建立源码、运行时、构建时或环境依赖。**
 
-## 2. 范围与非目标
+具体目标：
 
-架构范围：
+1. 产品拥有自己的业务实现和发布节奏；
+2. 每个 Research 主题拥有自己的代码、环境、数据、测试和报告；
+3. Labs 保持探索性，不成为任何可发布系统的隐式基础设施；
+4. 研究结论可以转化为产品验收契约，但研究代码不成为产品库；
+5. 用户数据只保存在本机，应用不具备交易执行能力。
 
-- Electron + React 桌面界面；
-- 本地 Python sidecar；
-- `trading_topic_core` Python 核心库；
-- 本地 SQLite；
-- JSON 备份恢复和脱敏日志导出。
+## 2. 三域边界
 
-安卓端延后到 R2，本文不做移动端技术选型。R1 也不设计远程后端、云同步、微服务、消息队列、跨端数据模型或多语言回测引擎。
+| 域 | 职责 | 自有资产 | 禁止依赖 |
+| --- | --- | --- | --- |
+| `labs/` | 学习、数据源试验、Notebook、快速验证 | `labs/pyproject.toml`、`labs/uv.lock`、实验代码和临时数据 | 不被 Research 或 Src import；不向产品提供运行时模块 |
+| `research/<topic>/` | 可复现研究闭环 | 独立 `pyproject.toml`、`uv.lock`、`src/`、`tests/`、`data/`、`report/` | 不 import Labs 或 Src；不借用 Labs 环境 |
+| `src/desktop/` | 可发布桌面产品 | Electron、React、Python sidecar、产品领域代码、数据库、产品测试和打包配置 | 不 import 或运行 `labs/`、`research/`；不读取其工作目录作为运行时数据源 |
 
-## 3. 总体架构
+三个域允许使用相同的第三方库，但必须各自在自己的清单和锁文件中声明。锁文件相同或依赖版本接近，不代表存在项目依赖。
+
+## 3. 允许的知识转移
+
+隔离不禁止复用结论，但转移必须是显式、可审计的所有权交接。
+
+```text
+Labs 实验结果
+    ↓  人工评审、重新实现、记录来源
+Research 研究问题与证据
+    ↓  冻结行为契约和验收向量，复制到产品域并注明来源
+Src 产品自有实现与测试
+```
+
+允许：
+
+- 在文档中引用研究报告；
+- 把经过评审的输入/预期输出复制成产品自有测试 fixture，并记录来源、截止时间和口径版本；
+- 根据 Labs 的接口调查，在产品域重新实现数据源适配器；
+- 对同一金融公式分别维护研究实现与产品实现，并用独立测试核验各自正确性。
+
+禁止：
+
+- 产品 import `research/bank-dca`；
+- 产品测试在运行时读取 `research/bank-dca/data/`；
+- 产品 import `labs/01_银行股定投回测/data_source_registry.py`；
+- Research 使用 `uv run --project labs ...`；
+- 用 Junction、symlink、`PYTHONPATH` 或相对路径绕过边界；
+- 创建让 Labs、Research、Src 共同依赖的顶层共享业务核心。
+
+当研究结果需要进入产品时，产品负责人必须在 `src/desktop/` 内接收一份带来源说明的契约或 fixture。此后产品测试不依赖原 Research 目录是否存在。
+
+## 4. R1 总体架构
 
 ```text
 Electron + React
         ↓  localhost HTTP / JSON
 本地 Python sidecar
         ↓
-trading_topic_core
+产品自有领域层
         ↓
 SQLite
 ```
 
-### 3.1 各层责任
+### 各层责任
 
 | 层 | 责任 | 禁止事项 |
 | --- | --- | --- |
 | Electron + React | 页面、输入校验、状态展示、导入导出交互 | 不实现金融公式，不直接读写 SQLite |
-| Python sidecar | API、进程生命周期、请求校验、事务边界、日志 | 不复制核心计算，不 import 研究脚本 |
-| `trading_topic_core` | 回测、账本、公司行动、指标和领域校验 | 不依赖 Electron、sidecar、`apps/`、`labs/` 或 `research/` |
-| SQLite | 流水、快照、设置、运行记录和迁移版本 | 不保存可独立修改的派生持仓 |
+| Python sidecar | API、进程生命周期、请求校验、事务边界、数据源适配、日志 | 不 import Labs 或 Research |
+| 产品领域层 | 回测、账本、公司行动、指标和领域校验 | 不依赖仓库中的实验或研究包 |
+| SQLite | 流水、行情快照、设置、运行记录和迁移版本 | 不保存可独立修改的派生持仓 |
 
 sidecar 仅监听 `127.0.0.1`，使用启动时生成的随机端口和会话令牌。Electron 主进程负责启动、健康检查和退出时关闭 sidecar；渲染进程不能直接获得 Node.js 或数据库权限。
 
-## 4. 依赖方向
+## 5. 产品目录
 
-目标目录：
+R1 产品代码只放在 `src/desktop/`：
 
 ```text
 src/
-└── trading_topic_core/
-    ├── analysis.py
-    ├── ledger.py
-    └── corporate_actions.py
-
-research/
-└── bank-dca/
-    ├── data/
-    ├── tests/
-    └── reports/
-
-labs/
-└── ...
-
-apps/
 └── desktop/
+    ├── README.md
     ├── electron/
     ├── renderer/
-    └── sidecar/
+    ├── sidecar/
+    │   ├── pyproject.toml
+    │   ├── uv.lock
+    │   ├── src/
+    │   │   └── desktop_backend/
+    │   │       ├── analysis.py
+    │   │       ├── ledger.py
+    │   │       ├── corporate_actions.py
+    │   │       ├── data_sources/
+    │   │       └── storage/
+    │   └── tests/
+    └── tests/
+        └── fixtures/
 ```
 
-唯一允许的业务依赖方向：
+这里的 `analysis.py`、`ledger.py` 和 `corporate_actions.py` 属于产品域，只服务桌面应用。它们不是从 Research import 的兼容层，也不向 Labs 或 Research 反向提供公共包。
 
-```text
-research ─┐
-labs ─────┼──> trading_topic_core
-apps ─────┘
-```
-
-禁止：
-
-- `trading_topic_core` import `research/`、`labs/` 或 `apps/`；
-- sidecar import `research/bank-dca/analysis.py`；
-- 在前端、sidecar 或研究包复制一份 XIRR、回撤、账本或分红算法；
-- 以 notebook 输出替代核心库测试。
-
-结论：**核心库是事实标准，研究包用数据证明它正确。**
-
-## 5. 核心模块
+## 6. 产品领域模块
 
 ### `analysis.py`
 
@@ -121,31 +138,35 @@ apps ─────┘
 - 分红入账和原标的回购指令；
 - 对 R1 不支持的公司行动显式阻断或告警。
 
-模块返回结构化结果和领域错误，不写 UI 文案，不自行访问网络。
+### `data_sources/`
 
-## 6. 研究代码迁移
+- 产品域自行维护行情、证券主数据和公司行动适配器；
+- 适配器输出产品自有 schema；
+- 每条快照记录来源、获取时间、数据截止时间和转换版本；
+- 可以参考 Labs 的数据源调查结论，但不能 import、复制路径或假设 Labs 环境存在。
 
-当前 `research/bank-dca/analysis.py` 和 `labs/01_银行股定投回测/bank_dca.py` 只能作为迁移输入，不能继续被产品后端直接 import。
+## 7. Research 的角色
 
-迁移顺序：
+`research/bank-dca/` 是独立研究项目，不是产品后端原型，也不是产品包的上游源码目录。
 
-1. 提取纯计算到 `src/trading_topic_core/`，先保持现有行为；
-2. 为 R1 新口径补齐 100 股、现金结转、费用、分红回购和实际账本测试；
-3. 将 `research/bank-dca/` 改为 import `trading_topic_core`；
-4. 使用研究快照生成 golden fixtures，断言关键指标与逐笔流水；
-5. 将 Labs 改为调用核心库，只保留数据探索和解释；
-6. sidecar 只调用核心库公开 API；
-7. 删除或缩减重复实现，确保算法只有一个维护点。
+它负责：
 
-迁移完成的判据不是“产品能启动”，而是：
+- 用自己的环境重放银行股研究；
+- 保存研究口径、审计快照、验证代码和报告；
+- 输出经过评审的事实、限制和可供产品讨论的行为契约。
 
-- `rg` 检查不存在产品 import 研究脚本；
-- 研究校验、核心单元测试和 sidecar API 测试使用同一核心实现；
-- 同一固定快照在研究命令和产品 API 中输出一致。
+它不负责：
 
-## 7. 数据与存储
+- 提供产品运行时代码；
+- 保证产品 API 兼容；
+- 提供产品数据源注册模块；
+- 与产品共用锁文件或虚拟环境。
 
-R1 使用一个 SQLite 数据库，至少区分以下逻辑表：
+产品若采用研究中的某项口径，必须在产品域重新实现，并把经过选择的最小验收向量复制到产品测试目录。Research 后续演进不会自动改变产品行为。
+
+## 8. 数据与存储
+
+R1 产品使用自己的 SQLite 数据库，至少区分以下逻辑表：
 
 - `ledger_entries`：不可变业务流水及冲正关联；
 - `instruments`：A 股证券主数据；
@@ -155,11 +176,11 @@ R1 使用一个 SQLite 数据库，至少区分以下逻辑表：
 - `settings`：本地配置；
 - `schema_migrations`：数据库版本。
 
-持仓、现金、总资产和累计盈亏是派生结果，应从流水和估值快照重建。可缓存，但缓存必须可删除重算，不能成为第二份事实标准。
+Research 的 `data/` 只属于研究项目，不是产品数据库的种子数据目录。产品 fixture 必须复制到 `src/desktop/tests/fixtures/` 并带独立 manifest。
 
-金额与费用使用十进制定点数；数据库以最小货币单位整数或规范化十进制字符串保存。数量使用整数股。日期保存 ISO 8601，交易日按 `Asia/Shanghai` 解释。
+持仓、现金、总资产和累计盈亏是派生结果，应从流水和估值快照重建。金额与费用使用十进制定点数；数量使用整数股；日期保存 ISO 8601，交易日按 `Asia/Shanghai` 解释。
 
-## 8. API 与进程边界
+## 9. API、安全与本地能力
 
 sidecar API 使用 `/api/v1` 前缀，R1 只暴露：
 
@@ -171,24 +192,7 @@ sidecar API 使用 `/api/v1` 前缀，R1 只暴露：
 - 日志导出；
 - 健康检查。
 
-写操作必须在 SQLite 事务中完成。请求和响应使用显式 schema；领域错误返回稳定错误码，前端只负责翻译和展示。
-
-## 9. 备份、日志与安全
-
-### JSON 备份
-
-- 包含 `schema_version`、`exported_at`、应用版本、口径版本和业务数据；
-- 恢复前先校验结构与版本；
-- 覆盖恢复前自动导出当前备份；
-- 导入失败必须回滚，不留下半恢复状态。
-
-### 日志
-
-- 记录时间、级别、组件、请求编号、错误码和脱敏上下文；
-- 不记录 Token、Cookie、完整备份内容或个人敏感信息；
-- 日志导出不包含数据库文件。
-
-### Electron
+写操作必须在 SQLite 事务中完成。Electron 强制：
 
 - `contextIsolation: true`；
 - `nodeIntegration: false`；
@@ -200,24 +204,34 @@ R1 不包含券商连接、交易凭据或下单 API。
 
 ## 10. 测试策略
 
-| 层级 | 重点 |
+| 域 | 测试责任 |
 | --- | --- |
-| 核心单元测试 | 日期顺延、整数手、现金结转、费用、分红、XIRR、回撤、冲正 |
-| 属性/不变量测试 | 现金不为负、持仓可由流水重建、并排结果等于逐个运行 |
-| Golden tests | 固定研究快照的逐笔交易、日度资产和七项回测输出 |
-| 数据库测试 | 迁移、事务回滚、备份恢复前后一致 |
-| API 测试 | schema、错误码、幂等冲正、来源与截止时间 |
-| 桌面端测试 | sidecar 生命周期、主流程、断网使用和无交易入口 |
+| Labs | 验证实验自身可运行；结果仅作为探索证据 |
+| Research | 用研究项目自己的环境运行单元测试、快照校验和报告重建 |
+| Src | 用产品自有 fixture 测试日期顺延、整数手、费用、分红、账本、XIRR、回撤、API 和数据库 |
+
+产品验收 fixture 应包含：
+
+- 输入数据和来源说明；
+- 截止时间；
+- 金融口径版本；
+- 预期逐笔流水；
+- 预期汇总指标；
+- 从 Research 转入时的评审记录。
+
+复制完成后，删除或移动 Research 目录不应导致产品测试失败。
 
 ## 11. R1 架构验收
 
-- [ ] 产品代码不 import `research/bank-dca/analysis.py` 或 Labs 脚本；
-- [ ] `research/`、`labs/` 和 `apps/` 都只依赖 `trading_topic_core`；
-- [ ] 核心库不依赖 UI、sidecar、研究目录或网络客户端；
-- [ ] 同一研究快照在研究命令和 sidecar API 中结果一致；
+- [ ] `src/desktop/` 不 import、执行或读取 `labs/`、`research/`；
+- [ ] `research/bank-dca/` 不 import `labs/`、`src/`；
+- [ ] `research/bank-dca/` 有独立 `pyproject.toml` 和 `uv.lock`；
+- [ ] Labs、Research、产品 sidecar 各自使用独立环境；
+- [ ] 产品数据源适配器不复用 Labs 的 `data_source_registry.py`；
+- [ ] 产品测试 fixture 位于产品域，且带来源和口径 manifest；
+- [ ] 删除 Research 工作目录后，产品构建和测试仍可完成；
+- [ ] 研究包在不安装 Labs 依赖的环境中能运行单元测试；
 - [ ] 持仓和现金可从不可变流水完整重建；
-- [ ] JSON 恢复失败时数据库保持原状；
-- [ ] 断网可查看并计算本地已有数据；
-- [ ] 日志无密钥和敏感信息；
+- [ ] JSON 恢复失败时产品数据库保持原状；
 - [ ] sidecar 只监听本机并要求会话令牌；
 - [ ] 桌面应用不存在下单接口或券商权限。

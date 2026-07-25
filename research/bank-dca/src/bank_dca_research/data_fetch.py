@@ -9,16 +9,14 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import StringIO
-from pathlib import Path
-
 import pandas as pd
 import requests
 
+from .paths import DATA_DIR
 
 DATA_START = "20060101"
 REPO_START = "20160101"
 DATA_END = "20260720"
-DATA_DIR = Path(__file__).resolve().parent / "data"
 
 STOCKS = {
     "601398": "工商银行",

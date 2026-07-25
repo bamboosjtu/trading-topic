@@ -211,7 +211,7 @@ R1 不包含：
 - [ ] 七项输出能由交易流水和日度资产序列重算；
 - [ ] 多标的并排与分别运行单标的的结果一致；
 - [ ] 数据缺失或不支持的公司行动不会被静默忽略；
-- [ ] 产品结果通过 `research/bank-dca/` 固定快照的 golden tests。
+- [ ] 产品使用位于 `src/desktop/` 内的自有 fixture 完成 golden tests；fixture 可源自已评审研究，但测试运行时不得读取或 import `research/`。
 
 ### 实际记录
 

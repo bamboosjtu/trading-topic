@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 
-from analysis import build_index_level, build_repo_level, build_stock_level, simulate_level_dca
-from data_fetch import STOCKS
-
-
-REPORT_DIR = Path(__file__).resolve().parent
-DATA_DIR = REPORT_DIR / "data"
+from .analysis import (
+    build_index_level,
+    build_repo_level,
+    build_stock_level,
+    simulate_level_dca,
+)
+from .data_fetch import STOCKS
+from .paths import DATA_DIR
 
 
 def main():

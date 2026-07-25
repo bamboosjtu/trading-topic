@@ -1,9 +1,8 @@
-"""从 research/bank-dca/data 快照重算指标、图表和 Markdown 报告。"""
+"""从本研究包的数据快照重算指标、图表和 Markdown 报告。"""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
@@ -12,18 +11,15 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from analysis import (
+from .analysis import (
     build_index_level,
     build_repo_level,
     build_stock_level,
     rolling_backtest,
     simulate_level_dca,
 )
-from data_fetch import CSI_INDICES, STOCKS
-
-
-REPORT_DIR = Path(__file__).resolve().parent
-DATA_DIR = REPORT_DIR / "data"
+from .data_fetch import CSI_INDICES, STOCKS
+from .paths import DATA_DIR, REPORT_DIR
 START_YM = "2020-01"
 END_YM = "2026-07"
 HOLDING_YEARS = [3, 5, 10]
@@ -57,7 +53,7 @@ def load_snapshot():
     if missing:
         raise FileNotFoundError(
             "缺少数据快照 "
-            f"{missing}；请先运行 python research/bank-dca/data_fetch.py"
+            f"{missing}；请先运行 uv run --project research/bank-dca bank-dca-fetch"
         )
 
     stocks = pd.read_csv(DATA_DIR / "stock_prices.csv", parse_dates=["date"])
@@ -520,11 +516,11 @@ def build_markdown(fixed, audit, rolling_summary, manifest):
 
 ## 八、数据与复现
 
-- 数据获取：`research/bank-dca/data_fetch.py`
-- 回测引擎：`research/bank-dca/analysis.py`
-- 报告生成：`research/bank-dca/build_report.py`
-- 口径校验：`research/bank-dca/verify_returns.py`
-- 自动测试：`research/bank-dca/test_analysis.py`
+- 数据获取：`research/bank-dca/src/bank_dca_research/data_fetch.py`
+- 回测引擎：`research/bank-dca/src/bank_dca_research/analysis.py`
+- 报告生成：`research/bank-dca/src/bank_dca_research/build_report.py`
+- 口径校验：`research/bank-dca/src/bank_dca_research/verify_returns.py`
+- 自动测试：`research/bank-dca/tests/test_analysis.py`
 - 数据快照：`research/bank-dca/data/`
 
 来源：
@@ -540,6 +536,7 @@ def build_markdown(fixed, audit, rolling_summary, manifest):
 
 
 def main():
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stocks, dividends, indices, repo, manifest = load_snapshot()
     levels, price_only_levels, meta = build_levels(stocks, dividends, indices, repo)
     fixed, _ = fixed_backtests(levels, meta)

@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from analysis import (
+from bank_dca_research.analysis import (
     build_repo_level,
     build_stock_level,
     rolling_backtest,
