@@ -19,7 +19,8 @@
 | ------------------- | ------------------- | ------------------------------------------- |
 | `labs/`             | 研究主线、Notebook、探索性代码 | 每个研究主题收敛为一个 Lab，目录形如 `labs/00_金融数据获取/`、`labs/01_银行股定投回测/`，含子文档与 `data/` |
 | `labs/data/`        | Lab 0 共享的原始数据和处理中间数据 | 大文件、可再生文件和含授权限制的数据默认不提交；Lab 自带数据写入各自子目录的 `data/` |
-| `research/<topic>/` | 一个主题的可复现研究闭环        | 可包含小型审计快照、代码、测试、图表和报告                       |
+| `research/<topic>/` | 一个主题的可复现研究闭环        | 独立 `pyproject.toml`、`uv.lock`、`src/`、`tests/`、`data/` 与 `report/`，不依赖 Labs 环境 |
+| `src/desktop/`      | 攒股收息桌面产品              | 纯 Node.js/TypeScript；不 import、执行或读取 Labs、Research |
 | `reports/`          | 面向读者的最终研究成稿         | 不放通用代码、缓存和临时数据                              |
 | `docs/product/`     | 产品需求、架构和决策记录        | 文档必须包含范围、非目标和验收标准                           |
 | `.agents/skills/`   | 投资研究 Skill 唯一源目录   | 受版本控制；使用相关 skill 前完整阅读其 `SKILL.md`         |
@@ -64,19 +65,27 @@
 
 ## 开发与验证
 
-Python 环境统一由 `labs/pyproject.toml` 与 `labs/uv.lock` 管理。默认从仓库根目录运行：
+各域独立管理环境：
 
 ```powershell
+# Labs
 uv sync --project labs
 uv run --project labs python <脚本路径>
+
+# Research
+uv sync --project research/bank-dca
+
+# Src
+Set-Location src/desktop
+npm install
 ```
 
 当前银行股定投研究的基础验证命令：
 
 ```powershell
-uv run --project labs python research/bank-dca/test_analysis.py
-uv run --project labs python research/bank-dca/verify_returns.py
-uv run --project labs python research/bank-dca/build_report.py
+uv run --project research/bank-dca python -m unittest discover -s research/bank-dca/tests -v
+uv run --project research/bank-dca bank-dca-verify
+uv run --project research/bank-dca bank-dca-report
 ```
 
 修改代码时：
@@ -87,6 +96,7 @@ uv run --project labs python research/bank-dca/build_report.py
 4. 不让项目依赖被忽略的 `quant-for-beginners/`、本地虚拟环境或机器绝对路径。
 5. 目录移动后同步修正文档、命令、导入和产物路径。
 6. 不随意更新锁文件；只有依赖确实变化时才运行依赖解析。
+7. Labs、Research、Src 只共享文档化结论和复制后的验收向量，不共享业务源码、数据目录或运行环境。
 
 ## 使用仓库 skills
 

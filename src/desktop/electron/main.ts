@@ -1,110 +1,35 @@
-import { app, BrowserWindow, shell } from "electron";
-import { spawn, ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import type { BacktestRequest, LedgerEntryInput } from "../shared/contracts";
+import { AppService } from "./services/appService";
+import { LocalDatabase } from "./storage/database";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-
-// 开发模式：electron-vite 把 main.ts 编译到 out/main/main.js，
-// process.cwd() 是 src/desktop/（用户运行 npm run dev 的目录）。
-// 生产模式：PyInstaller bundle 放在 process.resourcesPath 下。
-const PROJECT_ROOT = app.isPackaged
-  ? process.resourcesPath
-  : process.cwd();
-const REPO_ROOT = resolve(PROJECT_ROOT, "..", ".."); // 仓库根目录（用于 uv --project）
-const SIDECAR_DIR = resolve(PROJECT_ROOT, "sidecar");
-
-const SIDECAR_PORT = pickFreePort();
-const SIDECAR_TOKEN = randomBytes(24).toString("hex");
-
-// 开发期把 userData 指向项目内的 .userData 目录，
-// 避免某些沙箱环境（如 TRAE Sandbox）阻止访问 %APPDATA%。
+const PROJECT_ROOT = app.isPackaged ? process.resourcesPath : process.cwd();
 const DEV_USER_DATA_DIR = resolve(PROJECT_ROOT, ".userData");
-if (!app.isPackaged && !existsSync(DEV_USER_DATA_DIR)) {
-  mkdirSync(DEV_USER_DATA_DIR, { recursive: true });
-}
-if (!app.isPackaged) {
-  app.setPath("userData", DEV_USER_DATA_DIR);
-}
 
-let sidecarProcess: ChildProcess | null = null;
-
-function pickFreePort(): number {
-  // 简单实现：随机选一个动态端口区间内的端口，绑定失败由 uvicorn 报错
-  // 生产实现应使用 net.createServer().listen(0) 获取真正空闲端口
-  return 8000 + Math.floor(Math.random() * 999);
+if (!app.isPackaged) app.setPath("userData", DEV_USER_DATA_DIR);
+if (!existsSync(app.getPath("userData"))) {
+  mkdirSync(app.getPath("userData"), { recursive: true });
 }
 
-function startSidecar(): ChildProcess {
-  const isProd = app.isPackaged;
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    DESKTOP_SIDECAR_PORT: String(SIDECAR_PORT),
-    DESKTOP_SIDECAR_TOKEN: SIDECAR_TOKEN,
-    PYTHONUNBUFFERED: "1",
-  };
+let database: LocalDatabase;
+let service: AppService;
 
-  if (isProd) {
-    // 生产模式：spawn PyInstaller 单可执行
-    const exePath = resolve(
-      process.resourcesPath,
-      "sidecar",
-      process.platform === "win32" ? "desktop_backend.exe" : "desktop_backend"
-    );
-    return spawn(exePath, { env, cwd: process.resourcesPath });
-  }
-
-  // 开发模式：spawn uvicorn via uv
-  // --project 接受相对 cwd 的路径，所以用相对 REPO_ROOT 的 sidecar 路径
-  const sidecarProjectPath = resolve(REPO_ROOT, "src", "desktop", "sidecar");
-  return spawn(
-    "uv",
-    [
-      "run",
-      "--project",
-      sidecarProjectPath,
-      "uvicorn",
-      "desktop_backend.main:app",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(SIDECAR_PORT),
-    ],
-    { env, cwd: REPO_ROOT, shell: process.platform === "win32" }
-  );
-}
-
-async function waitForSidecar(timeoutMs = 30_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const resp = await fetch(
-        `http://127.0.0.1:${SIDECAR_PORT}/api/v1/health`,
-        { headers: { Authorization: `Bearer ${SIDECAR_TOKEN}` } }
-      );
-      if (resp.ok) return;
-    } catch {
-      // sidecar 尚未启动，继续等
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(`Sidecar 健康检查超时（${timeoutMs}ms）`);
+function timestamp(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
 function createWindow(): void {
-  // 编译后 __dirname = out/main/，preload 在 out/preload/preload.js
-  const preloadPath = app.isPackaged
-    ? join(__dirname, "preload.js")
-    : join(__dirname, "..", "preload", "preload.js");
-
+  const preloadPath = join(__dirname, "..", "preload", "preload.js");
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 700,
-    backgroundColor: "#fafafa",
+    width: 1480,
+    height: 920,
+    minWidth: 1100,
+    minHeight: 720,
+    backgroundColor: "#f3f5f7",
     title: "攒股收息",
     autoHideMenuBar: true,
     webPreferences: {
@@ -117,38 +42,114 @@ function createWindow(): void {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    void shell.openExternal(url);
     return { action: "deny" };
   });
 
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (devUrl) {
-    void win.loadURL(devUrl);
-  } else {
-    void win.loadFile(join(__dirname, "..", "renderer", "index.html"));
-  }
+  if (devUrl) void win.loadURL(devUrl);
+  else void win.loadFile(join(__dirname, "..", "renderer", "index.html"));
+}
+
+function registerIpc(): void {
+  ipcMain.handle("app:health", () => {
+    const latest = database.latestPrices();
+    return {
+      status: "ok",
+      version: app.getVersion(),
+      storage: "sqlite",
+      dataCutoff: latest.dataCutoff,
+    };
+  });
+  ipcMain.handle("backtest:run", (_event, request: BacktestRequest) =>
+    service.runBacktest(request),
+  );
+  ipcMain.handle("backtest:list", () => service.listBacktests());
+  ipcMain.handle("ledger:list", () => service.listLedger());
+  ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>
+    service.addLedger(input),
+  );
+  ipcMain.handle(
+    "ledger:reverse",
+    (_event, entryId: string, reason: string) =>
+      service.reverseLedger(entryId, reason),
+  );
+  ipcMain.handle("account:summary", () => service.accountSummary());
+  ipcMain.handle("settings:get", () => database.getSettings());
+
+  ipcMain.handle("backup:export", async () => {
+    const result = await dialog.showSaveDialog({
+      title: "导出 JSON 备份",
+      defaultPath: `攒股收息-backup-${timestamp()}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return { cancelled: true };
+    writeFileSync(
+      result.filePath,
+      JSON.stringify(database.exportBackup(), null, 2),
+      "utf8",
+    );
+    database.log("info", "已导出 JSON 备份");
+    return { cancelled: false, path: result.filePath };
+  });
+
+  ipcMain.handle("backup:restore", async () => {
+    const selected = await dialog.showOpenDialog({
+      title: "选择 JSON 备份",
+      properties: ["openFile"],
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    const filePath = selected.filePaths[0];
+    if (selected.canceled || !filePath) return { cancelled: true };
+    const payload = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+    const confirmation = await dialog.showMessageBox({
+      type: "warning",
+      title: "确认恢复",
+      message: "恢复会覆盖当前流水和回测记录。",
+      detail: "系统会先在本地生成安全备份。此操作不会读取 Labs 或 Research。",
+      buttons: ["取消", "生成备份并恢复"],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (confirmation.response !== 1) return { cancelled: true };
+    const safetyBackupPath = join(
+      app.getPath("userData"),
+      `pre-restore-${timestamp()}.json`,
+    );
+    writeFileSync(
+      safetyBackupPath,
+      JSON.stringify(database.exportBackup(), null, 2),
+      "utf8",
+    );
+    database.restoreBackup(payload);
+    database.log("info", "已从 JSON 备份恢复");
+    return {
+      cancelled: false,
+      restored: true,
+      path: filePath,
+      safetyBackupPath,
+    };
+  });
+
+  ipcMain.handle("logs:export", async () => {
+    const result = await dialog.showSaveDialog({
+      title: "导出运行日志",
+      defaultPath: `攒股收息-log-${timestamp()}.txt`,
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+    if (result.canceled || !result.filePath) return { cancelled: true };
+    writeFileSync(result.filePath, database.getLogs(), "utf8");
+    return { cancelled: false, path: result.filePath };
+  });
 }
 
 app.whenReady().then(async () => {
-  try {
-    sidecarProcess = startSidecar();
-    sidecarProcess.stdout?.on("data", (chunk) =>
-      process.stdout.write(`[sidecar] ${chunk}`)
-    );
-    sidecarProcess.stderr?.on("data", (chunk) =>
-      process.stderr.write(`[sidecar] ${chunk}`)
-    );
-    sidecarProcess.on("exit", (code) => {
-      if (code !== 0) console.warn(`[sidecar] exited with ${code}`);
-    });
-
-    await waitForSidecar();
-    createWindow();
-  } catch (err) {
-    console.error("[main] 启动失败：", err);
-    // 即便 sidecar 失败也打开窗口，便于看到错误
-    createWindow();
-  }
+  const databasePath = join(app.getPath("userData"), "stock-income.sqlite");
+  database = await LocalDatabase.open(databasePath, PROJECT_ROOT);
+  service = new AppService(database);
+  registerIpc();
+  database.log("info", "应用启动");
+  createWindow();
 });
 
 app.on("window-all-closed", () => {
@@ -157,24 +158,4 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
-});
-
-const cleanup = (): void => {
-  if (sidecarProcess && !sidecarProcess.killed) {
-    try {
-      sidecarProcess.kill("SIGTERM");
-    } catch {
-      // ignore
-    }
-  }
-  // 清理可能残留的临时端口锁文件（如有）
-  const lockFile = join(app.getPath("temp"), `desktop-sidecar-${SIDECAR_PORT}.lock`);
-  if (existsSync(lockFile)) rmSync(lockFile, { force: true });
-};
-
-app.on("before-quit", cleanup);
-process.on("exit", cleanup);
-process.on("SIGINT", () => {
-  cleanup();
-  process.exit(0);
 });

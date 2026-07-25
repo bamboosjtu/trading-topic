@@ -38,7 +38,9 @@
 | [bank_dca.py](01_银行股定投回测/bank_dca.py) | 数据获取 + 一手买入回测核心代码 |
 | [data_source_registry.py](01_银行股定投回测/data_source_registry.py) | 数据源注册、路由与体检核心模块（被 `bank_dca.py` 直接依赖） |
 
-更完整、带数据快照和自动校验的研究实现位于 `research/bank-dca/`。
+独立、可复现的研究项目位于 `research/bank-dca/`。它使用自己的环境与源码，不
+import Labs；产品同样不复用本 Lab 的 `data_source_registry.py`，只依据评审结论在
+产品域重新实现。
 
 ### Notebook 职责
 

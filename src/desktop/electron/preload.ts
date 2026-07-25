@@ -1,19 +1,25 @@
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
+import type {
+  BacktestRequest,
+  DesktopApi,
+  LedgerEntryInput,
+} from "../shared/contracts";
 
-/**
- * 最小化 preload API：
- * 只暴露 sidecar 连接信息，不暴露任何 Node.js / fs / shell 能力。
- * 参见 ARCHITECTURE.md §9 安全约束。
- */
+const api: DesktopApi = {
+  health: () => ipcRenderer.invoke("app:health"),
+  runBacktest: (request: BacktestRequest) =>
+    ipcRenderer.invoke("backtest:run", request),
+  listBacktests: () => ipcRenderer.invoke("backtest:list"),
+  listLedger: () => ipcRenderer.invoke("ledger:list"),
+  addLedger: (input: LedgerEntryInput) =>
+    ipcRenderer.invoke("ledger:add", input),
+  reverseLedger: (entryId: string, reason: string) =>
+    ipcRenderer.invoke("ledger:reverse", entryId, reason),
+  accountSummary: () => ipcRenderer.invoke("account:summary"),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  exportBackup: () => ipcRenderer.invoke("backup:export"),
+  restoreBackup: () => ipcRenderer.invoke("backup:restore"),
+  exportLogs: () => ipcRenderer.invoke("logs:export"),
+};
 
-const SIDECAR_PORT = process.env["DESKTOP_SIDECAR_PORT"];
-const SIDECAR_TOKEN = process.env["DESKTOP_SIDECAR_TOKEN"];
-
-if (SIDECAR_PORT && SIDECAR_TOKEN) {
-  contextBridge.exposeInMainWorld("desktop", {
-    sidecar: {
-      baseUrl: `http://127.0.0.1:${SIDECAR_PORT}`,
-      token: SIDECAR_TOKEN,
-    },
-  });
-}
+contextBridge.exposeInMainWorld("desktop", api);

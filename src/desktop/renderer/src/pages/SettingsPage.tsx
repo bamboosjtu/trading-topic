@@ -1,116 +1,143 @@
 import {
-  Card,
-  Typography,
-  Form,
-  Input,
-  Select,
-  InputNumber,
+  App,
   Button,
-  Divider,
+  Descriptions,
   Space,
   Tag,
+  Typography,
 } from "antd";
-import { DownloadOutlined, UploadOutlined, FileTextOutlined } from "@ant-design/icons";
+import {
+  DownloadOutlined,
+  UploadOutlined,
+  FileTextOutlined,
+  DatabaseOutlined,
+} from "@ant-design/icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "../api/client";
 
 const { Title, Text, Paragraph } = Typography;
 
 export function SettingsPage() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.getSettings });
+  const health = useQuery({ queryKey: ["health"], queryFn: api.health });
+  const exportBackup = useMutation({
+    mutationFn: api.exportBackup,
+    onSuccess: (result) => {
+      if (!result.cancelled) message.success(`备份已保存到 ${result.path}`);
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const restore = useMutation({
+    mutationFn: api.restoreBackup,
+    onSuccess: (result) => {
+      if (!result.cancelled) {
+        message.success("恢复完成，当前数据已重新载入");
+        void queryClient.invalidateQueries();
+      }
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const exportLogs = useMutation({
+    mutationFn: api.exportLogs,
+    onSuccess: (result) => {
+      if (!result.cancelled) message.success(`日志已保存到 ${result.path}`);
+    },
+    onError: (error) => message.error(error.message),
+  });
+
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-5 max-w-5xl">
       <div>
-        <Title level={4} className="!mb-1">
-          设置
-        </Title>
-        <Text type="secondary" className="text-sm">
-          数据来源、费用口径、JSON 备份恢复与日志导出
+        <Text className="text-xs tracking-[0.18em] uppercase !text-[#8a6a3e]">
+          Local control
         </Text>
+        <Title level={2} className="!mt-1 !mb-1 !text-[26px]">
+          本地设置
+        </Title>
+        <Text type="secondary">查看固定口径，管理本地 SQLite、备份与运行日志。</Text>
       </div>
 
-      {/* 数据来源 */}
-      <Card title="数据来源" extra={<Tag color="default">R1 仅 A 股</Tag>}>
-        <Form layout="vertical" disabled>
-          <Form.Item label="行情主源" tooltip="R1 由 sidecar 配置，UI 暂为只读">
-            <Select
-              defaultValue="tencent"
-              options={[
-                { value: "tencent", label: "腾讯财经（stock_zh_a_hist_tx）" },
-                { value: "sina", label: "新浪财经（stock_zh_a_daily）" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="分红主源">
-            <Select
-              defaultValue="sina"
-              options={[
-                { value: "sina", label: "新浪财经（stock_history_dividend_detail）" },
-                { value: "em", label: "东方财富（stock_fhps_detail_em）" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="数据截止时间">
-            <Input placeholder="由 sidecar 在每次计算时记录" disabled />
-          </Form.Item>
-        </Form>
-      </Card>
+      <div className="workspace-panel p-5">
+        <div className="flex items-center justify-between mb-4">
+          <Space>
+            <DatabaseOutlined className="text-[#b88746]" />
+            <Text strong>数据与计算口径</Text>
+          </Space>
+          <Tag bordered={false} color={health.data ? "success" : "default"}>
+            {health.data ? "本地服务正常" : "检查中"}
+          </Tag>
+        </div>
+        <Descriptions column={2} size="small">
+          <Descriptions.Item label="本地存储">SQLite（sql.js）</Descriptions.Item>
+          <Descriptions.Item label="行情截止">
+            {health.data?.dataCutoff ?? "尚无快照"}
+          </Descriptions.Item>
+          <Descriptions.Item label="行情主源">
+            腾讯财经 · 不复权日线
+          </Descriptions.Item>
+          <Descriptions.Item label="分红补充源">
+            东方财富 · 已实施税前现金分红
+          </Descriptions.Item>
+          <Descriptions.Item label="佣金">
+            万分之 {(settings.data?.commissionRate ?? 0.00025) * 10_000}，最低{" "}
+            {settings.data?.minimumCommission ?? 5} 元
+          </Descriptions.Item>
+          <Descriptions.Item label="口径版本">
+            {settings.data?.caliberVersion ?? "bank-dca-r1-node-v1"}
+          </Descriptions.Item>
+        </Descriptions>
+        <Paragraph type="secondary" className="!mb-0 !mt-4 text-xs">
+          R1 不计卖出印花税、分红税、过户费与滑点；期末资产按市值估算，不扣期末卖出费用。
+        </Paragraph>
+      </div>
 
-      {/* 费用口径（PRD §3.1 简化费用） */}
-      <Card title="费用口径" extra={<Tag color="default">R1 单一模式</Tag>}>
-        <Form layout="vertical" disabled>
-          <Form.Item label="买入佣金费率">
-            <InputNumber
-              defaultValue={0.00025}
-              min={0}
-              step={0.00005}
-              addonAfter="万分之"
-              className="w-full"
-            />
-          </Form.Item>
-          <Form.Item label="最低佣金">
-            <InputNumber defaultValue={5} min={0} addonAfter="元" className="w-full" />
-          </Form.Item>
-          <Paragraph type="secondary" className="!mb-0 text-xs">
-            R1 不计卖出印花税、分红税、过户费与滑点；期末资产按市值估算，不扣期末卖出费用。
-          </Paragraph>
-        </Form>
-      </Card>
+      <div className="workspace-panel divide-y divide-[#edf0f2]">
+        {[
+          {
+            title: "导出 JSON 备份",
+            detail: "包含 schema 版本、流水、回测结果与必要设置。",
+            icon: <DownloadOutlined />,
+            action: () => exportBackup.mutate(),
+            loading: exportBackup.isPending,
+            label: "导出",
+          },
+          {
+            title: "从 JSON 恢复",
+            detail: "校验成功后先生成当前数据的安全备份，再确认覆盖。",
+            icon: <UploadOutlined />,
+            action: () => restore.mutate(),
+            loading: restore.isPending,
+            label: "选择文件",
+          },
+          {
+            title: "导出运行日志",
+            detail: "导出启动、回测和数据操作日志；会过滤令牌与敏感字段。",
+            icon: <FileTextOutlined />,
+            action: () => exportLogs.mutate(),
+            loading: exportLogs.isPending,
+            label: "导出日志",
+          },
+        ].map((item) => (
+          <div
+            key={item.title}
+            className="data-row flex items-center justify-between px-5 py-5"
+          >
+            <div>
+              <Text strong>{item.title}</Text>
+              <div className="mt-1 text-xs text-[#6c7b84]">{item.detail}</div>
+            </div>
+            <Button icon={item.icon} onClick={item.action} loading={item.loading}>
+              {item.label}
+            </Button>
+          </div>
+        ))}
+      </div>
 
-      {/* 备份与导入 */}
-      <Card title="备份与恢复">
-        <Space direction="vertical" size="middle" className="w-full">
-          <div className="flex items-center justify-between">
-            <div>
-              <Text strong>导出 JSON 备份</Text>
-              <br />
-              <Text type="secondary" className="text-xs">
-                包含 schema 版本、导出时间、业务数据与必要元数据
-              </Text>
-            </div>
-            <Button icon={<DownloadOutlined />}>导出</Button>
-          </div>
-          <Divider className="!my-2" />
-          <div className="flex items-center justify-between">
-            <div>
-              <Text strong>从 JSON 恢复</Text>
-              <br />
-              <Text type="secondary" className="text-xs">
-                导入前完成结构校验与版本检查，先生成当前数据备份
-              </Text>
-            </div>
-            <Button icon={<UploadOutlined />}>选择文件</Button>
-          </div>
-          <Divider className="!my-2" />
-          <div className="flex items-center justify-between">
-            <div>
-              <Text strong>导出运行日志</Text>
-              <br />
-              <Text type="secondary" className="text-xs">
-                不含 Token、Cookie、账号或个人敏感信息
-              </Text>
-            </div>
-            <Button icon={<FileTextOutlined />}>导出日志</Button>
-          </div>
-        </Space>
-      </Card>
+      <div className="px-1 text-xs text-[#7b8991]">
+        仅供研究与记录，不构成投资建议。应用不连接券商、不申请交易权限、不执行下单。
+      </div>
     </div>
   );
 }

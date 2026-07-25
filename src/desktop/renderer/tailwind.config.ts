@@ -2,7 +2,10 @@ import type { Config } from "tailwindcss";
 
 // Tailwind 与 AntD 共存：色板对齐 theme.ts 中的 token，避免视觉冲突
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  content: {
+    relative: true,
+    files: ["./index.html", "./src/**/*.{ts,tsx}"],
+  },
   // 关闭 Tailwind 的 preflight，避免与 AntD 静态样式冲突
   corePlugins: {
     preflight: false,
@@ -10,18 +13,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 与 AntD theme.token.colorPrimary 对齐（深绿，象征收益与稳定）
+        // 产品主强调色：克制的暖金
         brand: {
-          50: "#f0fdf5",
-          100: "#dcfce7",
-          200: "#bbf7d0",
-          300: "#86efac",
-          400: "#4ade80",
-          500: "#16a34a",
-          600: "#15803d",
-          700: "#166534",
-          800: "#14532d",
-          900: "#052e16",
+          50: "#fbf7f0",
+          100: "#f5ead8",
+          200: "#ecd4ad",
+          300: "#dfb977",
+          400: "#ca984f",
+          500: "#b88746",
+          600: "#966a36",
+          700: "#78512d",
+          800: "#604127",
+          900: "#4e3622",
         },
         // 中性灰阶，对齐 AntD neutral
         ink: {

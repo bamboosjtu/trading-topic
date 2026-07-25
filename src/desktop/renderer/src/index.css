@@ -1,3 +1,5 @@
+@config "../tailwind.config.ts";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -17,8 +19,8 @@ body {
     "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #fafafa;
-  color: #171717;
+  background-color: #f3f5f7;
+  color: #14232e;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
@@ -45,4 +47,62 @@ body {
 .tabular-nums {
   font-variant-numeric: tabular-nums;
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+.workspace-enter {
+  animation: workspace-in 220ms ease-out both;
+}
+
+.workspace-panel {
+  background: #fff;
+  border: 1px solid #dfe5e8;
+  border-radius: 10px;
+}
+
+.metric-value {
+  color: #14232e;
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.metric-label {
+  color: #6c7b84;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.metric-strip > div + div {
+  border-left: 1px solid #e4e9ec;
+}
+
+.data-row {
+  transition:
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.data-row:hover {
+  background: #f8fafb;
+  transform: translateX(2px);
+}
+
+@keyframes workspace-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-enter,
+  .data-row {
+    animation: none;
+    transition: none;
+  }
 }

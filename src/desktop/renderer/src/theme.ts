@@ -4,29 +4,28 @@ import type { ThemeConfig } from "antd";
  * 现代 SaaS 视觉风格基线（攒股收息 R1）。
  *
  * 设计取向：
- * - 浅色背景为主，深色文字保证可读性；
- * - 单一品牌色（沉稳深绿），象征收益与稳定，区别于消费类应用的红蓝；
- * - 圆角 8-12px，卡片化布局，极轻阴影；
+ * - 墨蓝导航与暖金单一强调色，保持财富管理工具的克制；
+ * - 雾白工作区与细分隔线，减少卡片堆叠；
  * - 字号层级清晰，数字使用等宽字体强化金融工具感。
  *
  * 与 Tailwind 配色对齐：见 tailwind.config.ts 中的 brand / ink 色板。
  */
 export const theme: ThemeConfig = {
   token: {
-    colorPrimary: "#15803d", // brand.600
-    colorInfo: "#15803d",
-    colorSuccess: "#16a34a",
+    colorPrimary: "#b88746",
+    colorInfo: "#315f78",
+    colorSuccess: "#2d7650",
     colorWarning: "#d97706",
     colorError: "#dc2626",
-    colorTextBase: "#171717", // ink.900
+    colorTextBase: "#14232e",
     colorBgBase: "#ffffff",
-    colorBorder: "#e5e5e5", // ink.200
-    colorBorderSecondary: "#f5f5f5", // ink.100
-    colorBgLayout: "#fafafa", // ink.50
+    colorBorder: "#dfe5e8",
+    colorBorderSecondary: "#edf0f2",
+    colorBgLayout: "#f3f5f7",
     colorBgContainer: "#ffffff",
 
-    borderRadius: 8,
-    borderRadiusLG: 12,
+    borderRadius: 7,
+    borderRadiusLG: 10,
     borderRadiusSM: 6,
 
     fontSize: 14,
@@ -49,31 +48,30 @@ export const theme: ThemeConfig = {
       "'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace",
 
     wireframe: false,
-    algorithm: undefined, // 使用默认算法（亮色）
   },
   components: {
     Layout: {
-      headerBg: "#ffffff",
+      headerBg: "#f8fafb",
       headerHeight: 56,
       headerPadding: "0 24px",
-      bodyBg: "#fafafa",
-      siderBg: "#ffffff",
+      bodyBg: "#f3f5f7",
+      siderBg: "#0d1b26",
     },
     Menu: {
-      itemSelectedBg: "#f0fdf5", // brand.50
-      itemSelectedColor: "#15803d", // brand.600
-      itemActiveBg: "#f0fdf5",
-      itemHoverBg: "#f5f5f5",
+      darkItemBg: "#0d1b26",
+      darkItemSelectedBg: "#1a3040",
+      darkItemSelectedColor: "#e9c991",
+      darkItemHoverBg: "#142735",
     },
     Card: {
-      borderRadiusLG: 12,
+      borderRadiusLG: 10,
       boxShadowTertiary:
         "0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02)",
     },
     Table: {
-      headerBg: "#fafafa",
-      headerColor: "#525252",
-      rowHoverBg: "#f5f5f5",
+      headerBg: "#f6f8f9",
+      headerColor: "#52636e",
+      rowHoverBg: "#f8fafb",
       cellPaddingBlock: 12,
     },
     Statistic: {

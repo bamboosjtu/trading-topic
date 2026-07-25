@@ -15,13 +15,17 @@ trading-topic/
 ├── .agents/              # Codex 可用的投资研究 skills
 ├── .claude/              # Claude 的 skills 与本地配置
 ├── docs/
-│   └── product/          # 产品需求、设计与开发决策
+│   ├── product/          # 产品需求与架构
+│   ├── tutorial/         # 教程资料
+│   └── decisions/        # 仓库级架构决策
 ├── labs/                 # 每个研究主题收敛为一个 Lab，目录形如 01_银行股定投回测/
 │   ├── 00_金融数据获取/    # 金融数据源架构、AKShare 教程、接口体检与筛选脚本
 │   ├── 01_银行股定投回测/  # 银行股定投回测完整链路：子文档 + 前置体检 + 主入口 Notebook + 核心代码 + data_source_registry + data/
 │   └── data/             # Lab 0 共享数据（如 source_healthcheck.csv）；Lab 1 自带 data/ 子目录
 ├── research/
-│   └── bank-dca/         # 可复现的银行股定投研究包
+│   └── bank-dca/         # 独立环境的银行股定投研究包
+├── src/
+│   └── desktop/          # Electron + React + Node.js 桌面产品
 ├── reports/              # 面向阅读者的最终研究成稿
 ├── AGENTS.md             # AI Agent 在本仓库工作的统一约定
 └── README.md             # 项目入口
@@ -36,30 +40,36 @@ trading-topic/
 | 学习实验 | `labs/` | 能运行，记录假设、输入与观察结果 |
 | 可复现研究 | `research/<主题>/` | 数据来源、计算代码、校验、图表和报告形成闭环 |
 | 最终成稿 | `reports/` | 面向读者、结论先行、来源可核查 |
-| 产品开发 | `docs/product/`，后续按需增加 `src/`、`tests/` 或 `apps/` | 先写清需求和验收标准，再沉淀实现 |
+| 产品开发 | `src/desktop/` 与 `docs/product/` | 产品代码、环境和数据均不依赖 Labs 或 Research |
 
 不要在仓库根目录堆放新的实验文件或报告；为新主题选择上述归属。
 
 ## 快速开始
 
-Python 实验环境由 `labs/pyproject.toml` 和 `labs/uv.lock` 管理。在仓库根目录运行：
+Labs、Research 与 Src 使用各自环境，不共享运行时依赖。
+
+启动 Labs：
 
 ```powershell
 uv sync --project labs
 uv run --project labs jupyter lab labs
 ```
 
-运行银行股定投研究的测试与校验：
+复现银行股定投 Research：
 
 ```powershell
-uv run --project labs python research/bank-dca/test_analysis.py
-uv run --project labs python research/bank-dca/verify_returns.py
+uv sync --project research/bank-dca
+uv run --project research/bank-dca python -m unittest discover -s research/bank-dca/tests -v
+uv run --project research/bank-dca bank-dca-verify
+uv run --project research/bank-dca bank-dca-report
 ```
 
-使用已有数据快照重新生成研究报告：
+启动桌面产品：
 
 ```powershell
-uv run --project labs python research/bank-dca/build_report.py
+Set-Location src/desktop
+npm install
+npm run dev
 ```
 
 更具体的研究与协作规则见 [AGENTS.md](AGENTS.md)。
