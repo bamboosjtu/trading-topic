@@ -195,7 +195,7 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   const databasePath = join(app.getPath("userData"), "stock-income.sqlite");
-  database = await LocalDatabase.open(databasePath, PROJECT_ROOT);
+  database = await LocalDatabase.open(databasePath);
   service = new AppService(database);
   registerIpc();
   database.log("info", "应用启动");
@@ -204,6 +204,10 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  database?.close();
 });
 
 app.on("activate", () => {

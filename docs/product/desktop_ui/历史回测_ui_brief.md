@@ -4,7 +4,9 @@
 >
 > 架构约束：[ARCHITECTURE.md](../ARCHITECTURE.md)
 >
-> 实现代码：`src/desktop/electron/domain/analysis.ts`、`src/desktop/renderer/src/pages/BacktestPage.tsx`
+> 实现代码：`src/desktop/electron/domain/analysis.ts`、
+> `src/desktop/renderer/src/pages/BacktestPage.tsx` 与
+> `src/desktop/renderer/src/pages/backtest/`
 
 ## 1. 页面结构
 
@@ -43,7 +45,9 @@
 ## 3. 曲线与标的对比
 
 - 图表固定提供“行情 K 线 / 收益率曲线 / 最大回撤曲线”三个 Tab；
-- 行情 K 线提供当前结果标的切换，支持日 K、周 K、月 K，默认日 K；均线固定为 MA5、MA10、MA20、MA60。数据来自产品域回测结果自带的不复权日线，不读取 Labs 或 Research；
+- 行情 K 线提供当前结果标的切换，支持日 K、周 K、月 K，默认日 K；均线固定为 MA5、MA10、MA20、MA60。数据为产品域独立获取的前复权真实日 OHLCV，不读取 Labs 或 Research，也不从回测不复权收盘价伪造；
+- 日 K 直接展示；周/月 K 使用首日开盘、周期最高/最低、末日收盘和成交量合计。K 线只用于快速了解走势，不作为严格回测证据；
+- K 线明确区分加载中、可用、不可用和错误状态；收益率与回撤序列由领域层计算，Renderer 只格式化和绘图；
 - 收益率与最大回撤视图用于多标的同条件对比；
 - 对比表只读取当前 `activeExperimentId` 对应实验，不读取全部历史结果；
 - 当前实验内所有标的具有同一区间、每月投入、买入规则、数据截止和口径版本；

@@ -68,6 +68,7 @@ uv run --project research/bank-dca bank-dca-report
 
 ```powershell
 Set-Location src/desktop
+# Electron 35 与 better-sqlite3 13 的开发环境要求 Node.js 22+
 npm install
 npm run dev
 ```

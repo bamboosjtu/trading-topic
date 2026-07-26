@@ -4,6 +4,7 @@ import type {
   BacktestExperiment,
   BacktestExperimentSummary,
   BacktestRequest,
+  BacktestResult,
   LedgerEntry,
   LedgerEntryInput,
   SimpleBacktestResult,
@@ -19,6 +20,7 @@ import {
 } from "../../shared/constants";
 import { fetchAStockUniverse } from "../data/stockUniverse";
 import {
+  fetchAdjustedBars,
   fetchCorporateActions,
   fetchUnadjustedPrices,
 } from "../data/tencent";
@@ -123,13 +125,30 @@ export class AppService {
       symbol: string;
       prices: Awaited<ReturnType<typeof fetchUnadjustedPrices>>;
       dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
+      chartData: BacktestResult["chartData"];
+      chartProvenance?: Awaited<
+        ReturnType<typeof fetchAdjustedBars>
+      >["provenance"];
     }> = [];
     for (const [index, symbol] of canonicalRequest.symbols.entries()) {
-      const prices = await fetchUnadjustedPrices(
-        symbol,
-        canonicalRequest.startDate,
-        canonicalRequest.endDate,
-      );
+      const [prices, adjustedBars] = await Promise.all([
+        fetchUnadjustedPrices(
+          symbol,
+          canonicalRequest.startDate,
+          canonicalRequest.endDate,
+        ),
+        fetchAdjustedBars(
+          symbol,
+          canonicalRequest.startDate,
+          canonicalRequest.endDate,
+        ).then(
+          (response) => ({ ok: true as const, response }),
+          (error: unknown) => ({
+            ok: false as const,
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        ),
+      ]);
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
       if (index > 0) {
         await new Promise((resolve) =>
@@ -148,7 +167,20 @@ export class AppService {
         prices.provenance.source,
         prices.provenance.fetchedAt,
       );
-      marketData.push({ symbol, prices, dividends });
+      marketData.push({
+        symbol,
+        prices,
+        dividends,
+        chartData: adjustedBars.ok
+          ? { status: "ready", data: adjustedBars.response.rows }
+          : {
+              status: "error",
+              message: `前复权 K 线不可用：${adjustedBars.message}`,
+            },
+        chartProvenance: adjustedBars.ok
+          ? adjustedBars.response.provenance
+          : undefined,
+      });
     }
 
     const dataCutoff = marketData
@@ -164,26 +196,41 @@ export class AppService {
           ? dataCutoff
           : canonicalRequest.endDate,
     };
-    const results = marketData.map(({ symbol, prices, dividends }) => {
-      const result = simulateBacktest(
-        effectiveRequest,
-        symbol,
-        names.get(symbol) ?? symbol,
-        prices.rows,
-        dividends.rows,
-        [prices.provenance, dividends.provenance],
-        { id: experimentId, createdAt },
-      );
-      // 实验保留用户原始请求；共同截止时间单独由 experiment 记录。
-      result.requestedStartDate = canonicalRequest.startDate;
-      result.requestedEndDate = canonicalRequest.endDate;
-      result.rangeYears = canonicalRequest.rangeYears;
-      result.strategyKey = buildBacktestStrategyKey(
-        canonicalRequest,
-        symbol,
-      );
-      return result;
-    });
+    const results = marketData.map(
+      ({ symbol, prices, dividends, chartData, chartProvenance }) => {
+        const result = simulateBacktest(
+          effectiveRequest,
+          symbol,
+          names.get(symbol) ?? symbol,
+          prices.rows,
+          dividends.rows,
+          [
+            prices.provenance,
+            dividends.provenance,
+            ...(chartProvenance ? [chartProvenance] : []),
+          ],
+          { id: experimentId, createdAt },
+        );
+        // 实验保留用户原始请求；共同截止时间单独由 experiment 记录。
+        result.requestedStartDate = canonicalRequest.startDate;
+        result.requestedEndDate = canonicalRequest.endDate;
+        result.rangeYears = canonicalRequest.rangeYears;
+        result.strategyKey = buildBacktestStrategyKey(
+          canonicalRequest,
+          symbol,
+        );
+        result.chartData =
+          chartData.status === "ready"
+            ? {
+                status: "ready",
+                data: chartData.data.filter(
+                  (bar) => bar.date <= dataCutoff,
+                ),
+              }
+            : chartData;
+        return result;
+      },
+    );
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,

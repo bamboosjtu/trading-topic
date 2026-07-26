@@ -13,7 +13,7 @@ R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见
 | 状态与请求 | TanStack Query |
 | 图表 | ECharts |
 | 本地服务 | Electron main + 受限 IPC |
-| 数据库 | SQLite（sql.js，持久化到 userData） |
+| 数据库 | SQLite（better-sqlite3，WAL，持久化到 userData） |
 | 测试 | Vitest |
 
 产品不 import、执行或读取 `labs/`、`research/`。Lab 01 的研究结论在产品域重新实现；产品测试使用 `tests/fixtures/` 内自有验收向量。
@@ -23,6 +23,9 @@ R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见
 从本目录运行：
 
 ```powershell
+# 需要 Node.js 22 或更高版本
+# 中国大陆网络如需 Electron 镜像，可在当前终端设置：
+# $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 npm install
 npm run dev
 npm run typecheck
@@ -41,7 +44,7 @@ npm run build
 - 退出后恢复上次标的、参数、图表选项和当前实验；
 - 导出包含对比汇总和逐项明细 sheet 的 XLSX；
 - 固定金额、指定日顺延、零碎股、费用 0、分红回购、送股/转增；
-- 七项回测指标、行情 K 线、收益率/最大回撤曲线、逐笔记录、数据来源和截止日；
+- 七项回测指标、前复权真实 OHLCV K 线、收益率/最大回撤曲线、逐笔记录、数据来源和截止日；
 - 六类业务流水录入与追加式冲正/修正流程；
 - 持仓、现金、总资产、累计盈亏和 XIRR 重建；
 - 本地 SQLite、JSON 备份恢复、脱敏日志导出；

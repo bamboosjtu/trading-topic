@@ -1,6 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
+import BetterSqlite3 from "better-sqlite3";
 import {
   BACKTEST_CALIBER_VERSION,
   BACKTEST_EXPERIMENT_LIMIT,
@@ -17,7 +15,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent",
   dividendSource: "eastmoney",
@@ -54,58 +52,46 @@ interface BackupPayload {
   backtestWorkspace: BacktestWorkspaceState | null;
 }
 
+type SqlParameter = string | number | bigint | Buffer | null;
+
 function rows<T>(
-  database: Database,
+  database: BetterSqlite3.Database,
   sql: string,
-  parameters: Array<string | number | null> = [],
+  parameters: SqlParameter[] = [],
 ): T[] {
-  const statement = database.prepare(sql);
-  const result: T[] = [];
-  try {
-    if (parameters.length) statement.bind(parameters);
-    while (statement.step()) result.push(statement.getAsObject() as T);
-  } finally {
-    statement.free();
-  }
-  return result;
+  return database.prepare(sql).all(...parameters) as T[];
 }
 
 export class LocalDatabase {
-  private constructor(
-    private readonly database: Database,
-    private readonly filePath: string,
-  ) {}
+  private constructor(private readonly database: BetterSqlite3.Database) {}
 
-  static async open(filePath: string, projectRoot: string): Promise<LocalDatabase> {
-    const SQL: SqlJsStatic = await initSqlJs({
-      locateFile: (file) => join(projectRoot, "node_modules", "sql.js", "dist", file),
-    });
-    const database = existsSync(filePath)
-      ? new SQL.Database(readFileSync(filePath))
-      : new SQL.Database();
-    const store = new LocalDatabase(database, filePath);
+  static async open(filePath: string): Promise<LocalDatabase> {
+    const database = new BetterSqlite3(filePath);
+    database.pragma("foreign_keys = ON");
+    database.pragma("journal_mode = WAL");
+    database.pragma("synchronous = NORMAL");
+    const store = new LocalDatabase(database);
     store.migrate();
     return store;
   }
 
+  close(): void {
+    if (this.database.open) this.database.close();
+  }
+
   private migrate(): void {
-    const currentVersion =
-      rows<{ user_version: number }>(
-        this.database,
-        "PRAGMA user_version",
-      )[0]?.user_version ?? 0;
+    const currentVersion = this.database.pragma("user_version", {
+      simple: true,
+    }) as number;
     if (currentVersion < SCHEMA_VERSION) {
-      // 当前产品尚无用户数据，直接移除已废弃的 batch/唯一策略模型，
-      // 不保留兼容分支或双轨表。
-      this.database.run(`
+      this.database.exec(`
         DROP TABLE IF EXISTS backtest_runs;
         DROP TABLE IF EXISTS backtest_results;
         DROP TABLE IF EXISTS backtest_experiments;
         DROP TABLE IF EXISTS backtest_workspace;
       `);
     }
-    this.database.run(`
-      PRAGMA foreign_keys = ON;
+    this.database.exec(`
       CREATE TABLE IF NOT EXISTS ledger_entries (
         id TEXT PRIMARY KEY,
         business_date TEXT NOT NULL,
@@ -172,33 +158,25 @@ export class LocalDatabase {
         ON backtest_results(experiment_id);
       CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy
         ON backtest_results(strategy_key);
-      PRAGMA user_version = ${SCHEMA_VERSION};
     `);
-    const existing = this.database.exec(
-      "SELECT value_json FROM settings WHERE key = 'app'",
-    );
-    if (!existing.length) {
-      this.database.run(
-        "INSERT INTO settings(key, value_json) VALUES ('app', ?)",
-        [JSON.stringify(DEFAULT_SETTINGS)],
-      );
-    }
-    this.persist();
-  }
-
-  private persist(): void {
-    writeFileSync(this.filePath, Buffer.from(this.database.export()));
+    this.database.pragma(`user_version = ${SCHEMA_VERSION}`);
+    this.database
+      .prepare(
+        `INSERT INTO settings(key, value_json) VALUES ('app', ?)
+         ON CONFLICT(key) DO NOTHING`,
+      )
+      .run(JSON.stringify(DEFAULT_SETTINGS));
   }
 
   log(level: "info" | "warn" | "error", message: string): void {
     const sanitized = message
       .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [REDACTED]")
       .slice(0, 2_000);
-    this.database.run(
-      "INSERT INTO app_logs(created_at, level, message) VALUES (?, ?, ?)",
-      [new Date().toISOString(), level, sanitized],
-    );
-    this.persist();
+    this.database
+      .prepare(
+        "INSERT INTO app_logs(created_at, level, message) VALUES (?, ?, ?)",
+      )
+      .run(new Date().toISOString(), level, sanitized);
   }
 
   getLogs(): string {
@@ -220,7 +198,6 @@ export class LocalDatabase {
       : DEFAULT_SETTINGS;
     return {
       ...stored,
-      // 计算口径属于版本事实，不允许旧备份把当前 R1 恢复成整数手/佣金模型。
       commissionRate: 0,
       minimumCommission: 0,
       caliberVersion: DEFAULT_SETTINGS.caliberVersion,
@@ -228,17 +205,17 @@ export class LocalDatabase {
   }
 
   addLedger(entry: LedgerEntry): void {
-    this.database.run(
-      "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
-      [
+    this.database
+      .prepare(
+        "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
         entry.id,
         entry.businessDate,
         entry.recordedAt,
         entry.type,
         JSON.stringify(entry),
-      ],
-    );
-    this.persist();
+      );
   }
 
   listLedger(): LedgerEntry[] {
@@ -249,48 +226,41 @@ export class LocalDatabase {
   }
 
   private insertExperiment(experiment: BacktestExperiment): void {
-    this.database.run(
-      `INSERT INTO backtest_experiments(
-         id, created_at, request_json, data_cutoff, caliber_version, status
-       ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [
+    this.database
+      .prepare(
+        `INSERT INTO backtest_experiments(
+           id, created_at, request_json, data_cutoff, caliber_version, status
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
         experiment.experimentId,
         experiment.createdAt,
         JSON.stringify(experiment.request),
         experiment.dataCutoff,
         experiment.caliberVersion,
         experiment.status,
-      ],
+      );
+    const insertResult = this.database.prepare(
+      `INSERT INTO backtest_results(
+         id, experiment_id, symbol, strategy_key, result_json
+       ) VALUES (?, ?, ?, ?, ?)`,
     );
     for (const result of experiment.results) {
       if (result.experimentId !== experiment.experimentId) {
         throw new Error("回测结果与实验编号不一致");
       }
-      this.database.run(
-        `INSERT INTO backtest_results(
-           id, experiment_id, symbol, strategy_key, result_json
-         ) VALUES (?, ?, ?, ?, ?)`,
-        [
-          result.id,
-          experiment.experimentId,
-          result.symbol,
-          result.strategyKey,
-          JSON.stringify(result),
-        ],
+      insertResult.run(
+        result.id,
+        experiment.experimentId,
+        result.symbol,
+        result.strategyKey,
+        JSON.stringify(result),
       );
     }
   }
 
   saveBacktestExperiment(experiment: BacktestExperiment): void {
-    this.database.run("BEGIN");
-    try {
-      this.insertExperiment(experiment);
-      this.database.run("COMMIT");
-      this.persist();
-    } catch (error) {
-      this.database.run("ROLLBACK");
-      throw error;
-    }
+    this.database.transaction(() => this.insertExperiment(experiment))();
   }
 
   private listExperimentResults(experimentId: string): BacktestResult[] {
@@ -306,7 +276,9 @@ export class LocalDatabase {
   listBacktestExperiments(
     limit = BACKTEST_EXPERIMENT_LIMIT,
   ): BacktestExperimentSummary[] {
-    const suffix = Number.isFinite(limit) ? ` LIMIT ${Math.max(1, limit)}` : "";
+    const boundedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.floor(limit))
+      : Number.MAX_SAFE_INTEGER;
     return rows<{
       id: string;
       created_at: string;
@@ -314,30 +286,40 @@ export class LocalDatabase {
       data_cutoff: string;
       caliber_version: string;
       status: "completed";
+      result_count: number;
+      best_xirr: number | null;
+      max_drawdown: number | null;
     }>(
       this.database,
-      `SELECT id, created_at, request_json, data_cutoff, caliber_version, status
-       FROM backtest_experiments
-       ORDER BY created_at DESC${suffix}`,
-    ).map((row) => {
-      const results = this.listExperimentResults(row.id);
-      const xirrs = results
-        .map((result) => result.metrics.xirr)
-        .filter((value): value is number => value !== null);
-      return {
+      `SELECT
+         e.id,
+         e.created_at,
+         e.request_json,
+         e.data_cutoff,
+         e.caliber_version,
+         e.status,
+         COUNT(r.id) AS result_count,
+         MAX(CAST(json_extract(r.result_json, '$.metrics.xirr') AS REAL))
+           AS best_xirr,
+         MIN(CAST(json_extract(r.result_json, '$.metrics.maxDrawdown') AS REAL))
+           AS max_drawdown
+       FROM backtest_experiments e
+       LEFT JOIN backtest_results r ON r.experiment_id = e.id
+       GROUP BY e.id
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [boundedLimit],
+    ).map((row) => ({
         experimentId: row.id,
         createdAt: row.created_at,
         request: JSON.parse(row.request_json) as BacktestExperiment["request"],
         dataCutoff: row.data_cutoff,
         caliberVersion: row.caliber_version,
         status: row.status,
-        resultCount: results.length,
-        bestXirr: xirrs.length ? Math.max(...xirrs) : null,
-        maxDrawdown: results.length
-          ? Math.min(...results.map((result) => result.metrics.maxDrawdown))
-          : 0,
-      };
-    });
+        resultCount: row.result_count,
+        bestXirr: row.best_xirr,
+        maxDrawdown: row.max_drawdown ?? 0,
+      }));
   }
 
   getBacktestExperiment(id: string): BacktestExperiment | null {
@@ -368,37 +350,25 @@ export class LocalDatabase {
 
   deleteBacktestExperiment(id: string): void {
     const workspace = this.getBacktestWorkspace();
-    this.database.run("BEGIN");
-    try {
-      // sql.js 的外键 pragma 可能受已有连接状态影响；显式删除子记录，
-      // 让删除语义不依赖运行时是否真正启用了级联。
-      this.database.run(
-        "DELETE FROM backtest_results WHERE experiment_id = ?",
-        [id],
-      );
-      this.database.run(
-        "DELETE FROM backtest_experiments WHERE id = ?",
-        [id],
-      );
+    this.database.transaction(() => {
+      this.database
+        .prepare("DELETE FROM backtest_experiments WHERE id = ?")
+        .run(id);
       if (workspace?.activeExperimentId === id) {
-        this.database.run(
-          `INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)
-           ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json`,
-          [
+        this.database
+          .prepare(
+            `INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)
+             ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json`,
+          )
+          .run(
             JSON.stringify({
               ...workspace,
               activeExperimentId: undefined,
               updatedAt: new Date().toISOString(),
             }),
-          ],
-        );
+          );
       }
-      this.database.run("COMMIT");
-      this.persist();
-    } catch (error) {
-      this.database.run("ROLLBACK");
-      throw error;
-    }
+    })();
   }
 
   getBacktest(id: string): BacktestResult | null {
@@ -415,21 +385,15 @@ export class LocalDatabase {
     source: string,
     fetchedAt: string,
   ): void {
-    this.database.run("BEGIN");
-    try {
-      this.database.run("DELETE FROM stock_universe");
+    const insert = this.database.prepare(
+      "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
+    );
+    this.database.transaction(() => {
+      this.database.exec("DELETE FROM stock_universe");
       for (const stock of stocks) {
-        this.database.run(
-          "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
-          [stock.symbol, stock.name, source, fetchedAt],
-        );
+        insert.run(stock.symbol, stock.name, source, fetchedAt);
       }
-      this.database.run("COMMIT");
-      this.persist();
-    } catch (error) {
-      this.database.run("ROLLBACK");
-      throw error;
-    }
+    })();
   }
 
   listStockUniverse(): Array<
@@ -462,12 +426,12 @@ export class LocalDatabase {
   }
 
   saveBacktestWorkspace(state: BacktestWorkspaceState): void {
-    this.database.run(
-      `INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)
-       ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json`,
-      [JSON.stringify(state)],
-    );
-    this.persist();
+    this.database
+      .prepare(
+        `INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)
+         ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json`,
+      )
+      .run(JSON.stringify(state));
   }
 
   replaceMarketData(
@@ -477,26 +441,20 @@ export class LocalDatabase {
     source: string,
     fetchedAt: string,
   ): void {
-    this.database.run("BEGIN");
-    try {
+    const insertPrice = this.database.prepare(
+      "INSERT OR REPLACE INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    const insertAction = this.database.prepare(
+      "INSERT OR REPLACE INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
+    );
+    this.database.transaction(() => {
       for (const row of prices) {
-        this.database.run(
-          "INSERT OR REPLACE INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
-          [symbol, row.date, row.close, source, fetchedAt],
-        );
+        insertPrice.run(symbol, row.date, row.close, source, fetchedAt);
       }
       for (const event of dividends) {
-        this.database.run(
-          "INSERT OR REPLACE INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
-          [symbol, event.date, JSON.stringify(event)],
-        );
+        insertAction.run(symbol, event.date, JSON.stringify(event));
       }
-      this.database.run("COMMIT");
-      this.persist();
-    } catch (error) {
-      this.database.run("ROLLBACK");
-      throw error;
-    }
+    })();
   }
 
   latestPrices(): { prices: Record<string, number>; dataCutoff: string | null } {
@@ -525,9 +483,7 @@ export class LocalDatabase {
       ledgerEntries: this.listLedger(),
       backtestExperiments: this.listBacktestExperiments(
         Number.POSITIVE_INFINITY,
-      ).map((summary) =>
-        this.getBacktestExperiment(summary.experimentId)!,
-      ),
+      ).map((summary) => this.getBacktestExperiment(summary.experimentId)!),
       marketPrices: rows(
         this.database,
         "SELECT symbol, trade_date, close, source, fetched_at FROM market_prices ORDER BY symbol, trade_date",
@@ -559,64 +515,71 @@ export class LocalDatabase {
       throw new Error("备份结构或 schema 版本不兼容");
     }
     const backup = payload as BackupPayload;
-    this.database.run("BEGIN");
-    try {
-      this.database.run("DELETE FROM ledger_entries");
-      this.database.run("DELETE FROM backtest_results");
-      this.database.run("DELETE FROM backtest_experiments");
-      this.database.run("DELETE FROM market_prices");
-      this.database.run("DELETE FROM corporate_actions");
-      this.database.run("DELETE FROM settings");
-      this.database.run("DELETE FROM stock_universe");
-      this.database.run("DELETE FROM backtest_workspace");
+    this.database.transaction(() => {
+      this.database.exec(`
+        DELETE FROM ledger_entries;
+        DELETE FROM backtest_results;
+        DELETE FROM backtest_experiments;
+        DELETE FROM market_prices;
+        DELETE FROM corporate_actions;
+        DELETE FROM settings;
+        DELETE FROM stock_universe;
+        DELETE FROM backtest_workspace;
+      `);
+      const insertLedger = this.database.prepare(
+        "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+      );
       for (const entry of backup.ledgerEntries) {
-        this.database.run(
-          "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
-          [
-            entry.id,
-            entry.businessDate,
-            entry.recordedAt,
-            entry.type,
-            JSON.stringify({ ...entry, source: "restore" }),
-          ],
+        insertLedger.run(
+          entry.id,
+          entry.businessDate,
+          entry.recordedAt,
+          entry.type,
+          JSON.stringify({ ...entry, source: "restore" }),
         );
       }
       for (const experiment of backup.backtestExperiments) {
         this.insertExperiment(experiment);
       }
+      const insertPrice = this.database.prepare(
+        "INSERT INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      );
       for (const row of backup.marketPrices) {
-        this.database.run(
-          "INSERT INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
-          [row.symbol, row.trade_date, row.close, row.source, row.fetched_at],
+        insertPrice.run(
+          row.symbol,
+          row.trade_date,
+          row.close,
+          row.source,
+          row.fetched_at,
         );
       }
+      const insertAction = this.database.prepare(
+        "INSERT INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
+      );
       for (const row of backup.corporateActions) {
-        this.database.run(
-          "INSERT INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
-          [row.symbol, row.event_date, row.payload_json],
-        );
+        insertAction.run(row.symbol, row.event_date, row.payload_json);
       }
-      this.database.run(
-        "INSERT INTO settings(key, value_json) VALUES ('app', ?)",
-        [JSON.stringify(backup.settings ?? DEFAULT_SETTINGS)],
+      this.database
+        .prepare("INSERT INTO settings(key, value_json) VALUES ('app', ?)")
+        .run(JSON.stringify(backup.settings ?? DEFAULT_SETTINGS));
+      const insertStock = this.database.prepare(
+        "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
       );
       for (const stock of backup.stockUniverse) {
-        this.database.run(
-          "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
-          [stock.symbol, stock.name, stock.source, stock.fetchedAt],
+        insertStock.run(
+          stock.symbol,
+          stock.name,
+          stock.source,
+          stock.fetchedAt,
         );
       }
       if (backup.backtestWorkspace) {
-        this.database.run(
-          "INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)",
-          [JSON.stringify(backup.backtestWorkspace)],
-        );
+        this.database
+          .prepare(
+            "INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)",
+          )
+          .run(JSON.stringify(backup.backtestWorkspace));
       }
-      this.database.run("COMMIT");
-      this.persist();
-    } catch (error) {
-      this.database.run("ROLLBACK");
-      throw error;
-    }
+    })();
   }
 }

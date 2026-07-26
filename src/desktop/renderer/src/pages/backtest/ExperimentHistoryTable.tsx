@@ -4,28 +4,17 @@ import {
   DeleteOutlined,
   EyeOutlined,
 } from "@ant-design/icons";
-import { BACKTEST_RANGE_LABELS } from "../../../shared/constants";
-import type { BacktestExperimentSummary } from "../api/client";
+import { BACKTEST_RANGE_LABELS } from "../../../../shared/constants";
+import type { BacktestExperimentSummary } from "../../api/client";
+import { money, percent } from "./formatters";
 
-interface BacktestHistoryPanelProps {
+interface ExperimentHistoryTableProps {
   experiments: BacktestExperimentSummary[];
   loading: boolean;
   deletingId?: string;
   onView: (experiment: BacktestExperimentSummary) => void;
   onCopy: (experiment: BacktestExperimentSummary) => void;
   onDelete: (experiment: BacktestExperimentSummary) => void;
-}
-
-function money(value: number): string {
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency: "CNY",
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function percent(value: number | null): string {
-  return value === null ? "—" : `${(value * 100).toFixed(2)}%`;
 }
 
 function rangeLabel(experiment: BacktestExperimentSummary): string {
@@ -48,14 +37,14 @@ function createdAtLabel(createdAt: string): string {
     .replaceAll("/", "-");
 }
 
-export function BacktestHistoryPanel({
+export function ExperimentHistoryTable({
   experiments,
   loading,
   deletingId,
   onView,
   onCopy,
   onDelete,
-}: BacktestHistoryPanelProps) {
+}: ExperimentHistoryTableProps) {
   if (loading && !experiments.length) {
     return (
       <section className="workspace-panel experiment-history-loading">

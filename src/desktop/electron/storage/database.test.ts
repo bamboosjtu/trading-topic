@@ -11,6 +11,13 @@ import type {
 import { LocalDatabase } from "./database";
 
 const temporaryDirectories: string[] = [];
+const openDatabases: LocalDatabase[] = [];
+
+async function openDatabase(filePath: string): Promise<LocalDatabase> {
+  const database = await LocalDatabase.open(filePath);
+  openDatabases.push(database);
+  return database;
+}
 
 function request(rangeYears: 3 | 5 = 3): BacktestRequest {
   return {
@@ -49,12 +56,16 @@ function result(
       totalPnl: endingAsset - 108000,
       xirr: endingAsset / 1_000_000,
       maxDrawdown: -0.2,
+      maxDrawdownStart: "2025-01-01",
+      maxDrawdownEnd: "2025-06-01",
+      maxDrawdownMonths: 5,
       totalDividend: 12000,
       endingCash: 0,
     },
     transactions: [],
     equityCurve: [],
     priceSeries: [],
+    chartData: { status: "unavailable", reason: "test" },
     warnings: [],
     provenance: [
       {
@@ -100,19 +111,17 @@ function workspace(activeExperimentId = "experiment-last"): BacktestWorkspaceSta
 }
 
 afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
 describe("LocalDatabase", () => {
-  it("导出并恢复 schema v3 的不可变回测试验与流水", async () => {
+  it("导出并恢复 schema v4 的不可变回测试验与流水", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
-    const database = await LocalDatabase.open(
-      join(directory, "app.sqlite"),
-      process.cwd(),
-    );
+    const database = await openDatabase(join(directory, "app.sqlite"));
     database.addLedger({
       id: "entry-1",
       type: "transfer_in",
@@ -127,13 +136,12 @@ describe("LocalDatabase", () => {
     );
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(3);
+    expect(backup.schemaVersion).toBe(4);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
 
-    const restored = await LocalDatabase.open(
+    const restored = await openDatabase(
       join(directory, "restored.sqlite"),
-      process.cwd(),
     );
     restored.restoreBackup(backup);
     expect(restored.listLedger()[0].source).toBe("restore");
@@ -145,10 +153,7 @@ describe("LocalDatabase", () => {
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-history-"));
     temporaryDirectories.push(directory);
-    const database = await LocalDatabase.open(
-      join(directory, "app.sqlite"),
-      process.cwd(),
-    );
+    const database = await openDatabase(join(directory, "app.sqlite"));
 
     database.saveBacktestExperiment(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
@@ -171,10 +176,7 @@ describe("LocalDatabase", () => {
   it("删除实验时级联删除结果，并清除工作区活动实验", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-delete-"));
     temporaryDirectories.push(directory);
-    const database = await LocalDatabase.open(
-      join(directory, "app.sqlite"),
-      process.cwd(),
-    );
+    const database = await openDatabase(join(directory, "app.sqlite"));
     database.saveBacktestExperiment(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
     );
@@ -191,7 +193,7 @@ describe("LocalDatabase", () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-workspace-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "app.sqlite");
-    const database = await LocalDatabase.open(filePath, process.cwd());
+    const database = await openDatabase(filePath);
     database.replaceStockUniverse(
       [
         { symbol: "000001", name: "平安银行" },
@@ -202,7 +204,9 @@ describe("LocalDatabase", () => {
     );
     database.saveBacktestWorkspace(workspace());
 
-    const reopened = await LocalDatabase.open(filePath, process.cwd());
+    database.close();
+    openDatabases.splice(openDatabases.indexOf(database), 1);
+    const reopened = await openDatabase(filePath);
     expect(reopened.listStockUniverse()).toEqual([
       {
         symbol: "000001",

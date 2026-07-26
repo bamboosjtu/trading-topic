@@ -56,12 +56,65 @@ export function xirr(
   return (low + high) / 2;
 }
 
-export function maximumDrawdown(values: number[]): number {
-  let peak = 0;
-  let maximum = 0;
-  for (const value of values) {
-    peak = Math.max(peak, value);
-    if (peak > 0) maximum = Math.min(maximum, value / peak - 1);
+export interface DrawdownProfile {
+  maxDrawdown: number;
+  maxDrawdownStart: string;
+  maxDrawdownEnd: string;
+  maxDrawdownMonths: number;
+}
+
+export function drawdownProfile(
+  points: Array<{ date: string; value: number }>,
+): DrawdownProfile {
+  if (!points.length) {
+    return {
+      maxDrawdown: 0,
+      maxDrawdownStart: "",
+      maxDrawdownEnd: "",
+      maxDrawdownMonths: 0,
+    };
   }
-  return maximum;
+  let peakIndex = 0;
+  let deepestPeakIndex = 0;
+  let troughIndex = 0;
+  let maxDrawdown = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    if (points[index].value >= points[peakIndex].value) {
+      peakIndex = index;
+      continue;
+    }
+    const drawdown = points[index].value / points[peakIndex].value - 1;
+    if (drawdown < maxDrawdown) {
+      maxDrawdown = drawdown;
+      deepestPeakIndex = peakIndex;
+      troughIndex = index;
+    }
+  }
+  if (maxDrawdown === 0) {
+    return {
+      maxDrawdown: 0,
+      maxDrawdownStart: "",
+      maxDrawdownEnd: "",
+      maxDrawdownMonths: 0,
+    };
+  }
+  let recoveryIndex = points.length - 1;
+  const peakValue = points[deepestPeakIndex].value;
+  for (let index = troughIndex + 1; index < points.length; index += 1) {
+    if (points[index].value >= peakValue) {
+      recoveryIndex = index;
+      break;
+    }
+  }
+  const maxDrawdownStart = points[deepestPeakIndex].date;
+  const maxDrawdownEnd = points[recoveryIndex].date;
+  return {
+    maxDrawdown,
+    maxDrawdownStart,
+    maxDrawdownEnd,
+    maxDrawdownMonths: Math.max(
+      0,
+      Math.round(daysBetween(maxDrawdownStart, maxDrawdownEnd) / 30.4375),
+    ),
+  };
 }

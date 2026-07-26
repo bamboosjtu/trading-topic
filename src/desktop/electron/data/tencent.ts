@@ -1,4 +1,5 @@
 import type {
+  AdjustedBar,
   DataProvenance,
   DividendEvent,
   PricePoint,
@@ -40,57 +41,138 @@ async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
   }
 }
 
+async function fetchTencentDailyRows(
+  symbol: string,
+  startDate: string,
+  endDate: string,
+  adjustment: "none" | "qfq",
+): Promise<Array<Array<string | number>>> {
+  const code = marketSymbol(symbol);
+  const rows = new Map<string, Array<string | number>>();
+  const firstYear = Number(startDate.slice(0, 4));
+  const lastYear = Number(endDate.slice(0, 4));
+  for (let year = firstYear; year <= lastYear; year += 1) {
+    const url = new URL(TENCENT_URL);
+    const variable = `kline_${adjustment}_day${year}`;
+    url.searchParams.set("_var", variable);
+    url.searchParams.set(
+      "param",
+      `${code},day,${year}-01-01,${year}-12-31,640,${
+        adjustment === "qfq" ? "qfq" : ""
+      }`,
+    );
+    url.searchParams.set("r", String(Date.now()));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          Referer: `https://gu.qq.com/${code}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`腾讯行情请求失败：HTTP ${response.status}`);
+      }
+      const text = await response.text();
+      const jsonStart = text.indexOf("={");
+      if (jsonStart < 0) throw new Error("腾讯行情响应格式已变化");
+      const payload = JSON.parse(text.slice(jsonStart + 1)) as {
+        data?: Record<
+          string,
+          {
+            day?: Array<Array<string | number>>;
+            qfqday?: Array<Array<string | number>>;
+          }
+        >;
+      };
+      const series =
+        adjustment === "qfq"
+          ? payload.data?.[code]?.qfqday
+          : payload.data?.[code]?.day;
+      for (const item of series ?? []) {
+        const date = String(item[0]);
+        if (date >= startDate && date <= endDate) rows.set(date, item);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return [...rows.values()].sort((left, right) =>
+    String(left[0]).localeCompare(String(right[0])),
+  );
+}
+
 export async function fetchUnadjustedPrices(
   symbol: string,
   startDate: string,
   endDate: string,
 ): Promise<{ rows: PricePoint[]; provenance: DataProvenance }> {
-  const code = marketSymbol(symbol);
-  const rows = new Map<string, PricePoint>();
-  const firstYear = Number(startDate.slice(0, 4));
-  const lastYear = Number(endDate.slice(0, 4));
-  for (let year = firstYear; year <= lastYear; year += 1) {
-    const url = new URL(TENCENT_URL);
-    const variable = `kline_day${year}`;
-    url.searchParams.set("_var", variable);
-    url.searchParams.set(
-      "param",
-      `${code},day,${year}-01-01,${year + 1}-12-31,640,`,
-    );
-    url.searchParams.set("r", String(Date.now()));
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: `https://gu.qq.com/${code}`,
-      },
-    });
-    if (!response.ok) throw new Error(`腾讯行情请求失败：HTTP ${response.status}`);
-    const text = await response.text();
-    const jsonStart = text.indexOf("={");
-    if (jsonStart < 0) throw new Error("腾讯行情响应格式已变化");
-    const payload = JSON.parse(text.slice(jsonStart + 1)) as {
-      data?: Record<string, { day?: Array<Array<string | number>> }>;
-    };
-    const day = payload.data?.[code]?.day ?? [];
-    for (const item of day) {
-      const date = String(item[0]);
-      const close = Number(item[2]);
-      if (date >= startDate && date <= endDate && Number.isFinite(close)) {
-        rows.set(date, { date, close });
-      }
-    }
-  }
-  const sorted = [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
-  if (!sorted.length) throw new Error(`${symbol} 未取得腾讯不复权日线`);
+  const rows = (await fetchTencentDailyRows(
+    symbol,
+    startDate,
+    endDate,
+    "none",
+  ))
+    .map((item) => ({ date: String(item[0]), close: Number(item[2]) }))
+    .filter((row) => Number.isFinite(row.close) && row.close > 0);
+  if (!rows.length) throw new Error(`${symbol} 未取得腾讯不复权日线`);
   const fetchedAt = new Date().toISOString();
   return {
-    rows: sorted,
+    rows,
     provenance: {
       source: "腾讯财经 newfqkline（产品域独立适配）",
       fetchedAt,
-      dataCutoff: sorted.at(-1)!.date,
+      dataCutoff: rows.at(-1)!.date,
       adjustment: "none",
+      caliberVersion: BACKTEST_CALIBER_VERSION,
+    },
+  };
+}
+
+export async function fetchAdjustedBars(
+  symbol: string,
+  startDate: string,
+  endDate: string,
+): Promise<{ rows: AdjustedBar[]; provenance: DataProvenance }> {
+  const rows = (await fetchTencentDailyRows(
+    symbol,
+    startDate,
+    endDate,
+    "qfq",
+  ))
+    .map(
+      (item): AdjustedBar => ({
+        date: String(item[0]),
+        open: Number(item[1]),
+        close: Number(item[2]),
+        high: Number(item[3]),
+        low: Number(item[4]),
+        volume: Number(item[5]),
+        adjustment: "qfq",
+      }),
+    )
+    .filter(
+      (row) =>
+        [row.open, row.high, row.low, row.close, row.volume].every(
+          Number.isFinite,
+        ) &&
+        row.open > 0 &&
+        row.high >= Math.max(row.open, row.close) &&
+        row.low > 0 &&
+        row.low <= Math.min(row.open, row.close) &&
+        row.volume >= 0,
+    );
+  if (!rows.length) throw new Error(`${symbol} 未取得腾讯前复权 OHLCV 日线`);
+  return {
+    rows,
+    provenance: {
+      source: "腾讯财经 newfqkline 前复权 OHLCV（产品域独立适配）",
+      fetchedAt: new Date().toISOString(),
+      dataCutoff: rows.at(-1)!.date,
+      adjustment: "qfq",
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
   };

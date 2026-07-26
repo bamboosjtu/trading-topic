@@ -41,6 +41,7 @@ export const api = {
 
 export type {
   AccountSummary,
+  AdjustedBar,
   AppSettings,
   BacktestExperiment,
   BacktestExperimentSummary,
@@ -49,11 +50,11 @@ export type {
   BacktestCandlePeriod,
   BacktestChartMetric,
   BacktestWorkspaceState,
+  ChartDataState,
   EntryType,
   HealthResponse,
   LedgerEntry,
   LedgerEntryInput,
-  PricePoint,
   SimpleBacktestResult,
   SimpleBacktestRow,
   StockInfo,

@@ -12,7 +12,7 @@ import type {
   SimpleBacktestResult,
   SimpleBacktestRow,
 } from "../../shared/contracts";
-import { maximumDrawdown, roundMoney, xirr } from "./finance";
+import { drawdownProfile, roundMoney, xirr } from "./finance";
 
 /** 内部股数保留 6 位小数，界面按需显示 2 位，避免长期累计漂移。 */
 function roundShares(value: number): number {
@@ -149,6 +149,7 @@ export function simulateBacktest(
   // 注意：nav 始终按除权日分红计算（标的理论净值），不受 dividendTiming 影响。
   let prevClose: number | null = null;
   let nav = 1;
+  let navPeak = 1;
 
   for (const row of prices) {
     // 送股/转增在除权日先入账。资格股数按登记日收盘后的历史持仓确定，
@@ -266,11 +267,16 @@ export function simulateBacktest(
     }
     prevClose = row.close;
 
+    navPeak = Math.max(navPeak, nav);
+    const asset = roundMoney(shares * row.close + totalCash());
     equityCurve.push({
       date: row.date,
-      asset: roundMoney(shares * row.close + totalCash()),
+      asset,
       contribution: totalContribution,
       nav,
+      returnRate:
+        totalContribution > 0 ? asset / totalContribution - 1 : 0,
+      drawdown: navPeak > 0 ? nav / navPeak - 1 : 0,
     });
     holdingsHistory.push({ date: row.date, shares });
   }
@@ -282,7 +288,9 @@ export function simulateBacktest(
   // P0-2：最大回撤基于标的总收益净值（nav），而非每日账户总资产。
   // 外部每月投入会不断抬高总资产序列，掩盖真实跌幅；nav 剔除外部现金流，
   // 该口径不会被后续外部投入人为抬高。
-  const navSeries = equityCurve.map((row) => row.nav ?? 1);
+  const drawdown = drawdownProfile(
+    equityCurve.map((row) => ({ date: row.date, value: row.nav ?? 1 })),
+  );
   return {
     id: randomUUID(),
     experimentId: experimentContext.id,
@@ -302,13 +310,17 @@ export function simulateBacktest(
       endingAsset,
       totalPnl: roundMoney(endingAsset - totalContribution),
       xirr: xirr(cashflows),
-      maxDrawdown: maximumDrawdown(navSeries),
+      ...drawdown,
       totalDividend,
       endingCash: totalCash(),
     },
     transactions,
     equityCurve,
     priceSeries: prices,
+    chartData: {
+      status: "unavailable",
+      reason: "本次结果没有前复权 OHLCV 快照",
+    },
     warnings,
     provenance,
     createdAt: experimentContext.createdAt,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
-import { fetchCorporateActions } from "./tencent";
+import { fetchAdjustedBars, fetchCorporateActions } from "./tencent";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -95,5 +95,49 @@ describe("fetchCorporateActions", () => {
     expect(result.rows[0].transferRatio).toBe(0);
     expect(result.provenance.dataCutoff).toBe("2024-09-01");
     expect(result.provenance.caliberVersion).toBe(BACKTEST_CALIBER_VERSION);
+  });
+});
+
+describe("fetchAdjustedBars", () => {
+  it("保留腾讯前复权日线的真实 OHLCV，而不是从收盘价推导", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        'kline_qfq_day2024={"data":{"sh601398":{"qfqday":[["2024-01-02","4.31","4.38","4.42","4.27","123456.5"],["2024-01-03","4.39","4.35","4.41","4.32","98765"]]}}}',
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAdjustedBars(
+      "601398",
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "sh601398%2Cday%2C2024-01-01%2C2024-12-31%2C640%2Cqfq",
+    );
+    expect(result.rows).toEqual([
+      {
+        date: "2024-01-02",
+        open: 4.31,
+        high: 4.42,
+        low: 4.27,
+        close: 4.38,
+        volume: 123456.5,
+        adjustment: "qfq",
+      },
+      {
+        date: "2024-01-03",
+        open: 4.39,
+        high: 4.41,
+        low: 4.32,
+        close: 4.35,
+        volume: 98765,
+        adjustment: "qfq",
+      },
+    ]);
+    expect(result.provenance.adjustment).toBe("qfq");
   });
 });

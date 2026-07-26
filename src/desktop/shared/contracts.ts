@@ -11,7 +11,7 @@ export interface DataProvenance {
   source: string;
   fetchedAt: string;
   dataCutoff: string;
-  adjustment: "none";
+  adjustment: "none" | "qfq";
   caliberVersion: string;
 }
 
@@ -19,6 +19,22 @@ export interface PricePoint {
   date: string;
   close: number;
 }
+
+export interface AdjustedBar {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  adjustment: "qfq";
+}
+
+export type ChartDataState =
+  | { status: "loading" }
+  | { status: "ready"; data: AdjustedBar[] }
+  | { status: "unavailable"; reason: string }
+  | { status: "error"; message: string };
 
 export interface DividendEvent {
   date: string;
@@ -72,6 +88,10 @@ export interface EquityPoint {
   date: string;
   asset: number;
   contribution: number;
+  /** 账户资产相对累计外部投入的收益率，由领域层计算。 */
+  returnRate: number;
+  /** 标的总收益净值相对历史峰值的回撤，由领域层计算。 */
+  drawdown: number;
   /**
    * 标的总收益净值（剔除外部投入），用于计算可比最大回撤。
    * 用于计算策略最大回撤，避免外部每月投入抬高净值掩盖真实跌幅。
@@ -85,6 +105,9 @@ export interface BacktestMetrics {
   totalPnl: number;
   xirr: number | null;
   maxDrawdown: number;
+  maxDrawdownStart: string;
+  maxDrawdownEnd: string;
+  maxDrawdownMonths: number;
   totalDividend: number;
   endingCash: number;
 }
@@ -107,8 +130,10 @@ export interface BacktestResult {
   metrics: BacktestMetrics;
   transactions: BacktestTransaction[];
   equityCurve: EquityPoint[];
-  /** 回测区间的不复权收盘价，用于产品端独立绘制行情 K 线。 */
-  priceSeries?: PricePoint[];
+  /** 回测使用的不复权收盘价快照，用于审计明细与结果复现。 */
+  priceSeries: PricePoint[];
+  /** 快速走势浏览使用的前复权真实 OHLCV，不作为严格回测证据。 */
+  chartData: Exclude<ChartDataState, { status: "loading" }>;
   warnings: string[];
   provenance: DataProvenance[];
   createdAt: string;
