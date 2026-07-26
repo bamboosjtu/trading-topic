@@ -473,10 +473,10 @@ export function simulateBacktestDetail(
 }
 
 /**
- * R1 回测审计明细（drawer 展示视图）。
+ * R1 回测审计明细（modal 展示视图）。
  *
  * 不再维护一套“简化但不同”的回测算法，而是把 simulateBacktest 的实际交易
- * 流水转换为可读明细，保证主结果、资产曲线与 drawer 完全同源。
+ * 流水转换为可读明细，保证主结果、资产曲线与 modal 完全同源。
  */
 export function simulateBacktestSimple(
   input: BacktestRequest,
@@ -529,6 +529,7 @@ export function simulateBacktestSimple(
       cumulativeContribution: roundMoney(cumulativeContribution),
       tradeAmount: 0,
       cumulativeInvestment: roundMoney(cumulativeInvestment),
+      cumulativeDividend: roundMoney(totalDividendAmount),
       endingCash: roundMoney(endingCash),
       returnRate,
       ...extras,

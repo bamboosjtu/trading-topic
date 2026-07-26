@@ -712,6 +712,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     expect(jan.cumulativeContribution).toBe(1_000);
     expect(jan.tradeAmount).toBe(1_000);
     expect(jan.cumulativeInvestment).toBe(1_000);
+    expect(jan.cumulativeDividend).toBe(0);
     expect(jan.endingCash).toBe(0);
     // 盈亏率 = (10*100 + 0) / 1000 - 1 = 0
     expect(jan.returnRate).toBe(0);
@@ -816,6 +817,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     expect(div.cumulativeShares).toBe(100);
     expect(div.cumulativeContribution).toBe(1_000);
     expect(div.dividendAmount).toBe(500);
+    expect(div.cumulativeDividend).toBe(500);
     expect(div.endingCash).toBe(500);
     expect(div.dividendPerShare).toBe(5);
     expect(div.returnRate).toBe(0);
@@ -826,6 +828,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     expect(reinvest.cumulativeShares).toBe(200);
     expect(reinvest.tradeAmount).toBe(500);
     expect(reinvest.cumulativeInvestment).toBe(1_500);
+    expect(reinvest.cumulativeDividend).toBe(500);
     expect(reinvest.endingCash).toBe(0);
 
     // 2 月定投再买入 200 股。
@@ -837,6 +840,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     expect(feb.cumulativeContribution).toBe(2_000);
     expect(feb.tradeAmount).toBe(1_000);
     expect(feb.cumulativeInvestment).toBe(2_500);
+    expect(feb.cumulativeDividend).toBe(500);
     expect(feb.endingCash).toBe(0);
     expect(feb.returnRate).toBe(0);
 

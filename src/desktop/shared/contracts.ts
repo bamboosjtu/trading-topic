@@ -163,7 +163,7 @@ export interface BacktestDetailResult {
 }
 
 /**
- * R1 回测审计明细行（drawer 展示视图）。
+ * R1 回测审计明细行（modal 展示视图）。
  *
  * 主结果与明细共用同一套计算口径：费用为 0、允许零碎股、现金分红自动回购，
  * 送股/转增按每 10 股比例增加持股。
@@ -194,6 +194,8 @@ export interface SimpleBacktestRow {
   tradeAmount: number;
   /** 从回测开始到当前事件的全部买入成交金额 */
   cumulativeInvestment: number;
+  /** 从回测开始到当前事件的累计现金分红 */
+  cumulativeDividend: number;
   /** 期末现金余额 */
   endingCash: number;
   /** 当前盈亏率 = (价格 × 累计股数 + 期末现金) / 累计外部投入 - 1 */

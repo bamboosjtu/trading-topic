@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
@@ -6,16 +6,15 @@ import {
   Input,
   InputNumber,
   Modal,
+  Pagination,
   Popover,
   Select,
   Skeleton,
   Table,
   Tag,
   Tooltip,
-  Typography,
 } from "antd";
 import {
-  CalendarOutlined,
   ClockCircleOutlined,
   DollarOutlined,
   DownloadOutlined,
@@ -37,8 +36,6 @@ import {
   type SimpleBacktestResult,
   type SimpleBacktestRow,
 } from "../api/client";
-
-const { Text } = Typography;
 
 const BANKS = [
   ["601398", "工商银行"],
@@ -198,7 +195,13 @@ export function BacktestPage() {
   const [rulesExpanded, setRulesExpanded] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>("asset");
   const [chartRange, setChartRange] = useState<ChartRange>("all");
+  const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
+  const [detailPage, setDetailPage] = useState(1);
+  const [detailEventFilters, setDetailEventFilters] = useState<
+    SimpleBacktestRow["event"][]
+  >([]);
   const buyDay = Form.useWatch("buyDay", form) ?? 1;
+  const selectedSymbols = Form.useWatch("symbols", form) ?? [];
 
   const history = useQuery({
     queryKey: ["backtests"],
@@ -234,6 +237,20 @@ export function BacktestPage() {
     () => simpleQuery.data?.find((row) => row.symbol === detail?.symbol),
     [simpleQuery.data, detail?.symbol],
   );
+  const filteredDetailRows = useMemo(() => {
+    const rows = simpleResult?.rows ?? [];
+    if (!detailEventFilters.length) return rows;
+    return rows.filter((row) => detailEventFilters.includes(row.event));
+  }, [detailEventFilters, simpleResult?.rows]);
+  const detailRows = useMemo(
+    () => filteredDetailRows.slice((detailPage - 1) * 20, detailPage * 20),
+    [detailPage, filteredDetailRows],
+  );
+
+  useEffect(() => {
+    setDetailPage(1);
+    setDetailEventFilters([]);
+  }, [detail?.id]);
 
   const results = useMemo(
     () => currentResults.length ? currentResults : history.data?.slice(0, 4) ?? [],
@@ -415,14 +432,6 @@ export function BacktestPage() {
     };
   }, [chartMetric, chartRange, results]);
 
-  const detailYears = useMemo(
-    () =>
-      Array.from(new Set(simpleResult?.rows.map((row) => row.date.slice(0, 4)) ?? []))
-        .sort()
-        .map((year) => ({ text: year, value: year })),
-    [simpleResult],
-  );
-
   const setDatePreset = (years: 3 | 5 | 10 | "custom") => {
     setRangePreset(years);
     if (years !== "custom") {
@@ -447,8 +456,8 @@ export function BacktestPage() {
     <div className="backtest-page">
       <header className="page-heading backtest-heading">
         <h1>历史回测</h1>
-        <div className="flex items-center gap-5">
-          <p>固定金额、允许零碎股、分红再投资，长期定投收益与风险分析</p>
+        <div className="backtest-heading-meta">
+          <p>回测全仓策略、定投买入、分红再投资，长期走势与收益表现分析</p>
           <button
             type="button"
             className="inline-link"
@@ -477,22 +486,36 @@ export function BacktestPage() {
             <InputNumber />
           </Form.Item>
           <div className="backtest-config-grid">
-            <Form.Item
-              name="symbols"
-              label="标的选择"
-              rules={[{ required: true, message: "至少选择一个标的" }]}
-              className="!mb-0 min-w-0"
-            >
-              <Select
-                mode="multiple"
-                maxCount={4}
-                options={BANK_OPTIONS}
-                placeholder="添加标的"
-                className="backtest-symbol-select"
-                suffixIcon={<PlusOutlined />}
-                allowClear
-              />
-            </Form.Item>
+            <div className="symbol-field">
+              <Form.Item
+                name="symbols"
+                label="标的选择"
+                rules={[{ required: true, message: "至少选择一个标的" }]}
+                className="!mb-0 min-w-0"
+              >
+                <Select
+                  mode="multiple"
+                  maxCount={4}
+                  options={BANK_OPTIONS}
+                  placeholder="添加标的"
+                  className="backtest-symbol-select"
+                  suffixIcon={<PlusOutlined />}
+                  open={symbolPickerOpen}
+                  onOpenChange={setSymbolPickerOpen}
+                  allowClear
+                />
+              </Form.Item>
+              <Button
+                type="default"
+                size="small"
+                icon={<PlusOutlined />}
+                className="add-symbol-button"
+                disabled={selectedSymbols.length >= 4}
+                onClick={() => setSymbolPickerOpen(true)}
+              >
+                添加标的
+              </Button>
+            </div>
 
             <div className="backtest-range">
               <div className="field-label">回测区间</div>
@@ -636,7 +659,7 @@ export function BacktestPage() {
 
       <section className="workspace-panel backtest-chart-panel">
         <div className="chart-toolbar">
-          <div className="chart-title">资产曲线</div>
+          <div className="chart-title">资产曲线对比</div>
           <div className="chart-metric-tabs" role="tablist" aria-label="图表指标">
             {metricTabs.map(([key, label]) => (
               <button
@@ -694,7 +717,7 @@ export function BacktestPage() {
             notMerge
             option={chartOption}
             className="backtest-chart"
-            style={{ height: 235 }}
+            style={{ height: 250 }}
           />
         )}
       </section>
@@ -831,12 +854,13 @@ export function BacktestPage() {
             "回测明细"
           )
         }
-        width={1200}
+        width={990}
         open={Boolean(detail)}
         footer={null}
-        centered
+        style={{ top: "22vh", left: "3vw" }}
         destroyOnHidden
         className="backtest-detail-modal"
+        rootClassName="backtest-detail-root"
         onCancel={() => setDetail(null)}
       >
         {detail && (
@@ -849,14 +873,22 @@ export function BacktestPage() {
                     simpleResult?.actualEndDate ?? detail.actualEndDate
                   }`,
                 ],
-                ["明细行数", `${simpleResult?.rows.length ?? 0} 条`],
-                ["累计外部投入", money(simpleResult?.endingCost ?? 0)],
-                ["累计买入金额", money(simpleResult?.endingInvestment ?? 0)],
-                ["当前盈亏率", percent(simpleResult?.returnRate ?? null)],
-              ].map(([label, value]) => (
+                ["明细条数", `${simpleResult?.rows.length ?? 0} 条`],
+                ["累计外部投入", money(simpleResult?.endingCost ?? 0), ""],
+                ["累计分红（税后）", money(simpleResult?.totalDividendAmount ?? 0), ""],
+                [
+                  "当前盈亏率",
+                  percent(simpleResult?.returnRate ?? null),
+                  simpleResult?.returnRate === undefined || simpleResult.returnRate === 0
+                    ? ""
+                    : simpleResult.returnRate > 0
+                      ? "stock-profit"
+                      : "stock-loss",
+                ],
+              ].map(([label, value, tone]) => (
                 <div key={label}>
                   <span>{label}</span>
-                  <strong className="tabular-nums">{value}</strong>
+                  <strong className={`tabular-nums ${tone}`}>{value}</strong>
                 </div>
               ))}
             </div>
@@ -876,32 +908,25 @@ export function BacktestPage() {
               <Table
                 size="small"
                 rowKey={(row, index) => `${row.date}-${row.event}-${index ?? 0}`}
-                pagination={{
-                  pageSize: 20,
-                  showSizeChanger: false,
-                  showQuickJumper: false,
-                  hideOnSinglePage: false,
-                  position: ["bottomRight"],
+                pagination={false}
+                onChange={(_, filters) => {
+                  const events = (filters.event ?? []) as SimpleBacktestRow["event"][];
+                  setDetailEventFilters(events);
+                  setDetailPage(1);
                 }}
-                dataSource={simpleResult.rows}
-                scroll={{ x: 1400, y: 468 }}
+                dataSource={detailRows}
+                tableLayout="fixed"
                 columns={[
                   {
                     title: "日期",
                     dataIndex: "date",
-                    width: 108,
-                    fixed: "left",
+                    width: 90,
                     className: "tabular-nums",
-                    sorter: (a, b) => a.date.localeCompare(b.date),
-                    defaultSortOrder: "ascend",
-                    filters: detailYears,
-                    onFilter: (value, row) => row.date.startsWith(String(value)),
                   },
                   {
                     title: "事件",
                     dataIndex: "event",
-                    width: 96,
-                    fixed: "left",
+                    width: 72,
                     render: (event: SimpleBacktestRow["event"]) => (
                       <Tag color={EVENT_COLORS[event]} bordered={false}>
                         {EVENT_LABELS[event]}
@@ -911,57 +936,46 @@ export function BacktestPage() {
                       text: label,
                       value,
                     })),
-                    onFilter: (value, row) => row.event === value,
+                    filteredValue: detailEventFilters.length
+                      ? detailEventFilters
+                      : null,
                   },
                   {
                     title: "期初现金",
                     dataIndex: "openingCash",
-                    width: 112,
+                    width: 88,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) => a.openingCash - b.openingCash,
                     render: (value: number) => money(value),
+                  },
+                  {
+                    title: "外部投入",
+                    dataIndex: "externalContribution",
+                    width: 82,
+                    align: "right",
+                    className: "tabular-nums",
+                    render: (value: number) => value > 0 ? money(value) : "—",
                   },
                   {
                     title: "收盘价",
                     dataIndex: "price",
-                    width: 88,
+                    width: 58,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) => a.price - b.price,
                     render: (value: number) => value.toFixed(2),
                   },
                   {
-                    title: "本次新增股数",
+                    title: "新增股数",
                     dataIndex: "shares",
-                    width: 120,
+                    width: 76,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) => a.shares - b.shares,
                     render: (value: number, row) =>
                       row.event === "dividend" ? "—" : value.toFixed(2),
                   },
                   {
-                    title: "累计股数",
-                    dataIndex: "cumulativeShares",
-                    width: 106,
-                    align: "right",
-                    className: "tabular-nums",
-                    sorter: (a, b) => a.cumulativeShares - b.cumulativeShares,
-                    render: (value: number) => value.toFixed(2),
-                  },
-                  {
-                    title: "本期外部投入",
-                    dataIndex: "externalContribution",
-                    width: 120,
-                    align: "right",
-                    className: "tabular-nums",
-                    sorter: (a, b) => a.externalContribution - b.externalContribution,
-                    render: (value: number) => value > 0 ? money(value) : "—",
-                  },
-                  {
                     title: "发生金额",
-                    width: 128,
+                    width: 88,
                     align: "right",
                     className: "tabular-nums",
                     render: (_, row) => {
@@ -975,46 +989,55 @@ export function BacktestPage() {
                     },
                   },
                   {
-                    title: "累计外部投入",
-                    dataIndex: "cumulativeContribution",
-                    width: 126,
+                    title: "累计股数",
+                    dataIndex: "cumulativeShares",
+                    width: 82,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) =>
-                      a.cumulativeContribution - b.cumulativeContribution,
+                    render: (value: number) => value.toFixed(2),
+                  },
+                  {
+                    title: "累计投入",
+                    dataIndex: "cumulativeContribution",
+                    width: 88,
+                    align: "right",
+                    className: "tabular-nums",
                     render: (value: number) => money(value),
                   },
                   {
-                    title: "累计买入金额",
-                    dataIndex: "cumulativeInvestment",
-                    width: 126,
+                    title: "累计分红",
+                    dataIndex: "cumulativeDividend",
+                    width: 82,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) =>
-                      a.cumulativeInvestment - b.cumulativeInvestment,
                     render: (value: number) => money(value),
                   },
                   {
                     title: "期末现金",
                     dataIndex: "endingCash",
-                    width: 110,
+                    width: 82,
                     align: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) => a.endingCash - b.endingCash,
                     render: (value: number) => money(value),
                   },
                   {
                     title: "盈亏率",
                     dataIndex: "returnRate",
-                    width: 94,
+                    width: 64,
                     align: "right",
-                    fixed: "right",
                     className: "tabular-nums",
-                    sorter: (a, b) => a.returnRate - b.returnRate,
                     render: (value: number) => (
-                      <Text type={value >= 0 ? "success" : "danger"}>
+                      <span
+                        className={
+                          value === 0
+                            ? "stock-flat"
+                            : value > 0
+                              ? "stock-profit"
+                              : "stock-loss"
+                        }
+                      >
                         {percent(value)}
-                      </Text>
+                      </span>
                     ),
                   },
                 ]}
@@ -1022,19 +1045,33 @@ export function BacktestPage() {
             )}
 
             <div className="detail-modal-footer">
-              <div>
-                <strong>口径</strong>
-                <span>
-                  交易费用 0 · 允许零碎股 · 现金分红全额回购 · 送股/转增按除权日入账
-                </span>
+              <div className="detail-source-meta">
+                <strong>数据来源：</strong>
+                <span>{detail.provenance.map((item) => item.source).join(" · ")}</span>
+                <i />
+                <strong>更新时间：</strong>
+                <span className="tabular-nums">{detail.actualEndDate}</span>
               </div>
-              <div className="detail-provenance">
-                <CalendarOutlined />
-                {detail.provenance.map((item) => (
-                  <span key={`${item.source}-${item.dataCutoff}`}>
-                    {item.source} · 截止 {item.dataCutoff}
-                  </span>
-                ))}
+              <div className="detail-pagination-controls">
+                <span className="detail-total tabular-nums">
+                  共 {filteredDetailRows.length} 条
+                </span>
+                <Select
+                  aria-label="每页条数"
+                  size="small"
+                  value={20}
+                  options={[{ value: 20, label: "20条/页" }]}
+                  className="detail-page-size"
+                />
+                <Pagination
+                  size="small"
+                  current={detailPage}
+                  pageSize={20}
+                  total={filteredDetailRows.length}
+                  showSizeChanger={false}
+                  hideOnSinglePage={false}
+                  onChange={setDetailPage}
+                />
               </div>
             </div>
           </div>

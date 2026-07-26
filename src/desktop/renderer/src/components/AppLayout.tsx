@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Button, Layout, Tooltip } from "antd";
 import {
   AimOutlined,
@@ -7,6 +7,8 @@ import {
   CalendarOutlined,
   CloudUploadOutlined,
   DatabaseOutlined,
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
   DollarCircleOutlined,
   DownOutlined,
   FundProjectionScreenOutlined,
@@ -70,6 +72,7 @@ export const NAV_GROUPS: NavigationGroup[] = [
 export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: api.health,
@@ -84,15 +87,32 @@ export function AppLayout() {
   );
 
   return (
-    <Layout className="app-shell">
-      <Sider width={200} theme="light" className="app-sidebar">
+    <Layout className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
+      <Sider
+        width={256}
+        collapsedWidth={72}
+        collapsed={collapsed}
+        trigger={null}
+        theme="light"
+        className="app-sidebar"
+      >
         <div className="flex h-full flex-col">
           <div className="app-brand">
-            <div className="brand-mark">攒</div>
-            <div>
+            <div className="brand-mark">股</div>
+            <div className="brand-copy">
               <div className="brand-name">攒股收息</div>
               <div className="brand-en">DIVIDEND DESK</div>
             </div>
+            <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
+              <button
+                type="button"
+                className="sidebar-toggle"
+                aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+                onClick={() => setCollapsed((value) => !value)}
+              >
+                {collapsed ? <DoubleRightOutlined /> : <DoubleLeftOutlined />}
+              </button>
+            </Tooltip>
           </div>
 
           <nav className="app-navigation" aria-label="主导航">
@@ -111,7 +131,7 @@ export function AppLayout() {
                         onClick={() => navigate(item.key)}
                       >
                         <span className="nav-item-icon">{item.icon}</span>
-                        <span>{item.label}</span>
+                        <span className="nav-item-label">{item.label}</span>
                       </button>
                     );
                   })}
@@ -122,7 +142,7 @@ export function AppLayout() {
 
           <div className="local-only">
             <span className="local-only-dot" />
-            <span>数据仅保存在本机</span>
+            <span className="local-only-label">数据仅保存在本机</span>
           </div>
         </div>
       </Sider>
@@ -136,6 +156,7 @@ export function AppLayout() {
             </div>
             <Tooltip title="设置">
               <Button
+                type="text"
                 aria-label="打开设置"
                 className="header-icon-button"
                 icon={<SettingOutlined />}
