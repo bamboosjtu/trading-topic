@@ -1,49 +1,125 @@
+import ExcelJS from "exceljs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { STOCK_UNIVERSE_MIN_SIZE } from "../../shared/constants";
 import {
   fetchAStockUniverse,
-  parseAStockUniverse,
+  mergeAStockUniverse,
+  parseBeijingStockPage,
+  parseShanghaiStocks,
+  parseShenzhenStocks,
 } from "./stockUniverse";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function shenzhenFixture(): Promise<ArrayBuffer> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("A股列表");
+  worksheet.addRow(["板块", "A股代码", "A股简称"]);
+  worksheet.addRow(["主板", 1, "平安银行"]);
+  return workbook.xlsx.writeBuffer();
+}
+
 describe("A 股代码表", () => {
-  it("解析并按代码去重排序", () => {
+  it("解析上交所 JSON、深交所工作簿和北交所分页响应", async () => {
     expect(
-      parseAStockUniverse({
-        data: {
-          diff: [
-            { f12: "601398", f14: "工商银行" },
-            { f12: "000001", f14: "平安银行" },
-            { f12: "601398", f14: "工商银行" },
-            { f12: "-", f14: "-" },
-          ],
-        },
+      parseShanghaiStocks({
+        result: [
+          { A_STOCK_CODE: "600000", SEC_NAME_CN: "浦发银行" },
+          { A_STOCK_CODE: "-", SEC_NAME_CN: "-" },
+        ],
       }),
-    ).toEqual([
+    ).toEqual([{ symbol: "600000", name: "浦发银行" }]);
+
+    await expect(parseShenzhenStocks(await shenzhenFixture())).resolves.toEqual([
       { symbol: "000001", name: "平安银行" },
-      { symbol: "601398", name: "工商银行" },
     ]);
+
+    expect(
+      parseBeijingStockPage(
+        `callback(${JSON.stringify([
+          {
+            totalPages: 1,
+            content: [{ xxzqdm: "920001", xxzqjc: "北交所示例" }],
+          },
+        ])})`,
+      ),
+    ).toEqual({
+      totalPages: 1,
+      rows: [{ symbol: "920001", name: "北交所示例" }],
+    });
   });
 
-  it("使用东财全 A 股市场过滤条件请求代码和名称", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          data: { diff: [{ f12: "920001", f14: "北交所示例" }] },
-        }),
-        { status: 200 },
-      ),
-    );
+  it("拒绝把少量标的误当成全 A 股目录", () => {
+    expect(() =>
+      mergeAStockUniverse([
+        [
+          { symbol: "601398", name: "工商银行" },
+          { symbol: "601288", name: "农业银行" },
+        ],
+      ]),
+    ).toThrow("A 股代码表不完整");
+  });
+
+  it("按 AkShare 当前口径合并沪深京三家交易所的 A 股列表", async () => {
+    const shenzhen = await shenzhenFixture();
+    const shMain = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
+      A_STOCK_CODE: String(600000 + index),
+      SEC_NAME_CN: `沪市股票${index}`,
+    }));
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.hostname === "query.sse.com.cn") {
+          const isStar = url.searchParams.get("STOCK_TYPE") === "8";
+          return new Response(
+            JSON.stringify({
+              result: isStar
+                ? [{ A_STOCK_CODE: "688001", SEC_NAME_CN: "科创示例" }]
+                : shMain,
+            }),
+          );
+        }
+        if (url.hostname === "www.szse.cn") {
+          return new Response(shenzhen);
+        }
+        if (url.hostname === "www.bse.cn") {
+          const headers = new Headers(init?.headers);
+          if (!headers.has("Cookie")) {
+            return new Response("", {
+              status: 307,
+              headers: {
+                Location: String(url),
+                "Set-Cookie": "C3VK=test-cookie; Max-Age=300; Path=/",
+              },
+            });
+          }
+          return new Response(
+            `callback(${JSON.stringify([
+              {
+                totalPages: 1,
+                content: [{ xxzqdm: "920001", xxzqjc: "北交所示例" }],
+              },
+            ])})`,
+          );
+        }
+        throw new Error(`unexpected request: ${url}`);
+      });
 
     const result = await fetchAStockUniverse();
-    const requested = new URL(String(fetchMock.mock.calls[0][0]));
-    expect(requested.searchParams.get("pz")).toBe("50000");
-    expect(requested.searchParams.get("fields")).toBe("f12,f14");
-    expect(requested.searchParams.get("fs")).toContain("m:0+t:81+s:2048");
-    expect(result.rows).toEqual([
-      { symbol: "920001", name: "北交所示例" },
-    ]);
+
+    expect(result.rows).toHaveLength(STOCK_UNIVERSE_MIN_SIZE + 3);
+    expect(result.rows).toEqual(
+      expect.arrayContaining([
+        { symbol: "000001", name: "平安银行" },
+        { symbol: "600000", name: "沪市股票0" },
+        { symbol: "688001", name: "科创示例" },
+        { symbol: "920001", name: "北交所示例" },
+      ]),
+    );
+    expect(result.source).toContain("上交所、深交所、北交所");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });

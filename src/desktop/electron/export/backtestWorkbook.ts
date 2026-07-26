@@ -1,6 +1,10 @@
 import ExcelJS from "exceljs";
 import { BACKTEST_RANGE_LABELS } from "../../shared/constants";
-import type { BacktestResult, SimpleBacktestRow } from "../../shared/contracts";
+import type {
+  BacktestExperiment,
+  BacktestResult,
+  SimpleBacktestRow,
+} from "../../shared/contracts";
 import { backtestResultToSimpleResult } from "../domain/analysis";
 
 const SUMMARY_SHEET_NAME = "回测结果对比";
@@ -177,9 +181,17 @@ function addDetailSheet(
 }
 
 export async function buildBacktestWorkbook(
-  results: BacktestResult[],
+  experiment: BacktestExperiment,
 ): Promise<Buffer<ArrayBuffer>> {
+  const { results } = experiment;
   if (!results.length) throw new Error("没有可导出的回测结果");
+  if (
+    results.some(
+      (result) => result.experimentId !== experiment.experimentId,
+    )
+  ) {
+    throw new Error("导出结果不属于同一个回测试验");
+  }
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "攒股收息";
   workbook.created = new Date();

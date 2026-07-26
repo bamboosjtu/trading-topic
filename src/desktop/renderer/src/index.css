@@ -361,6 +361,92 @@ a:focus-visible,
   margin-top: 2px;
 }
 
+.backtest-page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  height: 42px;
+  padding: 0 4px;
+  border-bottom: 1px solid #dfe7f0;
+}
+
+.backtest-page-tabs button {
+  position: relative;
+  display: inline-flex;
+  height: 42px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 2px;
+  border: 0;
+  color: #60738e;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.backtest-page-tabs button::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  content: "";
+}
+
+.backtest-page-tabs button:hover,
+.backtest-page-tabs button.active {
+  color: #1269e8;
+}
+
+.backtest-page-tabs button.active::after {
+  background: #1677ff;
+}
+
+.backtest-page-tabs button span {
+  min-width: 19px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: #526881;
+  background: #e9eef5;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.experiment-readonly-banner {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 16px;
+  border: 1px solid #cfe0f7;
+  border-radius: 8px;
+  background: #f4f8fe;
+}
+
+.experiment-readonly-banner > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.experiment-readonly-banner strong {
+  color: #183251;
+  font-size: 13px;
+}
+
+.experiment-readonly-banner span {
+  overflow: hidden;
+  color: #60738e;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inline-link {
   display: inline-flex;
   align-items: center;
@@ -377,6 +463,11 @@ a:focus-visible,
 
 .inline-link:hover {
   color: #095ed0;
+}
+
+.inline-link:disabled {
+  color: #9ba9bb;
+  cursor: not-allowed;
 }
 
 .inline-link.compact {
@@ -896,12 +987,111 @@ a:focus-visible,
 
 .comparison-title {
   display: flex;
-  height: 43px;
+  min-height: 50px;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   padding: 0 17px;
   color: #10233f;
+}
+
+.comparison-title > div {
+  display: grid;
+  gap: 2px;
+}
+
+.comparison-title strong {
   font-size: 14px;
   font-weight: 700;
+}
+
+.comparison-title span,
+.comparison-title small {
+  color: #718299;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.experiment-history-panel {
+  min-height: 560px;
+  overflow: hidden;
+}
+
+.experiment-history-loading {
+  min-height: 420px;
+  padding: 24px;
+}
+
+.experiment-history-heading {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.experiment-history-heading h2 {
+  margin: 0;
+  color: #10233f;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.experiment-history-heading p {
+  margin: 2px 0 0;
+  color: #718299;
+  font-size: 11px;
+}
+
+.experiment-count {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 12px;
+  color: #526881;
+  background: #f0f4f8;
+  font-size: 11px;
+}
+
+.experiment-history-table .ant-table-thead > tr > th {
+  height: 42px;
+  padding-block: 10px;
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.experiment-history-table .ant-table-tbody > tr > td {
+  height: 56px;
+  padding-block: 10px;
+  color: #1e3554;
+  font-size: 13px;
+}
+
+.history-range-cell {
+  display: grid;
+  gap: 2px;
+}
+
+.history-range-cell strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-range-cell span {
+  color: #7a8ba1;
+  font-size: 10px;
+}
+
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.history-actions .ant-btn {
+  font-size: 12px;
 }
 
 .comparison-panel .ant-table-thead > tr > th {
@@ -953,22 +1143,13 @@ a:focus-visible,
   font-size: 11px;
 }
 
-.strategy-parameter {
-  display: grid;
-  gap: 2px;
-  line-height: 18px;
-}
-
-.strategy-parameter strong {
-  color: #1e3554;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.strategy-parameter small {
-  color: #718299;
-  font-size: 11px;
-  white-space: nowrap;
+.stock-universe-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #c4320a;
 }
 
 .rank {

@@ -39,7 +39,9 @@ export interface BacktestRequest {
   endDate: string;
   monthlyAmount: number;
   buyDay: number;
-  /** 快捷区间；存在时用于稳定识别同一组回测参数。 */
+  /** 执行本请求所使用的金融计算口径；产品入口会补齐当前版本。 */
+  caliberVersion?: string;
+  /** 快捷区间；固定日期请求不填写。 */
   rangeYears?: 3 | 5 | 10 | 15;
   /**
    * 分红到账处理口径。
@@ -89,6 +91,7 @@ export interface BacktestMetrics {
 
 export interface BacktestResult {
   id: string;
+  experimentId: string;
   symbol: string;
   name: string;
   requestedStartDate: string;
@@ -99,10 +102,8 @@ export interface BacktestResult {
   buyDay: number;
   rangeYears?: 3 | 5 | 10 | 15;
   dividendTiming?: "ex_date" | "payment_date";
-  /** 同一标的和同一组参数的稳定键。 */
-  strategyKey?: string;
-  /** 同一次点击“开始回测”产生的结果批次。 */
-  batchId?: string;
+  /** 标的和参数的稳定识别键；只用于索引，不作为唯一约束。 */
+  strategyKey: string;
   metrics: BacktestMetrics;
   transactions: BacktestTransaction[];
   equityCurve: EquityPoint[];
@@ -269,25 +270,48 @@ export interface StockInfo {
 
 export type BacktestChartMetric = "kline" | "return" | "drawdown";
 export type BacktestCandlePeriod = "day" | "week" | "month";
+export type BacktestExperimentStatus = "completed";
+
+export interface BacktestExperimentSummary {
+  experimentId: string;
+  createdAt: string;
+  request: BacktestRequest;
+  dataCutoff: string;
+  caliberVersion: string;
+  status: BacktestExperimentStatus;
+  resultCount: number;
+  bestXirr: number | null;
+  maxDrawdown: number;
+}
+
+export interface BacktestExperiment
+  extends Omit<
+    BacktestExperimentSummary,
+    "resultCount" | "bestXirr" | "maxDrawdown"
+  > {
+  results: BacktestResult[];
+}
 
 export interface BacktestWorkspaceState {
   request: BacktestRequest;
   chartMetric: BacktestChartMetric;
   candlePeriod: BacktestCandlePeriod;
   chartSymbol: string;
-  lastBatchId?: string;
+  activeExperimentId?: string;
   updatedAt: string;
 }
 
 export interface DesktopApi {
   health(): Promise<HealthResponse>;
   listStocks(): Promise<StockInfo[]>;
-  runBacktest(request: BacktestRequest): Promise<BacktestResult[]>;
-  listBacktests(): Promise<BacktestResult[]>;
+  runBacktest(request: BacktestRequest): Promise<BacktestExperiment>;
+  listBacktestExperiments(): Promise<BacktestExperimentSummary[]>;
+  getBacktestExperiment(experimentId: string): Promise<BacktestExperiment>;
+  deleteBacktestExperiment(experimentId: string): Promise<void>;
   getBacktestDetail(backtestId: string): Promise<SimpleBacktestResult>;
   getBacktestWorkspace(): Promise<BacktestWorkspaceState | null>;
   saveBacktestWorkspace(state: BacktestWorkspaceState): Promise<void>;
-  exportBacktestComparison(backtestIds: string[]): Promise<ExportResult>;
+  exportBacktestExperiment(experimentId: string): Promise<ExportResult>;
   listLedger(): Promise<LedgerEntry[]>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;

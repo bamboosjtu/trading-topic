@@ -70,7 +70,19 @@ function registerIpc(): void {
     service.runBacktest(request),
   );
   ipcMain.handle("stocks:list", () => service.listStocks());
-  ipcMain.handle("backtest:list", () => service.listBacktests());
+  ipcMain.handle("backtest:experiments:list", () =>
+    service.listBacktestExperiments(),
+  );
+  ipcMain.handle(
+    "backtest:experiment:get",
+    (_event, experimentId: string) =>
+      service.getBacktestExperiment(experimentId),
+  );
+  ipcMain.handle(
+    "backtest:experiment:delete",
+    (_event, experimentId: string) =>
+      service.deleteBacktestExperiment(experimentId),
+  );
   ipcMain.handle("backtest:detail", (_event, backtestId: string) =>
     service.getBacktestDetail(backtestId),
   );
@@ -83,18 +95,23 @@ function registerIpc(): void {
       service.saveBacktestWorkspace(state),
   );
   ipcMain.handle(
-    "backtest:comparison:export",
-    async (_event, backtestIds: string[]) => {
-      const results = service.listBacktestsByIds(backtestIds);
-      if (!results.length) throw new Error("没有可导出的回测结果");
+    "backtest:experiment:export",
+    async (_event, experimentId: string) => {
+      const experiment = service.getBacktestExperiment(experimentId);
       const result = await dialog.showSaveDialog({
-        title: "导出回测对比与明细",
-        defaultPath: `攒股收息-回测对比-${timestamp()}.xlsx`,
+        title: "导出回测试验",
+        defaultPath: `攒股收息-回测试验-${timestamp()}.xlsx`,
         filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
       });
       if (result.canceled || !result.filePath) return { cancelled: true };
-      writeFileSync(result.filePath, await buildBacktestWorkbook(results));
-      database.log("info", `已导出 ${results.length} 条回测结果及明细`);
+      writeFileSync(
+        result.filePath,
+        await buildBacktestWorkbook(experiment),
+      );
+      database.log(
+        "info",
+        `已导出回测试验 ${experiment.experimentId} 的 ${experiment.results.length} 条结果及明细`,
+      );
       return { cancelled: false, path: result.filePath };
     },
   );

@@ -1,91 +1,302 @@
+import ExcelJS from "exceljs";
 import type { StockInfo } from "../../shared/contracts";
+import { STOCK_UNIVERSE_MIN_SIZE } from "../../shared/constants";
 
-const EASTMONEY_A_SHARE_LIST_URL =
-  "https://82.push2.eastmoney.com/api/qt/clist/get";
-const EASTMONEY_A_SHARE_MARKETS =
-  "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048";
-const EASTMONEY_FIELDS = "f12,f14";
+const SSE_STOCK_LIST_URL =
+  "https://query.sse.com.cn/sseQuery/commonQuery.do";
+const SZSE_STOCK_LIST_URL = "https://www.szse.cn/api/report/ShowReport";
+const BSE_STOCK_LIST_URL =
+  "https://www.bse.cn/nqxxController/nqxxCnzq.do";
+const REQUEST_TIMEOUT_MS = 20_000;
 
-interface EastmoneyStockListResponse {
-  data?: {
-    diff?: Array<{
-      f12?: string | number;
-      f14?: string;
-    }>;
+interface ShanghaiStockListResponse {
+  result?: Array<{
+    A_STOCK_CODE?: string | number;
+    SEC_NAME_CN?: string;
+  }>;
+}
+
+interface BeijingStockListPage {
+  totalPages?: number | string;
+  content?: Array<
+    | unknown[]
+    | {
+        xxzqdm?: string | number;
+        xxzqjc?: string;
+      }
+  >;
+}
+
+function normalizeStockCode(value: string | number | undefined): string {
+  const raw = String(value ?? "")
+    .trim()
+    .replace(/\.0+$/, "");
+  return /^\d{1,6}$/.test(raw) ? raw.padStart(6, "0") : raw;
+}
+
+function isAStock(stock: StockInfo): boolean {
+  return (
+    /^\d{6}$/.test(stock.symbol) &&
+    stock.name.length > 0 &&
+    stock.name !== "-"
+  );
+}
+
+async function request(
+  url: URL | string,
+  label: string,
+  init?: RequestInit,
+  acceptedRedirectStatus?: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        ...init?.headers,
+      },
+    });
+    if (!response.ok && response.status !== acceptedRedirectStatus) {
+      throw new Error(`${label}请求失败：HTTP ${response.status}`);
+    }
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${label}请求超时`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function parseShanghaiStocks(payload: unknown): StockInfo[] {
+  const result = (payload as ShanghaiStockListResponse | null)?.result;
+  if (!Array.isArray(result)) {
+    throw new Error("上交所 A 股代码表响应格式已变化");
+  }
+  return result
+    .map((row) => ({
+      symbol: normalizeStockCode(row.A_STOCK_CODE),
+      name: String(row.SEC_NAME_CN ?? "").trim(),
+    }))
+    .filter(isAStock);
+}
+
+export async function parseShenzhenStocks(
+  payload: ArrayBuffer,
+): Promise<StockInfo[]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(payload);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) throw new Error("深交所 A 股代码表工作簿为空");
+
+  let headerRow = 0;
+  let codeColumn = 0;
+  let nameColumn = 0;
+  worksheet.eachRow((row, rowNumber) => {
+    if (headerRow) return;
+    row.eachCell((cell, columnNumber) => {
+      const value = cell.text.trim();
+      if (value === "A股代码") codeColumn = columnNumber;
+      if (value === "A股简称") nameColumn = columnNumber;
+    });
+    if (codeColumn && nameColumn) headerRow = rowNumber;
+  });
+  if (!headerRow || !codeColumn || !nameColumn) {
+    throw new Error("深交所 A 股代码表缺少代码或简称列");
+  }
+
+  const stocks: StockInfo[] = [];
+  for (
+    let rowNumber = headerRow + 1;
+    rowNumber <= worksheet.rowCount;
+    rowNumber += 1
+  ) {
+    const symbol = normalizeStockCode(
+      worksheet.getCell(rowNumber, codeColumn).text,
+    );
+    const name = worksheet.getCell(rowNumber, nameColumn).text.trim();
+    const stock = { symbol, name };
+    if (isAStock(stock)) stocks.push(stock);
+  }
+  return stocks;
+}
+
+export function parseBeijingStockPage(payload: string): {
+  totalPages: number;
+  rows: StockInfo[];
+} {
+  const start = payload.indexOf("[");
+  const end = payload.lastIndexOf("]");
+  if (start < 0 || end < start) {
+    throw new Error("北交所 A 股代码表响应格式已变化");
+  }
+  const pages = JSON.parse(
+    payload.slice(start, end + 1),
+  ) as BeijingStockListPage[];
+  const page = pages[0];
+  const totalPages = Number(page?.totalPages);
+  if (!page || !Number.isInteger(totalPages) || totalPages < 1) {
+    throw new Error("北交所 A 股代码表缺少分页信息");
+  }
+  const rows = (Array.isArray(page.content) ? page.content : [])
+    .map((row) => {
+      const symbol = Array.isArray(row) ? row[38] : row.xxzqdm;
+      const name = Array.isArray(row) ? row[40] : row.xxzqjc;
+      return {
+        symbol: normalizeStockCode(symbol as string | number | undefined),
+        name: String(name ?? "").trim(),
+      };
+    })
+    .filter(isAStock);
+  return { totalPages, rows };
+}
+
+export function mergeAStockUniverse(
+  groups: readonly StockInfo[][],
+): StockInfo[] {
+  const unique = new Map<string, StockInfo>();
+  for (const stock of groups.flat()) {
+    if (isAStock(stock)) unique.set(stock.symbol, stock);
+  }
+  const rows = [...unique.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+  if (rows.length < STOCK_UNIVERSE_MIN_SIZE) {
+    throw new Error(
+      `A 股代码表不完整：仅返回 ${rows.length} 个标的，拒绝覆盖本地完整快照`,
+    );
+  }
+  return rows;
+}
+
+async function fetchShanghaiStocks(stockType: "1" | "8"): Promise<StockInfo[]> {
+  const url = new URL(SSE_STOCK_LIST_URL);
+  const parameters: Record<string, string> = {
+    STOCK_TYPE: stockType,
+    REG_PROVINCE: "",
+    CSRC_CODE: "",
+    STOCK_CODE: "",
+    sqlId: "COMMON_SSE_CP_GPJCTPZ_GPLB_GP_L",
+    COMPANY_STATUS: "2,4,5,7,8",
+    type: "inParams",
+    isPagination: "true",
+    "pageHelp.cacheSize": "1",
+    "pageHelp.beginPage": "1",
+    "pageHelp.pageSize": "10000",
+    "pageHelp.pageNo": "1",
+    "pageHelp.endPage": "1",
+  };
+  Object.entries(parameters).forEach(([key, value]) =>
+    url.searchParams.set(key, value),
+  );
+  const response = await request(url, "上交所 A 股代码表", {
+    headers: {
+      Referer: "https://www.sse.com.cn/assortment/stock/list/share/",
+    },
+  });
+  return parseShanghaiStocks(await response.json());
+}
+
+async function fetchShenzhenStocks(): Promise<StockInfo[]> {
+  const url = new URL(SZSE_STOCK_LIST_URL);
+  url.searchParams.set("SHOWTYPE", "xlsx");
+  url.searchParams.set("CATALOGID", "1110");
+  url.searchParams.set("TABKEY", "tab1");
+  url.searchParams.set("random", String(Math.random()));
+  const response = await request(url, "深交所 A 股代码表");
+  return parseShenzhenStocks(await response.arrayBuffer());
+}
+
+function beijingRequestBody(page: number): URLSearchParams {
+  return new URLSearchParams({
+    page: String(page),
+    typejb: "T",
+    "xxfcbj[]": "2",
+    xxzqdm: "",
+    sortfield: "xxzqdm",
+    sorttype: "asc",
+  });
+}
+
+async function fetchBeijingPage(
+  page: number,
+  challengeCookie?: string,
+): Promise<{
+  totalPages: number;
+  rows: StockInfo[];
+  challengeCookie?: string;
+}> {
+  const send = (cookie?: string) =>
+    request(
+      BSE_STOCK_LIST_URL,
+      "北交所 A 股代码表",
+      {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: beijingRequestBody(page),
+      },
+      307,
+    );
+  let response = await send(challengeCookie);
+  let nextCookie = challengeCookie;
+  if (response.status === 307) {
+    nextCookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+    if (!nextCookie) {
+      throw new Error("北交所 A 股代码表挑战响应缺少 Cookie");
+    }
+    response = await send(nextCookie);
+  }
+  if (!response.ok) {
+    throw new Error(`北交所 A 股代码表请求失败：HTTP ${response.status}`);
+  }
+  return {
+    ...parseBeijingStockPage(await response.text()),
+    challengeCookie: nextCookie,
   };
 }
 
-function isAStockCode(value: string): boolean {
-  return /^\d{6}$/.test(value);
-}
-
-export function parseAStockUniverse(payload: unknown): StockInfo[] {
-  const diff = (payload as EastmoneyStockListResponse | null)?.data?.diff;
-  if (!Array.isArray(diff)) {
-    throw new Error("东方财富 A 股代码表响应格式已变化");
+async function fetchBeijingStocks(): Promise<StockInfo[]> {
+  const firstPage = await fetchBeijingPage(0);
+  const rows = [...firstPage.rows];
+  let challengeCookie = firstPage.challengeCookie;
+  for (let page = 1; page < firstPage.totalPages; page += 1) {
+    const nextPage = await fetchBeijingPage(page, challengeCookie);
+    challengeCookie = nextPage.challengeCookie ?? challengeCookie;
+    rows.push(...nextPage.rows);
   }
-  const stocks = diff
-    .map((row) => ({
-      symbol: String(row.f12 ?? "").trim(),
-      name: String(row.f14 ?? "").trim(),
-    }))
-    .filter(
-      (stock) =>
-        isAStockCode(stock.symbol) &&
-        stock.name.length > 0 &&
-        stock.name !== "-",
-    );
-  const unique = new Map(stocks.map((stock) => [stock.symbol, stock]));
-  const result = [...unique.values()].sort((a, b) =>
-    a.symbol.localeCompare(b.symbol),
-  );
-  if (!result.length) throw new Error("东方财富 A 股代码表为空");
-  return result;
+  return rows;
 }
 
 /**
- * 获取与 AkShare `stock_info_a_code_name()` 等价的 A 股代码/名称目录。
+ * 获取与 AkShare `stock_info_a_code_name()` 相同范围的沪深京 A 股代码/名称目录。
  *
- * 产品端保持纯 Node.js，不执行 Python/AkShare；直接调用其底层公开数据接口，
- * 并由 SQLite 缓存目录，网络异常时由服务层回退到上次成功快照。
+ * 产品端保持纯 Node.js，直接调用三家交易所公开接口，不执行 Python/AkShare。
+ * 只有三地合并后的目录通过完整性校验，服务层才会覆盖 SQLite 成功快照。
  */
 export async function fetchAStockUniverse(): Promise<{
   rows: StockInfo[];
   fetchedAt: string;
   source: string;
 }> {
-  const url = new URL(EASTMONEY_A_SHARE_LIST_URL);
-  url.searchParams.set("pn", "1");
-  url.searchParams.set("pz", "50000");
-  url.searchParams.set("po", "1");
-  url.searchParams.set("np", "1");
-  url.searchParams.set("ut", "bd1d9ddb04089700cf9c27f6f7426281");
-  url.searchParams.set("fltt", "2");
-  url.searchParams.set("invt", "2");
-  url.searchParams.set("fid", "f3");
-  url.searchParams.set("fs", EASTMONEY_A_SHARE_MARKETS);
-  url.searchParams.set("fields", EASTMONEY_FIELDS);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: "https://quote.eastmoney.com/",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`东方财富 A 股代码表请求失败：HTTP ${response.status}`);
-    }
-    return {
-      rows: parseAStockUniverse(await response.json()),
-      fetchedAt: new Date().toISOString(),
-      source: "东方财富 push2 A 股代码表（产品域独立适配）",
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const [shMain, shStar, shenzhen, beijing] = await Promise.all([
+    fetchShanghaiStocks("1"),
+    fetchShanghaiStocks("8"),
+    fetchShenzhenStocks(),
+    fetchBeijingStocks(),
+  ]);
+  return {
+    rows: mergeAStockUniverse([shMain, shStar, shenzhen, beijing]),
+    fetchedAt: new Date().toISOString(),
+    source: "上交所、深交所、北交所 A 股代码表（产品域独立适配）",
+  };
 }

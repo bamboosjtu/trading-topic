@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import { BACKTEST_MAX_SYMBOLS } from "../../shared/constants";
 import type {
   BacktestRequest,
@@ -57,6 +58,13 @@ export function simulateBacktest(
   priceRows: PricePoint[],
   dividendRows: DividendEvent[],
   provenance: DataProvenance[],
+  experimentContext: {
+    id: string;
+    createdAt: string;
+  } = {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+  },
 ): BacktestResult {
   assertInput(input);
   const prices = priceRows
@@ -277,6 +285,7 @@ export function simulateBacktest(
   const navSeries = equityCurve.map((row) => row.nav ?? 1);
   return {
     id: randomUUID(),
+    experimentId: experimentContext.id,
     symbol,
     name,
     requestedStartDate: input.startDate,
@@ -287,6 +296,7 @@ export function simulateBacktest(
     buyDay: input.buyDay,
     rangeYears: input.rangeYears,
     dividendTiming,
+    strategyKey: buildBacktestStrategyKey(input, symbol),
     metrics: {
       totalContribution,
       endingAsset,
@@ -301,7 +311,7 @@ export function simulateBacktest(
     priceSeries: prices,
     warnings,
     provenance,
-    createdAt: new Date().toISOString(),
+    createdAt: experimentContext.createdAt,
   };
 }
 

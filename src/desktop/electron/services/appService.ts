@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
   AccountSummary,
+  BacktestExperiment,
+  BacktestExperimentSummary,
   BacktestRequest,
-  BacktestResult,
   LedgerEntry,
   LedgerEntryInput,
   SimpleBacktestResult,
@@ -13,8 +14,8 @@ import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
   BACKTEST_CALIBER_VERSION,
   DATA_SOURCE_THROTTLE_MS,
-  DEFAULT_STOCKS,
   STOCK_UNIVERSE_CACHE_MAX_AGE_MS,
+  STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
 import { fetchAStockUniverse } from "../data/stockUniverse";
 import {
@@ -56,19 +57,31 @@ function validateLedger(input: LedgerEntryInput): void {
   }
 }
 
+function isCompleteStockUniverse(stocks: readonly StockInfo[]): boolean {
+  return stocks.length >= STOCK_UNIVERSE_MIN_SIZE;
+}
+
 export class AppService {
   constructor(private readonly database: LocalDatabase) {}
 
   async listStocks(): Promise<StockInfo[]> {
     const cached = this.database.listStockUniverse();
     const fetchedAt = cached[0]?.fetchedAt;
+    const cachedIsComplete = isCompleteStockUniverse(cached);
     const cacheIsFresh =
+      cachedIsComplete &&
       fetchedAt !== undefined &&
+      Number.isFinite(Date.parse(fetchedAt)) &&
       Date.now() - Date.parse(fetchedAt) < STOCK_UNIVERSE_CACHE_MAX_AGE_MS;
     if (cacheIsFresh) return cached;
 
     try {
       const response = await fetchAStockUniverse();
+      if (!isCompleteStockUniverse(response.rows)) {
+        throw new Error(
+          `A 股代码表不完整：仅返回 ${response.rows.length} 个标的`,
+        );
+      }
       this.database.replaceStockUniverse(
         response.rows,
         response.source,
@@ -81,33 +94,52 @@ export class AppService {
       return response.rows;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.database.log("warn", `刷新 A 股代码表失败，使用本地快照：${message}`);
-      if (cached.length) return cached;
-      return DEFAULT_STOCKS.map(({ symbol, name }) => ({ symbol, name }));
+      if (cachedIsComplete) {
+        this.database.log(
+          "warn",
+          `刷新 A 股代码表失败，使用上次完整快照：${message}`,
+        );
+        return cached;
+      }
+      this.database.log(
+        "error",
+        `加载全 A 股代码表失败，且没有可用的完整快照：${message}`,
+      );
+      throw new Error(`无法加载完整的全 A 股代码表：${message}`);
     }
   }
 
-  async runBacktest(request: BacktestRequest): Promise<BacktestResult[]> {
-    const results: BacktestResult[] = [];
+  async runBacktest(request: BacktestRequest): Promise<BacktestExperiment> {
+    const canonicalRequest: BacktestRequest = {
+      ...request,
+      caliberVersion: request.caliberVersion ?? BACKTEST_CALIBER_VERSION,
+    };
+    if (canonicalRequest.caliberVersion !== BACKTEST_CALIBER_VERSION) {
+      throw new Error("回测请求的计算口径版本与当前应用不一致");
+    }
     const stocks = await this.listStocks();
     const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
-    const batchId = randomUUID();
-    for (const symbol of request.symbols) {
+    const marketData: Array<{
+      symbol: string;
+      prices: Awaited<ReturnType<typeof fetchUnadjustedPrices>>;
+      dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
+    }> = [];
+    for (const [index, symbol] of canonicalRequest.symbols.entries()) {
       const prices = await fetchUnadjustedPrices(
         symbol,
-        request.startDate,
-        request.endDate,
+        canonicalRequest.startDate,
+        canonicalRequest.endDate,
       );
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
-      if (results.length) {
+      if (index > 0) {
         await new Promise((resolve) =>
           setTimeout(resolve, DATA_SOURCE_THROTTLE_MS),
         );
       }
       const dividends = await fetchCorporateActions(
         symbol,
-        request.startDate,
-        request.endDate,
+        canonicalRequest.startDate,
+        canonicalRequest.endDate,
       );
       this.database.replaceMarketData(
         symbol,
@@ -116,41 +148,80 @@ export class AppService {
         prices.provenance.source,
         prices.provenance.fetchedAt,
       );
+      marketData.push({ symbol, prices, dividends });
+    }
+
+    const dataCutoff = marketData
+      .map(({ prices }) => prices.provenance.dataCutoff)
+      .sort()[0];
+    if (!dataCutoff) throw new Error("回测试验没有共同的数据截止时间");
+    const experimentId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const effectiveRequest: BacktestRequest = {
+      ...canonicalRequest,
+      endDate:
+        dataCutoff < canonicalRequest.endDate
+          ? dataCutoff
+          : canonicalRequest.endDate,
+    };
+    const results = marketData.map(({ symbol, prices, dividends }) => {
       const result = simulateBacktest(
-        request,
+        effectiveRequest,
         symbol,
         names.get(symbol) ?? symbol,
         prices.rows,
         dividends.rows,
         [prices.provenance, dividends.provenance],
+        { id: experimentId, createdAt },
       );
-      result.strategyKey = buildBacktestStrategyKey(request, symbol);
-      result.batchId = batchId;
-      results.push(result);
-    }
-    this.database.saveBacktests(results);
+      // 实验保留用户原始请求；共同截止时间单独由 experiment 记录。
+      result.requestedStartDate = canonicalRequest.startDate;
+      result.requestedEndDate = canonicalRequest.endDate;
+      result.rangeYears = canonicalRequest.rangeYears;
+      result.strategyKey = buildBacktestStrategyKey(
+        canonicalRequest,
+        symbol,
+      );
+      return result;
+    });
+    const experiment: BacktestExperiment = {
+      experimentId,
+      createdAt,
+      request: canonicalRequest,
+      results,
+      dataCutoff,
+      caliberVersion: BACKTEST_CALIBER_VERSION,
+      status: "completed",
+    };
+    this.database.saveBacktestExperiment(experiment);
     this.database.log(
       "info",
-      `完成回测：${request.symbols.join(",")} ${request.startDate}..${request.endDate}`,
+      `完成回测试验 ${experimentId}：${canonicalRequest.symbols.join(",")} ${canonicalRequest.startDate}..${canonicalRequest.endDate}`,
     );
-    return results;
+    return experiment;
   }
 
-  listBacktests(): BacktestResult[] {
-    // v3 改为零碎股、费用 0、分红回购和送转入账。旧口径结果仍保留在
-    // SQLite/备份中，但不与当前结果混排，避免用户把不可比数字当成同口径比较。
-    return this.database
-      .listBacktests()
-      .filter((result) =>
-        result.provenance.some(
-          (item) => item.caliberVersion === BACKTEST_CALIBER_VERSION,
-        ),
-      );
+  listBacktestExperiments(): BacktestExperimentSummary[] {
+    return this.database.listBacktestExperiments();
+  }
+
+  getBacktestExperiment(experimentId: string): BacktestExperiment {
+    const experiment = this.database.getBacktestExperiment(experimentId);
+    if (!experiment) throw new Error("找不到回测试验");
+    return experiment;
+  }
+
+  deleteBacktestExperiment(experimentId: string): void {
+    if (!this.database.getBacktestExperiment(experimentId)) {
+      throw new Error("找不到需要删除的回测试验");
+    }
+    this.database.deleteBacktestExperiment(experimentId);
+    this.database.log("info", `已删除回测试验 ${experimentId}`);
   }
 
   getBacktestDetail(backtestId: string): SimpleBacktestResult {
     const result = this.database.getBacktest(backtestId);
-    if (!result) throw new Error("找不到回测记录，可能已被新参数结果替换");
+    if (!result) throw new Error("找不到回测结果");
     return backtestResultToSimpleResult(result);
   }
 
@@ -160,10 +231,6 @@ export class AppService {
 
   saveBacktestWorkspace(state: BacktestWorkspaceState): void {
     this.database.saveBacktestWorkspace(state);
-  }
-
-  listBacktestsByIds(ids: string[]): BacktestResult[] {
-    return this.database.listBacktestsByIds(ids);
   }
 
   listLedger(): LedgerEntry[] {

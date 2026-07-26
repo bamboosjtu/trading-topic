@@ -16,14 +16,18 @@ export const api = {
   health: () => bridge().health(),
   listStocks: () => bridge().listStocks(),
   runBacktest: (request: BacktestRequest) => bridge().runBacktest(request),
-  listBacktests: () => bridge().listBacktests(),
+  listBacktestExperiments: () => bridge().listBacktestExperiments(),
+  getBacktestExperiment: (experimentId: string) =>
+    bridge().getBacktestExperiment(experimentId),
+  deleteBacktestExperiment: (experimentId: string) =>
+    bridge().deleteBacktestExperiment(experimentId),
   getBacktestDetail: (backtestId: string) =>
     bridge().getBacktestDetail(backtestId),
   getBacktestWorkspace: () => bridge().getBacktestWorkspace(),
   saveBacktestWorkspace: (state: BacktestWorkspaceState) =>
     bridge().saveBacktestWorkspace(state),
-  exportBacktestComparison: (backtestIds: string[]) =>
-    bridge().exportBacktestComparison(backtestIds),
+  exportBacktestExperiment: (experimentId: string) =>
+    bridge().exportBacktestExperiment(experimentId),
   listLedger: () => bridge().listLedger(),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
   reverseLedger: (entryId: string, reason: string) =>
@@ -38,6 +42,8 @@ export const api = {
 export type {
   AccountSummary,
   AppSettings,
+  BacktestExperiment,
+  BacktestExperimentSummary,
   BacktestRequest,
   BacktestResult,
   BacktestCandlePeriod,

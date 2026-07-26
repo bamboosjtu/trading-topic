@@ -10,6 +10,7 @@ function result(
 ): BacktestResult {
   return {
     id: `${symbol}-${rangeYears}`,
+    experimentId: "experiment-1",
     symbol,
     name,
     requestedStartDate: rangeYears === 3 ? "2023-07-24" : "2021-07-24",
@@ -19,6 +20,7 @@ function result(
     monthlyAmount: 3000,
     buyDay: 1,
     rangeYears,
+    strategyKey: `${symbol}|${rangeYears}|3000|1|ex_date|bank-dca-r1-node-v3`,
     metrics: {
       totalContribution: 3000,
       endingAsset: 3300,
@@ -60,17 +62,33 @@ function result(
 
 describe("回测 XLSX 导出", () => {
   it("生成汇总页与每个标的+参数的审计明细页", async () => {
-    const output = await buildBacktestWorkbook([
+    const results = [
       result("601939", "建设银行", 3),
-      result("601398", "工商银行", 5),
-    ]);
+      result("601398", "工商银行", 3),
+    ];
+    const output = await buildBacktestWorkbook({
+      experimentId: "experiment-1",
+      createdAt: "2026-07-24T00:00:00Z",
+      request: {
+        symbols: results.map((item) => item.symbol),
+        startDate: "2023-07-24",
+        endDate: "2026-07-24",
+        monthlyAmount: 3000,
+        buyDay: 1,
+        caliberVersion: "bank-dca-r1-node-v3",
+      },
+      dataCutoff: "2026-07-24",
+      caliberVersion: "bank-dca-r1-node-v3",
+      status: "completed",
+      results,
+    });
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(output.buffer);
 
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       "回测结果对比",
       "建设银行_三年",
-      "工商银行_五年",
+      "工商银行_三年",
     ]);
     expect(workbook.getWorksheet("回测结果对比")?.getCell("C2").value).toBe(
       "三年",

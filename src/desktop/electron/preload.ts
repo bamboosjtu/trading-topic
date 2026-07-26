@@ -11,14 +11,19 @@ const api: DesktopApi = {
   listStocks: () => ipcRenderer.invoke("stocks:list"),
   runBacktest: (request: BacktestRequest) =>
     ipcRenderer.invoke("backtest:run", request),
-  listBacktests: () => ipcRenderer.invoke("backtest:list"),
+  listBacktestExperiments: () =>
+    ipcRenderer.invoke("backtest:experiments:list"),
+  getBacktestExperiment: (experimentId: string) =>
+    ipcRenderer.invoke("backtest:experiment:get", experimentId),
+  deleteBacktestExperiment: (experimentId: string) =>
+    ipcRenderer.invoke("backtest:experiment:delete", experimentId),
   getBacktestDetail: (backtestId: string) =>
     ipcRenderer.invoke("backtest:detail", backtestId),
   getBacktestWorkspace: () => ipcRenderer.invoke("backtest:workspace:get"),
   saveBacktestWorkspace: (state: BacktestWorkspaceState) =>
     ipcRenderer.invoke("backtest:workspace:save", state),
-  exportBacktestComparison: (backtestIds: string[]) =>
-    ipcRenderer.invoke("backtest:comparison:export", backtestIds),
+  exportBacktestExperiment: (experimentId: string) =>
+    ipcRenderer.invoke("backtest:experiment:export", experimentId),
   listLedger: () => ipcRenderer.invoke("ledger:list"),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),

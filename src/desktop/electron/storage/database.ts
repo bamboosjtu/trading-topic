@@ -1,13 +1,14 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
-import { strategyKeyFromResult } from "../../shared/backtestIdentity";
 import {
   BACKTEST_CALIBER_VERSION,
-  BACKTEST_HISTORY_LIMIT,
+  BACKTEST_EXPERIMENT_LIMIT,
 } from "../../shared/constants";
 import type {
   AppSettings,
+  BacktestExperiment,
+  BacktestExperimentSummary,
   BacktestResult,
   BacktestWorkspaceState,
   DividendEvent,
@@ -16,7 +17,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent",
   dividendSource: "eastmoney",
@@ -30,7 +31,7 @@ interface BackupPayload {
   exportedAt: string;
   application: "stock-income-r1";
   ledgerEntries: LedgerEntry[];
-  backtestRuns: BacktestResult[];
+  backtestExperiments: BacktestExperiment[];
   marketPrices: Array<{
     symbol: string;
     trade_date: string;
@@ -44,19 +45,24 @@ interface BackupPayload {
     payload_json: string;
   }>;
   settings: AppSettings;
-  stockUniverse?: Array<
+  stockUniverse: Array<
     StockInfo & {
       source: string;
       fetchedAt: string;
     }
   >;
-  backtestWorkspace?: BacktestWorkspaceState | null;
+  backtestWorkspace: BacktestWorkspaceState | null;
 }
 
-function rows<T>(database: Database, sql: string): T[] {
+function rows<T>(
+  database: Database,
+  sql: string,
+  parameters: Array<string | number | null> = [],
+): T[] {
   const statement = database.prepare(sql);
   const result: T[] = [];
   try {
+    if (parameters.length) statement.bind(parameters);
     while (statement.step()) result.push(statement.getAsObject() as T);
   } finally {
     statement.free();
@@ -83,6 +89,21 @@ export class LocalDatabase {
   }
 
   private migrate(): void {
+    const currentVersion =
+      rows<{ user_version: number }>(
+        this.database,
+        "PRAGMA user_version",
+      )[0]?.user_version ?? 0;
+    if (currentVersion < SCHEMA_VERSION) {
+      // 当前产品尚无用户数据，直接移除已废弃的 batch/唯一策略模型，
+      // 不保留兼容分支或双轨表。
+      this.database.run(`
+        DROP TABLE IF EXISTS backtest_runs;
+        DROP TABLE IF EXISTS backtest_results;
+        DROP TABLE IF EXISTS backtest_experiments;
+        DROP TABLE IF EXISTS backtest_workspace;
+      `);
+    }
     this.database.run(`
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS ledger_entries (
@@ -92,11 +113,24 @@ export class LocalDatabase {
         type TEXT NOT NULL,
         payload_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS backtest_runs (
+      CREATE TABLE IF NOT EXISTS backtest_experiments (
         id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        data_cutoff TEXT NOT NULL,
+        caliber_version TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status = 'completed')
+      );
+      CREATE TABLE IF NOT EXISTS backtest_results (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT NOT NULL,
         symbol TEXT NOT NULL,
-        result_json TEXT NOT NULL
+        strategy_key TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        FOREIGN KEY (experiment_id)
+          REFERENCES backtest_experiments(id)
+          ON DELETE CASCADE,
+        UNIQUE (experiment_id, symbol)
       );
       CREATE TABLE IF NOT EXISTS market_prices (
         symbol TEXT NOT NULL,
@@ -132,24 +166,14 @@ export class LocalDatabase {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state_json TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_backtest_experiments_created_at
+        ON backtest_experiments(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_backtest_results_experiment
+        ON backtest_results(experiment_id);
+      CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy
+        ON backtest_results(strategy_key);
+      PRAGMA user_version = ${SCHEMA_VERSION};
     `);
-    const backtestColumns = new Set(
-      rows<{ name: string }>(
-        this.database,
-        "PRAGMA table_info(backtest_runs)",
-      ).map((column) => column.name),
-    );
-    if (!backtestColumns.has("strategy_key")) {
-      this.database.run("ALTER TABLE backtest_runs ADD COLUMN strategy_key TEXT");
-    }
-    if (!backtestColumns.has("batch_id")) {
-      this.database.run("ALTER TABLE backtest_runs ADD COLUMN batch_id TEXT");
-    }
-    this.backfillBacktestIdentity();
-    this.database.run(
-      "CREATE UNIQUE INDEX IF NOT EXISTS idx_backtest_runs_strategy_key ON backtest_runs(strategy_key)",
-    );
-    this.database.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     const existing = this.database.exec(
       "SELECT value_json FROM settings WHERE key = 'app'",
     );
@@ -160,55 +184,6 @@ export class LocalDatabase {
       );
     }
     this.persist();
-  }
-
-  private backfillBacktestIdentity(): void {
-    const existing = rows<{
-      id: string;
-      result_json: string;
-      strategy_key: string | null;
-    }>(
-      this.database,
-      "SELECT id, result_json, strategy_key FROM backtest_runs ORDER BY created_at DESC",
-    );
-    const newestByStrategy = new Set<string>();
-    for (const row of existing) {
-      let result: BacktestResult | null = null;
-      try {
-        result = JSON.parse(row.result_json) as BacktestResult;
-      } catch {
-        // 损坏的旧记录保持可识别且不阻断数据库升级。
-      }
-      const strategyKey =
-        row.strategy_key ??
-        (result ? strategyKeyFromResult(result) : `legacy:${row.id}`);
-      if (newestByStrategy.has(strategyKey)) {
-        this.database.run("DELETE FROM backtest_runs WHERE id = ?", [row.id]);
-        continue;
-      }
-      newestByStrategy.add(strategyKey);
-      if (result) {
-        const normalized = {
-          ...result,
-          requestedEndDate: result.requestedEndDate ?? result.actualEndDate,
-          strategyKey,
-        };
-        this.database.run(
-          "UPDATE backtest_runs SET strategy_key = ?, batch_id = ?, result_json = ? WHERE id = ?",
-          [
-            strategyKey,
-            normalized.batchId ?? null,
-            JSON.stringify(normalized),
-            row.id,
-          ],
-        );
-      } else {
-        this.database.run(
-          "UPDATE backtest_runs SET strategy_key = ? WHERE id = ?",
-          [strategyKey, row.id],
-        );
-      }
-    }
   }
 
   private persist(): void {
@@ -273,33 +248,148 @@ export class LocalDatabase {
     ).map((row) => JSON.parse(row.payload_json) as LedgerEntry);
   }
 
-  saveBacktests(results: BacktestResult[]): void {
+  private insertExperiment(experiment: BacktestExperiment): void {
+    this.database.run(
+      `INSERT INTO backtest_experiments(
+         id, created_at, request_json, data_cutoff, caliber_version, status
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        experiment.experimentId,
+        experiment.createdAt,
+        JSON.stringify(experiment.request),
+        experiment.dataCutoff,
+        experiment.caliberVersion,
+        experiment.status,
+      ],
+    );
+    for (const result of experiment.results) {
+      if (result.experimentId !== experiment.experimentId) {
+        throw new Error("回测结果与实验编号不一致");
+      }
+      this.database.run(
+        `INSERT INTO backtest_results(
+           id, experiment_id, symbol, strategy_key, result_json
+         ) VALUES (?, ?, ?, ?, ?)`,
+        [
+          result.id,
+          experiment.experimentId,
+          result.symbol,
+          result.strategyKey,
+          JSON.stringify(result),
+        ],
+      );
+    }
+  }
+
+  saveBacktestExperiment(experiment: BacktestExperiment): void {
     this.database.run("BEGIN");
     try {
-      for (const result of results) {
-        const strategyKey = result.strategyKey ?? strategyKeyFromResult(result);
-        const normalized: BacktestResult = {
-          ...result,
-          requestedEndDate: result.requestedEndDate ?? result.actualEndDate,
-          strategyKey,
-        };
+      this.insertExperiment(experiment);
+      this.database.run("COMMIT");
+      this.persist();
+    } catch (error) {
+      this.database.run("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private listExperimentResults(experimentId: string): BacktestResult[] {
+    return rows<{ result_json: string }>(
+      this.database,
+      `SELECT result_json FROM backtest_results
+       WHERE experiment_id = ?
+       ORDER BY rowid`,
+      [experimentId],
+    ).map((row) => JSON.parse(row.result_json) as BacktestResult);
+  }
+
+  listBacktestExperiments(
+    limit = BACKTEST_EXPERIMENT_LIMIT,
+  ): BacktestExperimentSummary[] {
+    const suffix = Number.isFinite(limit) ? ` LIMIT ${Math.max(1, limit)}` : "";
+    return rows<{
+      id: string;
+      created_at: string;
+      request_json: string;
+      data_cutoff: string;
+      caliber_version: string;
+      status: "completed";
+    }>(
+      this.database,
+      `SELECT id, created_at, request_json, data_cutoff, caliber_version, status
+       FROM backtest_experiments
+       ORDER BY created_at DESC${suffix}`,
+    ).map((row) => {
+      const results = this.listExperimentResults(row.id);
+      const xirrs = results
+        .map((result) => result.metrics.xirr)
+        .filter((value): value is number => value !== null);
+      return {
+        experimentId: row.id,
+        createdAt: row.created_at,
+        request: JSON.parse(row.request_json) as BacktestExperiment["request"],
+        dataCutoff: row.data_cutoff,
+        caliberVersion: row.caliber_version,
+        status: row.status,
+        resultCount: results.length,
+        bestXirr: xirrs.length ? Math.max(...xirrs) : null,
+        maxDrawdown: results.length
+          ? Math.min(...results.map((result) => result.metrics.maxDrawdown))
+          : 0,
+      };
+    });
+  }
+
+  getBacktestExperiment(id: string): BacktestExperiment | null {
+    const row = rows<{
+      id: string;
+      created_at: string;
+      request_json: string;
+      data_cutoff: string;
+      caliber_version: string;
+      status: "completed";
+    }>(
+      this.database,
+      `SELECT id, created_at, request_json, data_cutoff, caliber_version, status
+       FROM backtest_experiments WHERE id = ?`,
+      [id],
+    )[0];
+    if (!row) return null;
+    return {
+      experimentId: row.id,
+      createdAt: row.created_at,
+      request: JSON.parse(row.request_json) as BacktestExperiment["request"],
+      dataCutoff: row.data_cutoff,
+      caliberVersion: row.caliber_version,
+      status: row.status,
+      results: this.listExperimentResults(row.id),
+    };
+  }
+
+  deleteBacktestExperiment(id: string): void {
+    const workspace = this.getBacktestWorkspace();
+    this.database.run("BEGIN");
+    try {
+      // sql.js 的外键 pragma 可能受已有连接状态影响；显式删除子记录，
+      // 让删除语义不依赖运行时是否真正启用了级联。
+      this.database.run(
+        "DELETE FROM backtest_results WHERE experiment_id = ?",
+        [id],
+      );
+      this.database.run(
+        "DELETE FROM backtest_experiments WHERE id = ?",
+        [id],
+      );
+      if (workspace?.activeExperimentId === id) {
         this.database.run(
-          `INSERT INTO backtest_runs(
-             id, created_at, symbol, result_json, strategy_key, batch_id
-           ) VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(strategy_key) DO UPDATE SET
-             id = excluded.id,
-             created_at = excluded.created_at,
-             symbol = excluded.symbol,
-             result_json = excluded.result_json,
-             batch_id = excluded.batch_id`,
+          `INSERT INTO backtest_workspace(id, state_json) VALUES (1, ?)
+           ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json`,
           [
-            normalized.id,
-            normalized.createdAt,
-            normalized.symbol,
-            JSON.stringify(normalized),
-            strategyKey,
-            normalized.batchId ?? null,
+            JSON.stringify({
+              ...workspace,
+              activeExperimentId: undefined,
+              updatedAt: new Date().toISOString(),
+            }),
           ],
         );
       }
@@ -311,33 +401,13 @@ export class LocalDatabase {
     }
   }
 
-  listBacktests(limit = BACKTEST_HISTORY_LIMIT): BacktestResult[] {
-    const suffix = Number.isFinite(limit) ? ` LIMIT ${Math.max(1, limit)}` : "";
-    return rows<{ result_json: string }>(
-      this.database,
-      `SELECT result_json FROM backtest_runs ORDER BY created_at DESC${suffix}`,
-    ).map((row) => JSON.parse(row.result_json) as BacktestResult);
-  }
-
   getBacktest(id: string): BacktestResult | null {
-    return (
-      this.listBacktests(Number.POSITIVE_INFINITY).find(
-        (result) => result.id === id,
-      ) ?? null
-    );
-  }
-
-  listBacktestsByIds(ids: string[]): BacktestResult[] {
-    const byId = new Map(
-      this.listBacktests(Number.POSITIVE_INFINITY).map((result) => [
-        result.id,
-        result,
-      ]),
-    );
-    return ids.flatMap((id) => {
-      const result = byId.get(id);
-      return result ? [result] : [];
-    });
+    const row = rows<{ result_json: string }>(
+      this.database,
+      "SELECT result_json FROM backtest_results WHERE id = ?",
+      [id],
+    )[0];
+    return row ? (JSON.parse(row.result_json) as BacktestResult) : null;
   }
 
   replaceStockUniverse(
@@ -453,7 +523,11 @@ export class LocalDatabase {
       exportedAt: new Date().toISOString(),
       application: "stock-income-r1",
       ledgerEntries: this.listLedger(),
-      backtestRuns: this.listBacktests(Number.POSITIVE_INFINITY),
+      backtestExperiments: this.listBacktestExperiments(
+        Number.POSITIVE_INFINITY,
+      ).map((summary) =>
+        this.getBacktestExperiment(summary.experimentId)!,
+      ),
       marketPrices: rows(
         this.database,
         "SELECT symbol, trade_date, close, source, fetched_at FROM market_prices ORDER BY symbol, trade_date",
@@ -472,14 +546,15 @@ export class LocalDatabase {
     if (
       !payload ||
       typeof payload !== "object" ||
-      ![1, SCHEMA_VERSION].includes(
-        Number((payload as Partial<BackupPayload>).schemaVersion),
-      ) ||
+      (payload as Partial<BackupPayload>).schemaVersion !== SCHEMA_VERSION ||
       (payload as Partial<BackupPayload>).application !== "stock-income-r1" ||
       !Array.isArray((payload as Partial<BackupPayload>).ledgerEntries) ||
-      !Array.isArray((payload as Partial<BackupPayload>).backtestRuns) ||
+      !Array.isArray(
+        (payload as Partial<BackupPayload>).backtestExperiments,
+      ) ||
       !Array.isArray((payload as Partial<BackupPayload>).marketPrices) ||
-      !Array.isArray((payload as Partial<BackupPayload>).corporateActions)
+      !Array.isArray((payload as Partial<BackupPayload>).corporateActions) ||
+      !Array.isArray((payload as Partial<BackupPayload>).stockUniverse)
     ) {
       throw new Error("备份结构或 schema 版本不兼容");
     }
@@ -487,7 +562,8 @@ export class LocalDatabase {
     this.database.run("BEGIN");
     try {
       this.database.run("DELETE FROM ledger_entries");
-      this.database.run("DELETE FROM backtest_runs");
+      this.database.run("DELETE FROM backtest_results");
+      this.database.run("DELETE FROM backtest_experiments");
       this.database.run("DELETE FROM market_prices");
       this.database.run("DELETE FROM corporate_actions");
       this.database.run("DELETE FROM settings");
@@ -505,32 +581,8 @@ export class LocalDatabase {
           ],
         );
       }
-      for (const result of backup.backtestRuns) {
-        const strategyKey = result.strategyKey ?? strategyKeyFromResult(result);
-        const normalized = {
-          ...result,
-          requestedEndDate: result.requestedEndDate ?? result.actualEndDate,
-          strategyKey,
-        };
-        this.database.run(
-          `INSERT INTO backtest_runs(
-             id, created_at, symbol, result_json, strategy_key, batch_id
-           ) VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(strategy_key) DO UPDATE SET
-             id = excluded.id,
-             created_at = excluded.created_at,
-             symbol = excluded.symbol,
-             result_json = excluded.result_json,
-             batch_id = excluded.batch_id`,
-          [
-            normalized.id,
-            normalized.createdAt,
-            normalized.symbol,
-            JSON.stringify(normalized),
-            strategyKey,
-            normalized.batchId ?? null,
-          ],
-        );
+      for (const experiment of backup.backtestExperiments) {
+        this.insertExperiment(experiment);
       }
       for (const row of backup.marketPrices) {
         this.database.run(
@@ -548,7 +600,7 @@ export class LocalDatabase {
         "INSERT INTO settings(key, value_json) VALUES ('app', ?)",
         [JSON.stringify(backup.settings ?? DEFAULT_SETTINGS)],
       );
-      for (const stock of backup.stockUniverse ?? []) {
+      for (const stock of backup.stockUniverse) {
         this.database.run(
           "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
           [stock.symbol, stock.name, stock.source, stock.fetchedAt],

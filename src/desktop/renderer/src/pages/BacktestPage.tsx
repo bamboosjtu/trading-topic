@@ -30,16 +30,16 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactECharts from "echarts-for-react";
 import {
-  BACKTEST_COMPARISON_PAGE_SIZE,
+  BACKTEST_CALIBER_VERSION,
   BACKTEST_DETAIL_PAGE_SIZE,
   BACKTEST_MAX_SYMBOLS,
-  BACKTEST_RANGE_LABELS,
   BACKTEST_RANGE_YEARS,
   DEFAULT_BACKTEST_SYMBOLS,
-  DEFAULT_STOCKS,
 } from "../../../shared/constants";
 import {
   api,
+  type BacktestExperiment,
+  type BacktestExperimentSummary,
   type BacktestCandlePeriod,
   type BacktestChartMetric,
   type BacktestRequest,
@@ -49,6 +49,7 @@ import {
   type SimpleBacktestResult,
   type SimpleBacktestRow,
 } from "../api/client";
+import { BacktestHistoryPanel } from "./BacktestHistoryPanel";
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -213,18 +214,15 @@ function movingAverage(values: number[], window: number): Array<number | "-"> {
   });
 }
 
-function rangeDescription(result: BacktestResult): string {
-  if (result.rangeYears) return BACKTEST_RANGE_LABELS[result.rangeYears];
-  return `${result.requestedStartDate} 至 ${
-    result.requestedEndDate ?? result.actualEndDate
-  }`;
-}
-
 export function BacktestPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [form] = Form.useForm<BacktestRequest>();
-  const [currentResults, setCurrentResults] = useState<BacktestResult[]>([]);
+  const [pageTab, setPageTab] = useState<"run" | "history">("run");
+  const [currentExperiment, setCurrentExperiment] =
+    useState<BacktestExperiment | null>(null);
+  const [activeExperimentId, setActiveExperimentId] = useState<string>();
+  const [viewingReadonly, setViewingReadonly] = useState(false);
   const [detail, setDetail] = useState<BacktestResult | null>(null);
   const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | 15 | "custom">(3);
   const [rulesExpanded, setRulesExpanded] = useState(false);
@@ -233,9 +231,7 @@ export function BacktestPage() {
   const [candlePeriod, setCandlePeriod] =
     useState<BacktestCandlePeriod>("day");
   const [chartSymbol, setChartSymbol] = useState("601398");
-  const [activeBatchId, setActiveBatchId] = useState<string>();
   const [workspaceRestored, setWorkspaceRestored] = useState(false);
-  const [comparisonPage, setComparisonPage] = useState(1);
   const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const [detailPage, setDetailPage] = useState(1);
   const [detailEventFilters, setDetailEventFilters] = useState<
@@ -252,55 +248,105 @@ export function BacktestPage() {
     queryFn: api.listStocks,
     staleTime: 60 * 60 * 1_000,
   });
-  const history = useQuery({
-    queryKey: ["backtests"],
-    queryFn: api.listBacktests,
+  const experiments = useQuery({
+    queryKey: ["backtest:experiments"],
+    queryFn: api.listBacktestExperiments,
   });
   const workspace = useQuery({
     queryKey: ["backtest:workspace"],
     queryFn: api.getBacktestWorkspace,
   });
+  const persistedExperiment = useQuery({
+    queryKey: ["backtest:experiment", activeExperimentId],
+    queryFn: () => api.getBacktestExperiment(activeExperimentId!),
+    enabled:
+      Boolean(activeExperimentId) &&
+      currentExperiment?.experimentId !== activeExperimentId,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const activeExperiment =
+    currentExperiment?.experimentId === activeExperimentId
+      ? currentExperiment
+      : persistedExperiment.data;
+  const results = activeExperiment?.results ?? [];
 
   const stockOptions = useMemo(
     () =>
-      (stocks.data?.length ? stocks.data : DEFAULT_STOCKS).map(
-        ({ symbol, name }) => ({
-          value: symbol,
-          label: name,
-          searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
-        }),
-      ),
+      (stocks.data ?? []).map(({ symbol, name }) => ({
+        value: symbol,
+        label: name,
+        searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
+      })),
     [stocks.data],
   );
 
   const mutation = useMutation({
     mutationFn: api.runBacktest,
-    onSuccess: (results, variables) => {
-      setCurrentResults(results);
-      const batchId = results[0]?.batchId;
-      setActiveBatchId(batchId);
+    onSuccess: (experiment) => {
+      setCurrentExperiment(experiment);
+      setActiveExperimentId(experiment.experimentId);
+      setViewingReadonly(false);
+      const nextChartSymbol = experiment.results.some(
+        (result) => result.symbol === chartSymbol,
+      )
+        ? chartSymbol
+        : (experiment.results[0]?.symbol ?? chartSymbol);
+      setChartSymbol(nextChartSymbol);
       const state: BacktestWorkspaceState = {
-        request: variables,
+        request: experiment.request,
         chartMetric,
         candlePeriod,
-        chartSymbol: results.some((result) => result.symbol === chartSymbol)
-          ? chartSymbol
-          : (results[0]?.symbol ?? chartSymbol),
-        lastBatchId: batchId,
+        chartSymbol: nextChartSymbol,
+        activeExperimentId: experiment.experimentId,
         updatedAt: new Date().toISOString(),
       };
       void api.saveBacktestWorkspace(state);
-      void queryClient.invalidateQueries({ queryKey: ["backtests"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["backtest:experiments"],
+      });
       void queryClient.invalidateQueries({ queryKey: ["backtest:workspace"] });
       void queryClient.invalidateQueries({ queryKey: ["health"] });
-      message.success(`已完成 ${results.length} 个标的回测`);
+      message.success(`已完成 ${experiment.results.length} 个标的回测`);
     },
     onError: (error) => message.error(error.message),
   });
   const exportMutation = useMutation({
-    mutationFn: (ids: string[]) => api.exportBacktestComparison(ids),
+    mutationFn: (experimentId: string) =>
+      api.exportBacktestExperiment(experimentId),
     onSuccess: (result) => {
-      if (!result.cancelled) message.success("已导出 XLSX 对比结果与逐项明细");
+      if (!result.cancelled) message.success("已导出本次实验及逐标的明细");
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const openExperimentMutation = useMutation({
+    mutationFn: (experimentId: string) =>
+      api.getBacktestExperiment(experimentId),
+    onSuccess: (experiment) => {
+      form.setFieldsValue(experiment.request);
+      setRangePreset(experiment.request.rangeYears ?? "custom");
+      setCurrentExperiment(experiment);
+      setActiveExperimentId(experiment.experimentId);
+      setChartSymbol(experiment.results[0]?.symbol ?? chartSymbol);
+      setViewingReadonly(true);
+      setPageTab("run");
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const deleteExperimentMutation = useMutation({
+    mutationFn: (experimentId: string) =>
+      api.deleteBacktestExperiment(experimentId),
+    onSuccess: (_, experimentId) => {
+      if (activeExperimentId === experimentId) {
+        setActiveExperimentId(undefined);
+        setCurrentExperiment(null);
+        setViewingReadonly(false);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ["backtest:experiments"],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["backtest:workspace"] });
+      message.success("回测试验已删除");
     },
     onError: (error) => message.error(error.message),
   });
@@ -341,7 +387,7 @@ export function BacktestPage() {
       setChartMetric(saved.chartMetric);
       setCandlePeriod(saved.candlePeriod);
       setChartSymbol(saved.chartSymbol);
-      setActiveBatchId(saved.lastBatchId);
+      setActiveExperimentId(saved.activeExperimentId);
     }
     setWorkspaceRestored(true);
   }, [form, workspace.data, workspace.isFetched, workspaceRestored]);
@@ -359,13 +405,13 @@ export function BacktestPage() {
         chartMetric,
         candlePeriod,
         chartSymbol,
-        lastBatchId: activeBatchId,
+        activeExperimentId,
         updatedAt: new Date().toISOString(),
       });
     }, 300);
     return () => window.clearTimeout(timer);
   }, [
-    activeBatchId,
+    activeExperimentId,
     candlePeriod,
     chartMetric,
     chartSymbol,
@@ -379,15 +425,6 @@ export function BacktestPage() {
     workspaceRestored,
   ]);
 
-  const results = useMemo(() => {
-    if (currentResults.length) return currentResults;
-    const persisted = (history.data ?? []).filter(
-      (result) => result.batchId && result.batchId === activeBatchId,
-    );
-    if (persisted.length) return persisted;
-    return [];
-  }, [activeBatchId, currentResults, history.data]);
-
   const rankedResults = useMemo(
     () =>
       [...results].sort(
@@ -397,33 +434,6 @@ export function BacktestPage() {
       ),
     [results],
   );
-  const rankedComparisonResults = useMemo(
-    () =>
-      [...(history.data ?? [])].sort(
-        (a, b) =>
-          (b.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
-          (a.metrics.xirr ?? Number.NEGATIVE_INFINITY),
-      ),
-    [history.data],
-  );
-  const comparisonRows = useMemo(
-    () =>
-      rankedComparisonResults.slice(
-        (comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE,
-        comparisonPage * BACKTEST_COMPARISON_PAGE_SIZE,
-      ),
-    [comparisonPage, rankedComparisonResults],
-  );
-
-  useEffect(() => {
-    const pageCount = Math.max(
-      1,
-      Math.ceil(
-        rankedComparisonResults.length / BACKTEST_COMPARISON_PAGE_SIZE,
-      ),
-    );
-    if (comparisonPage > pageCount) setComparisonPage(pageCount);
-  }, [comparisonPage, rankedComparisonResults.length]);
 
   useEffect(() => {
     if (results.length && !results.some((result) => result.symbol === chartSymbol)) {
@@ -666,10 +676,30 @@ export function BacktestPage() {
     };
   }, [candlePeriod, chartMetric, chartSymbol, rankedResults, results]);
 
+  const beginDraft = () => {
+    setActiveExperimentId(undefined);
+    setCurrentExperiment(null);
+    setViewingReadonly(false);
+  };
+
   const setDatePreset = (years: 3 | 5 | 10 | 15) => {
+    beginDraft();
     setRangePreset(years);
     form.setFieldsValue({ startDate: dateYearsAgo(years), endDate: today() });
   };
+
+  const copyBacktestRequest = (request: BacktestRequest) => {
+    form.setFieldsValue(request);
+    setRangePreset(request.rangeYears ?? "custom");
+    setChartSymbol(request.symbols[0] ?? chartSymbol);
+    setActiveExperimentId(undefined);
+    setCurrentExperiment(null);
+    setViewingReadonly(false);
+    setPageTab("run");
+    message.success("已复制实验参数；修改后可开始新的回测");
+  };
+  const copyExperimentRequest = (experiment: BacktestExperimentSummary) =>
+    copyBacktestRequest(experiment.request);
 
   const metricTabs: Array<[BacktestChartMetric, string]> = [
     ["kline", "行情K线"],
@@ -687,7 +717,7 @@ export function BacktestPage() {
       <header className="page-heading backtest-heading">
         <h1>历史回测</h1>
         <div className="backtest-heading-meta">
-          <p>回测全仓策略、定投买入、分红再投资，长期走势与收益表现分析</p>
+          <p>固定金额、定投买入、分红再投资，长期走势与收益风险分析</p>
           <button
             type="button"
             className="inline-link"
@@ -699,9 +729,69 @@ export function BacktestPage() {
         </div>
       </header>
 
-      <section className="workspace-panel backtest-config">
+      <nav className="backtest-page-tabs" aria-label="历史回测页面">
+        <button
+          type="button"
+          className={pageTab === "run" ? "active" : ""}
+          aria-current={pageTab === "run" ? "page" : undefined}
+          onClick={() => setPageTab("run")}
+        >
+          运行回测
+        </button>
+        <button
+          type="button"
+          className={pageTab === "history" ? "active" : ""}
+          aria-current={pageTab === "history" ? "page" : undefined}
+          onClick={() => setPageTab("history")}
+        >
+          历史结果
+          {experiments.data?.length ? (
+            <span>{experiments.data.length}</span>
+          ) : null}
+        </button>
+      </nav>
+
+      {pageTab === "history" ? (
+        <BacktestHistoryPanel
+          experiments={experiments.data ?? []}
+          loading={experiments.isLoading}
+          deletingId={
+            deleteExperimentMutation.isPending
+              ? deleteExperimentMutation.variables
+              : undefined
+          }
+          onView={(experiment) =>
+            openExperimentMutation.mutate(experiment.experimentId)
+          }
+          onCopy={copyExperimentRequest}
+          onDelete={(experiment) =>
+            deleteExperimentMutation.mutate(experiment.experimentId)
+          }
+        />
+      ) : (
+        <>
+          {viewingReadonly && activeExperiment ? (
+            <div className="experiment-readonly-banner">
+              <div>
+                <strong>正在查看历史实验</strong>
+                <span>
+                  {new Date(activeExperiment.createdAt).toLocaleString("zh-CN")} ·
+                  数据截止 {activeExperiment.dataCutoff} · 参数与结果只读
+                </span>
+              </div>
+              <Button
+                size="small"
+                onClick={() => copyBacktestRequest(activeExperiment.request)}
+              >
+                复制参数重新回测
+              </Button>
+            </div>
+          ) : null}
+
+          <section className="workspace-panel backtest-config">
         <Form
           form={form}
+          disabled={viewingReadonly}
           layout="vertical"
           initialValues={{
             symbols: [...DEFAULT_BACKTEST_SYMBOLS],
@@ -710,6 +800,7 @@ export function BacktestPage() {
             monthlyAmount: 3000,
             buyDay: 1,
             rangeYears: 3,
+            caliberVersion: BACKTEST_CALIBER_VERSION,
           }}
           onFinish={(values) =>
             mutation.mutate({
@@ -717,9 +808,15 @@ export function BacktestPage() {
               rangeYears: rangePreset === "custom" ? undefined : rangePreset,
             })
           }
+          onValuesChange={() => {
+            if (activeExperimentId) beginDraft();
+          }}
         >
           <Form.Item name="buyDay" hidden>
             <InputNumber />
+          </Form.Item>
+          <Form.Item name="caliberVersion" hidden>
+            <Input />
           </Form.Item>
           <Form.Item name="startDate" hidden>
             <Input />
@@ -762,6 +859,17 @@ export function BacktestPage() {
                     notFoundContent={
                       stocks.isLoading ? (
                         <Skeleton active paragraph={{ rows: 2 }} title={false} />
+                      ) : stocks.isError ? (
+                        <div className="stock-universe-error">
+                          <span>全 A 股目录加载失败</span>
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={() => void stocks.refetch()}
+                          >
+                            重试
+                          </Button>
+                        </div>
                       ) : (
                         "未找到匹配的 A 股"
                       )
@@ -773,7 +881,10 @@ export function BacktestPage() {
                   size="small"
                   icon={<PlusOutlined />}
                   className="add-symbol-button"
-                  disabled={selectedSymbols.length >= BACKTEST_MAX_SYMBOLS}
+                  disabled={
+                    viewingReadonly ||
+                    selectedSymbols.length >= BACKTEST_MAX_SYMBOLS
+                  }
                   onClick={() => setSymbolPickerOpen(true)}
                 >
                   添加标的
@@ -789,6 +900,7 @@ export function BacktestPage() {
                     <button
                       key={range}
                       type="button"
+                      disabled={viewingReadonly}
                       className={rangePreset === range ? "active" : ""}
                       onClick={() => setDatePreset(range)}
                     >
@@ -831,6 +943,7 @@ export function BacktestPage() {
                         type="date"
                         value={startDate}
                         onChange={(event) => {
+                          beginDraft();
                           form.setFieldValue("startDate", event.target.value);
                           setRangePreset("custom");
                         }}
@@ -841,6 +954,7 @@ export function BacktestPage() {
                         type="date"
                         value={endDate}
                         onChange={(event) => {
+                          beginDraft();
                           form.setFieldValue("endDate", event.target.value);
                           setRangePreset("custom");
                         }}
@@ -852,13 +966,20 @@ export function BacktestPage() {
                         max={28}
                         value={buyDay}
                         suffix="日"
-                        onChange={(value) => form.setFieldValue("buyDay", value ?? 1)}
+                        onChange={(value) => {
+                          beginDraft();
+                          form.setFieldValue("buyDay", value ?? 1);
+                        }}
                       />
                       <p>非交易日自动顺延到下一交易日。</p>
                     </div>
                   }
                 >
-                  <button type="button" className="inline-link compact">
+                  <button
+                    type="button"
+                    className="inline-link compact"
+                    disabled={viewingReadonly}
+                  >
                     <SettingOutlined />
                     高级设置
                   </button>
@@ -936,11 +1057,10 @@ export function BacktestPage() {
                 aria-label="导出对比结果"
                 icon={<DownloadOutlined />}
                 loading={exportMutation.isPending}
-                disabled={!rankedComparisonResults.length}
+                disabled={!activeExperiment}
                 onClick={() =>
-                  exportMutation.mutate(
-                    rankedComparisonResults.map((result) => result.id),
-                  )
+                  activeExperiment &&
+                  exportMutation.mutate(activeExperiment.experimentId)
                 }
               >
                 导出
@@ -965,7 +1085,7 @@ export function BacktestPage() {
             ))}
           </div>
         )}
-        {history.isLoading && !results.length ? (
+        {persistedExperiment.isLoading && !results.length ? (
           <div className="chart-loading">
             <Skeleton active paragraph={{ rows: 5 }} title={false} />
           </div>
@@ -986,13 +1106,25 @@ export function BacktestPage() {
       </section>
 
       <section className="workspace-panel comparison-panel">
-        <div className="comparison-title">回测结果对比（按 XIRR 排序）</div>
+        <div className="comparison-title">
+          <div>
+            <strong>本次实验结果（按 XIRR 排序）</strong>
+            <span>只比较同一请求、同一数据截止时间下的标的结果</span>
+          </div>
+          {activeExperiment ? (
+            <small className="tabular-nums">
+              运行于 {new Date(activeExperiment.createdAt).toLocaleString("zh-CN")}
+              {" · "}
+              数据截止 {activeExperiment.dataCutoff}
+            </small>
+          ) : null}
+        </div>
         <Table
           className="comparison-table"
           rowKey="id"
           pagination={false}
-          loading={history.isLoading}
-          dataSource={comparisonRows}
+          loading={persistedExperiment.isLoading}
+          dataSource={rankedResults}
           locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
           scroll={{ x: 1320 }}
           onRow={(record) => ({
@@ -1005,16 +1137,8 @@ export function BacktestPage() {
               width: 58,
               align: "center",
               render: (_, _row, index) => (
-                <span
-                  className={`rank rank-${
-                    (comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE +
-                    index +
-                    1
-                  }`}
-                >
-                  {(comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE +
-                    index +
-                    1}
+                <span className={`rank rank-${index + 1}`}>
+                  {index + 1}
                   <TrophyFilled />
                 </span>
               ),
@@ -1026,18 +1150,6 @@ export function BacktestPage() {
                 <div className="symbol-cell">
                   <strong>{row.name}</strong>
                   <span className="tabular-nums">{row.symbol}</span>
-                </div>
-              ),
-            },
-            {
-              title: "回测参数",
-              width: 138,
-              render: (_, row) => (
-                <div className="strategy-parameter">
-                  <strong>{rangeDescription(row)}</strong>
-                  <small>
-                    {money(row.monthlyAmount)}/月 · 每月{row.buyDay}日
-                  </small>
                 </div>
               ),
             },
@@ -1128,18 +1240,11 @@ export function BacktestPage() {
           ]}
         />
         <div className="comparison-footer">
-          <span>共 {rankedComparisonResults.length} 条回测记录</span>
-          <Pagination
-            size="small"
-            current={comparisonPage}
-            pageSize={BACKTEST_COMPARISON_PAGE_SIZE}
-            total={rankedComparisonResults.length}
-            showSizeChanger={false}
-            hideOnSinglePage
-            onChange={setComparisonPage}
-          />
+          <span>本次实验共 {rankedResults.length} 个标的</span>
         </div>
       </section>
+        </>
+      )}
 
       <Modal
         title={
