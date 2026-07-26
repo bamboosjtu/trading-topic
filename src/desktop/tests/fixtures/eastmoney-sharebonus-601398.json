@@ -1,0 +1,74 @@
+{
+  "_fixture": {
+    "source": "东方财富 datacenter-web RPT_SHAREBONUS_DET",
+    "capturedAt": "2026-07-27",
+    "request": "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_SHAREBONUS_DET&columns=ALL&filter=(SECURITY_CODE=\"601398\")&pageNumber=1&pageSize=20&sortColumns=EX_DIVIDEND_DATE&sortTypes=-1&source=WEB&client=WEB",
+    "note": "保留真实响应中的年度与中期实施方案最小切片，用于产品适配器回归。"
+  },
+  "version": "416c206ab2567b3ce9ecc8c43cfc1b1c",
+  "result": {
+    "data": [
+      {
+        "SECUCODE": "601398.SH",
+        "SECURITY_NAME_ABBR": "工商银行",
+        "SECURITY_INNER_CODE": "1000000973",
+        "ORG_CODE": "10008224",
+        "SECURITY_CODE": "601398",
+        "BONUS_IT_RATIO": null,
+        "BONUS_RATIO": null,
+        "IT_RATIO": null,
+        "PRETAX_BONUS_RMB": 1.414,
+        "PLAN_NOTICE_DATE": "2025-08-30 00:00:00",
+        "EQUITY_RECORD_DATE": "2025-12-12 00:00:00",
+        "EX_DIVIDEND_DATE": "2025-12-15 00:00:00",
+        "REPORT_DATE": "2025-06-30 00:00:00",
+        "ASSIGN_PROGRESS": "实施分配",
+        "IMPL_PLAN_PROFILE": "10派1.414元(含税,扣税后1.2726元)",
+        "NOTICE_DATE": "2025-12-09 00:00:00",
+        "PUBLISH_DATE": "2025-08-30 00:00:00"
+      },
+      {
+        "SECUCODE": "601398.SH",
+        "SECURITY_NAME_ABBR": "工商银行",
+        "SECURITY_INNER_CODE": "1000000973",
+        "ORG_CODE": "10008224",
+        "SECURITY_CODE": "601398",
+        "BONUS_IT_RATIO": null,
+        "BONUS_RATIO": null,
+        "IT_RATIO": null,
+        "PRETAX_BONUS_RMB": 1.646,
+        "PLAN_NOTICE_DATE": "2025-03-29 00:00:00",
+        "EQUITY_RECORD_DATE": "2025-07-11 00:00:00",
+        "EX_DIVIDEND_DATE": "2025-07-14 00:00:00",
+        "REPORT_DATE": "2024-12-31 00:00:00",
+        "ASSIGN_PROGRESS": "实施分配",
+        "IMPL_PLAN_PROFILE": "10派1.646元(含税,扣税后1.4814元)",
+        "NOTICE_DATE": "2025-07-08 00:00:00",
+        "PUBLISH_DATE": "2025-03-29 00:00:00"
+      },
+      {
+        "SECUCODE": "601398.SH",
+        "SECURITY_NAME_ABBR": "工商银行",
+        "SECURITY_INNER_CODE": "1000000973",
+        "ORG_CODE": "10008224",
+        "SECURITY_CODE": "601398",
+        "BONUS_IT_RATIO": null,
+        "BONUS_RATIO": null,
+        "IT_RATIO": null,
+        "PRETAX_BONUS_RMB": 3.064,
+        "PLAN_NOTICE_DATE": "2024-03-28 00:00:00",
+        "EQUITY_RECORD_DATE": "2024-07-15 00:00:00",
+        "EX_DIVIDEND_DATE": "2024-07-16 00:00:00",
+        "REPORT_DATE": "2023-12-31 00:00:00",
+        "ASSIGN_PROGRESS": "实施分配",
+        "IMPL_PLAN_PROFILE": "10派3.064元(含税,扣税后2.7576元)",
+        "NOTICE_DATE": "2024-07-09 00:00:00",
+        "PUBLISH_DATE": "2024-03-28 00:00:00"
+      }
+    ],
+    "count": 22
+  },
+  "success": true,
+  "message": "ok",
+  "code": 0
+}

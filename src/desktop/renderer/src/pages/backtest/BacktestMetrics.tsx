@@ -22,7 +22,8 @@ export function BacktestMetrics({ results }: { results: BacktestResult[] }) {
     (a, b) => a.metrics.maxDrawdown - b.metrics.maxDrawdown,
   )[0];
   const longestDrawdown = [...results].sort(
-    (a, b) => b.metrics.maxDrawdownMonths - a.metrics.maxDrawdownMonths,
+    (a, b) =>
+      b.metrics.longestDrawdownMonths - a.metrics.longestDrawdownMonths,
   )[0];
   const dividendWinner = [...results].sort(
     (a, b) => b.metrics.totalDividend - a.metrics.totalDividend,
@@ -68,12 +69,12 @@ export function BacktestMetrics({ results }: { results: BacktestResult[] }) {
     {
       label: "最长亏损时间",
       value: longestDrawdown
-        ? `${longestDrawdown.metrics.maxDrawdownMonths} 个月`
+        ? `${longestDrawdown.metrics.longestDrawdownMonths} 个月`
         : "—",
       helper:
-        longestDrawdown?.metrics.maxDrawdownStart &&
-        longestDrawdown.metrics.maxDrawdownEnd
-          ? `${longestDrawdown.metrics.maxDrawdownStart.slice(0, 7)} → ${longestDrawdown.metrics.maxDrawdownEnd.slice(0, 7)}`
+        longestDrawdown?.metrics.longestDrawdownStart &&
+        longestDrawdown.metrics.longestDrawdownEnd
+          ? `${longestDrawdown.metrics.longestDrawdownStart.slice(0, 7)} → ${longestDrawdown.metrics.longestDrawdownEnd.slice(0, 7)}${longestDrawdown.metrics.longestDrawdownRecovered ? "" : "（未恢复）"}`
           : "",
       icon: <ClockCircleOutlined />,
       tone: "indigo",

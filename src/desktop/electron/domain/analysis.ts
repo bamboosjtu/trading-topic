@@ -328,33 +328,6 @@ export function simulateBacktest(
 }
 
 /**
- * R1 回测审计明细（modal 展示视图）。
- *
- * 不再维护一套“简化但不同”的回测算法，而是把 simulateBacktest 的实际交易
- * 流水转换为可读明细，保证主结果、资产曲线与 modal 完全同源。
- */
-export function simulateBacktestSimple(
-  input: BacktestRequest,
-  symbol: string,
-  name: string,
-  priceRows: PricePoint[],
-  dividendRows: DividendEvent[],
-): SimpleBacktestResult {
-  const prices = priceRows
-    .filter((row) => row.date >= input.startDate && row.date <= input.endDate)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  const backtest = simulateBacktest(
-    input,
-    symbol,
-    name,
-    prices,
-    dividendRows,
-    [],
-  );
-  return backtestResultToSimpleResult(backtest);
-}
-
-/**
  * 将已持久化的主回测结果转换为审计明细。
  *
  * 详情弹窗和 XLSX 导出都使用这一转换，不再重新请求行情或二次回测，

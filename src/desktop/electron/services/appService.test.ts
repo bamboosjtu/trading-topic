@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StockInfo } from "../../shared/contracts";
-import { STOCK_UNIVERSE_MIN_SIZE } from "../../shared/constants";
+import {
+  BACKTEST_CALIBER_VERSION,
+  STOCK_UNIVERSE_MIN_SIZE,
+} from "../../shared/constants";
 import { fetchAStockUniverse } from "../data/stockUniverse";
 import {
   fetchAdjustedBars,
@@ -162,7 +165,7 @@ describe("AppService 回测试验", () => {
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "none",
-        caliberVersion: "bank-dca-r1-node-v3",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     });
     vi.mocked(fetchAdjustedBars).mockResolvedValue({
@@ -191,7 +194,7 @@ describe("AppService 回测试验", () => {
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "qfq",
-        caliberVersion: "bank-dca-r1-node-v3",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     });
     vi.mocked(fetchCorporateActions).mockResolvedValue({
@@ -201,7 +204,7 @@ describe("AppService 回测试验", () => {
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "none",
-        caliberVersion: "bank-dca-r1-node-v3",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     });
     const request = {
@@ -217,7 +220,7 @@ describe("AppService 回测试验", () => {
 
     expect(first.experimentId).not.toBe(second.experimentId);
     expect(first.results[0].experimentId).toBe(first.experimentId);
-    expect(first.request.caliberVersion).toBe("bank-dca-r1-node-v3");
+    expect(first.request.caliberVersion).toBe(BACKTEST_CALIBER_VERSION);
     expect(first.results[0].chartData).toMatchObject({
       status: "ready",
       data: [

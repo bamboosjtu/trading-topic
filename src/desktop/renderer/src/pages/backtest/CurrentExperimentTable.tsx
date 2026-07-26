@@ -123,12 +123,15 @@ export function CurrentExperimentTable({
             className: "tabular-nums",
             render: (_, row) => (
               <div className="drawdown-period">
-                <span>{row.metrics.maxDrawdownMonths} 个月</span>
-                {row.metrics.maxDrawdownStart &&
-                  row.metrics.maxDrawdownEnd && (
+                <span>{row.metrics.longestDrawdownMonths} 个月</span>
+                {row.metrics.longestDrawdownStart &&
+                  row.metrics.longestDrawdownEnd && (
                     <small>
-                      {row.metrics.maxDrawdownStart.slice(0, 7)} →{" "}
-                      {row.metrics.maxDrawdownEnd.slice(0, 7)}
+                      {row.metrics.longestDrawdownStart.slice(0, 7)} →{" "}
+                      {row.metrics.longestDrawdownEnd.slice(0, 7)}
+                      {row.metrics.longestDrawdownRecovered
+                        ? ""
+                        : "（未恢复）"}
                     </small>
                   )}
               </div>

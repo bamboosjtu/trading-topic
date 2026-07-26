@@ -16,8 +16,7 @@ trading-topic/
 ├── .claude/              # Claude 的 skills 与本地配置
 ├── docs/
 │   ├── product/          # 产品需求与架构
-│   ├── tutorial/         # 教程资料
-│   └── decisions/        # 仓库级架构决策
+│   └── tutorial/         # 教程资料
 ├── labs/                 # 每个研究主题收敛为一个 Lab，目录形如 01_银行股定投回测/
 │   ├── 00_金融数据获取/    # 金融数据源架构、AKShare 教程、接口体检与筛选脚本
 │   ├── 01_银行股定投回测/  # 银行股定投回测完整链路：子文档 + 前置体检 + 主入口 Notebook + 核心代码 + data_source_registry + data/

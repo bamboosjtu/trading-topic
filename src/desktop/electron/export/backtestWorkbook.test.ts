@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import type { BacktestResult } from "../../shared/contracts";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { buildBacktestWorkbook } from "./backtestWorkbook";
 
 function result(
@@ -20,16 +21,19 @@ function result(
     monthlyAmount: 3000,
     buyDay: 1,
     rangeYears,
-    strategyKey: `${symbol}|${rangeYears}|3000|1|ex_date|bank-dca-r1-node-v3`,
+    strategyKey: `${symbol}|${rangeYears}|3000|1|ex_date|${BACKTEST_CALIBER_VERSION}`,
     metrics: {
       totalContribution: 3000,
       endingAsset: 3300,
       totalPnl: 300,
       xirr: 0.1,
       maxDrawdown: -0.15,
-      maxDrawdownStart: "2024-01-01",
-      maxDrawdownEnd: "2024-04-01",
-      maxDrawdownMonths: 3,
+      maxDrawdownPeakDate: "2024-01-01",
+      maxDrawdownTroughDate: "2024-02-01",
+      longestDrawdownMonths: 3,
+      longestDrawdownStart: "2024-01-01",
+      longestDrawdownEnd: "2024-04-01",
+      longestDrawdownRecovered: true,
       totalDividend: 100,
       endingCash: 0,
     },
@@ -86,10 +90,10 @@ describe("回测 XLSX 导出", () => {
         endDate: "2026-07-24",
         monthlyAmount: 3000,
         buyDay: 1,
-        caliberVersion: "bank-dca-r1-node-v3",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
       },
       dataCutoff: "2026-07-24",
-      caliberVersion: "bank-dca-r1-node-v3",
+      caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
       results,
     });

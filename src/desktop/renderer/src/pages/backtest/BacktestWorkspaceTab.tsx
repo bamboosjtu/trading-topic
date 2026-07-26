@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 interface BacktestWorkspaceTabProps {
+  statusNotice?: ReactNode;
   readonlyBanner?: ReactNode;
   config: ReactNode;
   metrics: ReactNode;
@@ -9,6 +10,7 @@ interface BacktestWorkspaceTabProps {
 }
 
 export function BacktestWorkspaceTab({
+  statusNotice,
   readonlyBanner,
   config,
   metrics,
@@ -17,6 +19,7 @@ export function BacktestWorkspaceTab({
 }: BacktestWorkspaceTabProps) {
   return (
     <>
+      {statusNotice}
       {readonlyBanner}
       {config}
       {metrics}

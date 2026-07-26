@@ -58,6 +58,7 @@ labs/01_银行股定投回测/data/
 *.log
 logs/
 output/
+src/desktop/.userData/
 
 # ─── Claude Code ──────────────────────────────────────
 # 保留 workflows（可团队共享），skills 以 .agents/skills/ 为准

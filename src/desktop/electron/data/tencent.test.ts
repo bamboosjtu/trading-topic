@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
-import { fetchAdjustedBars, fetchCorporateActions } from "./tencent";
+import icbcFixture from "../../tests/fixtures/eastmoney-sharebonus-601398.json";
+import catlFixture from "../../tests/fixtures/eastmoney-sharebonus-300750.json";
+import {
+  fetchAdjustedBars,
+  fetchCorporateActions,
+  parseCorporateActions,
+} from "./tencent";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -46,7 +52,19 @@ describe("fetchCorporateActions", () => {
     expect(result.rows[0].perShare).toBeCloseTo(0.2933, 6);
   });
 
-  it("同一除权日合并现金方案，并使用最新事件日作为截止日", async () => {
+  it("完全重复行先去重，同方案只保留最终实施版本，不同方案才累加", async () => {
+    const repeatedVersion = {
+      SECURITY_CODE: "601398",
+      REPORT_DATE: "2023-12-31",
+      PLAN_NOTICE_DATE: "2024-03-28",
+      NOTICE_DATE: "2024-05-20",
+      EX_DIVIDEND_DATE: "2024-06-01",
+      EQUITY_RECORD_DATE: "2024-05-31",
+      PRETAX_BONUS_RMB: 1,
+      IT_RATIO: 1,
+      BONUS_RATIO: 0,
+      ASSIGN_PROGRESS: "实施分配",
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -54,29 +72,35 @@ describe("fetchCorporateActions", () => {
         json: async () => ({
           result: {
             data: [
+              repeatedVersion,
+              { ...repeatedVersion },
               {
-                EX_DIVIDEND_DATE: "2024-06-01",
-                EQUITY_RECORD_DATE: "2024-05-31",
-                PRETAX_BONUS_RMB: 1,
-                TRANSFER_RATIO: "-",
-                BONUS_RATIO: null,
-                ASSIGN_PROGRESS: "实施",
-              },
-              {
-                EX_DIVIDEND_DATE: "2024-06-01",
-                EQUITY_RECORD_DATE: "2024-05-31",
+                ...repeatedVersion,
+                NOTICE_DATE: "2024-05-25",
                 PRETAX_BONUS_RMB: 2,
-                TRANSFER_RATIO: 0,
-                BONUS_RATIO: 0,
-                ASSIGN_PROGRESS: "实施",
+                IT_RATIO: 2,
               },
               {
+                SECURITY_CODE: "601398",
+                REPORT_DATE: "2024-06-30",
+                PLAN_NOTICE_DATE: "2024-08-01",
+                NOTICE_DATE: "2024-08-20",
+                EX_DIVIDEND_DATE: "2024-06-01",
+                EQUITY_RECORD_DATE: "2024-05-31",
+                PRETAX_BONUS_RMB: 3,
+                IT_RATIO: 1,
+                BONUS_RATIO: 0,
+                ASSIGN_PROGRESS: "实施分配",
+              },
+              {
+                SECURITY_CODE: "601398",
+                REPORT_DATE: "2024-12-31",
                 EX_DIVIDEND_DATE: "2024-09-01",
                 EQUITY_RECORD_DATE: "2024-08-30",
                 PRETAX_BONUS_RMB: 3,
-                TRANSFER_RATIO: 0,
+                IT_RATIO: 0,
                 BONUS_RATIO: 0,
-                ASSIGN_PROGRESS: "实施",
+                ASSIGN_PROGRESS: "实施分配",
               },
             ],
           },
@@ -91,10 +115,40 @@ describe("fetchCorporateActions", () => {
     );
 
     expect(result.rows).toHaveLength(2);
-    expect(result.rows[0].perShare).toBeCloseTo(0.3, 6);
-    expect(result.rows[0].transferRatio).toBe(0);
+    // 2023 年报方案的旧版 0.1 元不会与最终版 0.2 元相加；
+    // 2024 中报被明确识别为另一方案，因此同日实施时再累加 0.3 元。
+    expect(result.rows[0].perShare).toBeCloseTo(0.5, 6);
+    expect(result.rows[0].transferRatio).toBe(3);
     expect(result.provenance.dataCutoff).toBe("2024-09-01");
     expect(result.provenance.caliberVersion).toBe(BACKTEST_CALIBER_VERSION);
+  });
+
+  it("解析真实东方财富现金分红与转增响应 fixture", () => {
+    const icbc = parseCorporateActions(
+      icbcFixture.result.data,
+      "2024-01-01",
+      "2025-12-31",
+    );
+    const catl = parseCorporateActions(
+      catlFixture.result.data,
+      "2023-01-01",
+      "2023-12-31",
+    );
+
+    expect(icbc).toHaveLength(3);
+    expect(icbc[1]).toMatchObject({
+      date: "2025-07-14",
+      recordDate: "2025-07-11",
+      perShare: 0.1646,
+    });
+    expect(catl).toEqual([
+      expect.objectContaining({
+        date: "2023-04-26",
+        perShare: 2.52,
+        transferRatio: 8,
+        bonusRatio: 0,
+      }),
+    ]);
   });
 });
 

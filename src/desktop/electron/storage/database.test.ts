@@ -8,6 +8,7 @@ import type {
   BacktestResult,
   BacktestWorkspaceState,
 } from "../../shared/contracts";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { LocalDatabase } from "./database";
 
 const temporaryDirectories: string[] = [];
@@ -49,16 +50,19 @@ function result(
     buyDay: 1,
     rangeYears: 3,
     dividendTiming: "ex_date",
-    strategyKey: "601398|3|3000|1|ex_date|bank-dca-r1-node-v3",
+    strategyKey: `601398|3|3000|1|ex_date|${BACKTEST_CALIBER_VERSION}`,
     metrics: {
       totalContribution: 108000,
       endingAsset,
       totalPnl: endingAsset - 108000,
       xirr: endingAsset / 1_000_000,
       maxDrawdown: -0.2,
-      maxDrawdownStart: "2025-01-01",
-      maxDrawdownEnd: "2025-06-01",
-      maxDrawdownMonths: 5,
+      maxDrawdownPeakDate: "2025-01-01",
+      maxDrawdownTroughDate: "2025-03-01",
+      longestDrawdownMonths: 5,
+      longestDrawdownStart: "2025-01-01",
+      longestDrawdownEnd: "2025-06-01",
+      longestDrawdownRecovered: true,
       totalDividend: 12000,
       endingCash: 0,
     },
@@ -73,7 +77,7 @@ function result(
         fetchedAt: "2026-07-24T00:00:00Z",
         dataCutoff: "2026-07-24",
         adjustment: "none",
-        caliberVersion: "bank-dca-r1-node-v3",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     ],
     createdAt: "2026-07-24T00:00:00Z",
@@ -90,7 +94,7 @@ function experiment(
     createdAt,
     request: request(),
     dataCutoff: "2026-07-24",
-    caliberVersion: "bank-dca-r1-node-v3",
+    caliberVersion: BACKTEST_CALIBER_VERSION,
     status: "completed",
     results: [result(id, `${id}-result`, endingAsset)],
   };
@@ -118,7 +122,7 @@ afterEach(() => {
 });
 
 describe("LocalDatabase", () => {
-  it("导出并恢复 schema v4 的不可变回测试验与流水", async () => {
+  it("导出并恢复 schema v5 的不可变回测试验与流水", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -136,7 +140,7 @@ describe("LocalDatabase", () => {
     );
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(4);
+    expect(backup.schemaVersion).toBe(5);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
 

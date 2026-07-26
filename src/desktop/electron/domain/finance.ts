@@ -58,30 +58,70 @@ export function xirr(
 
 export interface DrawdownProfile {
   maxDrawdown: number;
-  maxDrawdownStart: string;
-  maxDrawdownEnd: string;
-  maxDrawdownMonths: number;
+  maxDrawdownPeakDate: string;
+  maxDrawdownTroughDate: string;
+  longestDrawdownMonths: number;
+  longestDrawdownStart: string;
+  longestDrawdownEnd: string;
+  longestDrawdownRecovered: boolean;
 }
 
 export function drawdownProfile(
   points: Array<{ date: string; value: number }>,
 ): DrawdownProfile {
+  const emptyProfile: DrawdownProfile = {
+    maxDrawdown: 0,
+    maxDrawdownPeakDate: "",
+    maxDrawdownTroughDate: "",
+    longestDrawdownMonths: 0,
+    longestDrawdownStart: "",
+    longestDrawdownEnd: "",
+    longestDrawdownRecovered: true,
+  };
   if (!points.length) {
-    return {
-      maxDrawdown: 0,
-      maxDrawdownStart: "",
-      maxDrawdownEnd: "",
-      maxDrawdownMonths: 0,
-    };
+    return emptyProfile;
   }
+
   let peakIndex = 0;
   let deepestPeakIndex = 0;
   let troughIndex = 0;
   let maxDrawdown = 0;
+
+  let activeDrawdownStartIndex: number | null = null;
+  let longestDrawdownStartIndex: number | null = null;
+  let longestDrawdownEndIndex: number | null = null;
+  let longestDrawdownDays = -1;
+  let longestDrawdownRecovered = true;
+
+  const recordDrawdownPeriod = (
+    startIndex: number,
+    endIndex: number,
+    recovered: boolean,
+  ) => {
+    const duration = daysBetween(
+      points[startIndex].date,
+      points[endIndex].date,
+    );
+    if (duration > longestDrawdownDays) {
+      longestDrawdownDays = duration;
+      longestDrawdownStartIndex = startIndex;
+      longestDrawdownEndIndex = endIndex;
+      longestDrawdownRecovered = recovered;
+    }
+  };
+
   for (let index = 1; index < points.length; index += 1) {
     if (points[index].value >= points[peakIndex].value) {
+      if (activeDrawdownStartIndex !== null) {
+        recordDrawdownPeriod(activeDrawdownStartIndex, index, true);
+        activeDrawdownStartIndex = null;
+      }
       peakIndex = index;
       continue;
+    }
+
+    if (activeDrawdownStartIndex === null) {
+      activeDrawdownStartIndex = peakIndex;
     }
     const drawdown = points[index].value / points[peakIndex].value - 1;
     if (drawdown < maxDrawdown) {
@@ -90,31 +130,37 @@ export function drawdownProfile(
       troughIndex = index;
     }
   }
+
+  if (activeDrawdownStartIndex !== null) {
+    recordDrawdownPeriod(
+      activeDrawdownStartIndex,
+      points.length - 1,
+      false,
+    );
+  }
+
   if (maxDrawdown === 0) {
-    return {
-      maxDrawdown: 0,
-      maxDrawdownStart: "",
-      maxDrawdownEnd: "",
-      maxDrawdownMonths: 0,
-    };
+    return emptyProfile;
   }
-  let recoveryIndex = points.length - 1;
-  const peakValue = points[deepestPeakIndex].value;
-  for (let index = troughIndex + 1; index < points.length; index += 1) {
-    if (points[index].value >= peakValue) {
-      recoveryIndex = index;
-      break;
-    }
-  }
-  const maxDrawdownStart = points[deepestPeakIndex].date;
-  const maxDrawdownEnd = points[recoveryIndex].date;
+
+  const longestDrawdownStart =
+    longestDrawdownStartIndex === null
+      ? ""
+      : points[longestDrawdownStartIndex].date;
+  const longestDrawdownEnd =
+    longestDrawdownEndIndex === null
+      ? ""
+      : points[longestDrawdownEndIndex].date;
   return {
     maxDrawdown,
-    maxDrawdownStart,
-    maxDrawdownEnd,
-    maxDrawdownMonths: Math.max(
+    maxDrawdownPeakDate: points[deepestPeakIndex].date,
+    maxDrawdownTroughDate: points[troughIndex].date,
+    longestDrawdownMonths: Math.max(
       0,
-      Math.round(daysBetween(maxDrawdownStart, maxDrawdownEnd) / 30.4375),
+      Math.round(longestDrawdownDays / 30.4375),
     ),
+    longestDrawdownStart,
+    longestDrawdownEnd,
+    longestDrawdownRecovered,
   };
 }

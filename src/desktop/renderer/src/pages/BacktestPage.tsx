@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { App, Button, Form } from "antd";
+import { Alert, App, Button, Form } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,10 +15,10 @@ import {
 import { BacktestChartPanel } from "./backtest/BacktestChartPanel";
 import { BacktestConfig } from "./backtest/BacktestConfig";
 import { BacktestDetailModal } from "./backtest/BacktestDetailModal";
-import { BacktestHistoryTab } from "./backtest/BacktestHistoryTab";
 import { BacktestMetrics } from "./backtest/BacktestMetrics";
 import { BacktestWorkspaceTab } from "./backtest/BacktestWorkspaceTab";
 import { CurrentExperimentTable } from "./backtest/CurrentExperimentTable";
+import { ExperimentHistoryTable } from "./backtest/ExperimentHistoryTable";
 import type { BacktestRangePreset } from "./backtest/dateUtils";
 import { useActiveExperiment } from "./backtest/useActiveExperiment";
 import { useBacktestWorkspace } from "./backtest/useBacktestWorkspace";
@@ -32,6 +32,9 @@ export function BacktestPage() {
   const [currentExperiment, setCurrentExperiment] =
     useState<BacktestExperiment | null>(null);
   const [activeExperimentId, setActiveExperimentId] = useState<string>();
+  const [activeExperimentError, setActiveExperimentError] = useState<
+    string | null
+  >(null);
   const [viewingReadonly, setViewingReadonly] = useState(false);
   const [detail, setDetail] = useState<BacktestResult | null>(null);
   const [rangePreset, setRangePreset] =
@@ -94,6 +97,7 @@ export function BacktestPage() {
     onSuccess: (experiment) => {
       setCurrentExperiment(experiment);
       setActiveExperimentId(experiment.experimentId);
+      setActiveExperimentError(null);
       setViewingReadonly(false);
       const nextChartSymbol = experiment.results.some(
         (result) => result.symbol === chartSymbol,
@@ -101,19 +105,8 @@ export function BacktestPage() {
         ? chartSymbol
         : (experiment.results[0]?.symbol ?? chartSymbol);
       setChartSymbol(nextChartSymbol);
-      void api.saveBacktestWorkspace({
-        request: experiment.request,
-        chartMetric,
-        candlePeriod,
-        chartSymbol: nextChartSymbol,
-        activeExperimentId: experiment.experimentId,
-        updatedAt: new Date().toISOString(),
-      });
       void queryClient.invalidateQueries({
         queryKey: ["backtest:experiments"],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["backtest:workspace"],
       });
       void queryClient.invalidateQueries({ queryKey: ["health"] });
       message.success(`已完成 ${experiment.results.length} 个标的回测`);
@@ -134,6 +127,7 @@ export function BacktestPage() {
       setRangePreset(experiment.request.rangeYears ?? "custom");
       setCurrentExperiment(experiment);
       setActiveExperimentId(experiment.experimentId);
+      setActiveExperimentError(null);
       setChartSymbol(experiment.results[0]?.symbol ?? chartSymbol);
       setViewingReadonly(true);
       setPageTab("run");
@@ -158,6 +152,26 @@ export function BacktestPage() {
     },
     onError: (error) => message.error(error.message),
   });
+
+  useEffect(() => {
+    if (!active.error || !activeExperimentId) return;
+    const failedExperimentId = activeExperimentId;
+    const reason =
+      active.error instanceof Error
+        ? active.error.message
+        : String(active.error);
+    setActiveExperimentError(
+      `当前实验不存在或无法读取。已清除失效的工作区引用：${reason}`,
+    );
+    setActiveExperimentId(undefined);
+    setCurrentExperiment(null);
+    setViewingReadonly(false);
+    setDetail(null);
+    queryClient.removeQueries({
+      queryKey: ["backtest:experiment", failedExperimentId],
+      exact: true,
+    });
+  }, [active.error, activeExperimentId, queryClient]);
 
   useEffect(() => {
     if (
@@ -189,6 +203,7 @@ export function BacktestPage() {
       setChartSymbol(request.symbols[0] ?? chartSymbol);
       setActiveExperimentId(undefined);
       setCurrentExperiment(null);
+      setActiveExperimentError(null);
       setViewingReadonly(false);
       setPageTab("run");
       message.success("已复制实验参数；修改后可开始新的回测");
@@ -263,7 +278,7 @@ export function BacktestPage() {
       </nav>
 
       {pageTab === "history" ? (
-        <BacktestHistoryTab
+        <ExperimentHistoryTable
           experiments={experiments.data ?? []}
           loading={experiments.isLoading}
           deletingId={
@@ -281,6 +296,18 @@ export function BacktestPage() {
         />
       ) : (
         <BacktestWorkspaceTab
+          statusNotice={
+            activeExperimentError ? (
+              <Alert
+                showIcon
+                closable
+                type="error"
+                message="无法恢复当前实验"
+                description={activeExperimentError}
+                onClose={() => setActiveExperimentError(null)}
+              />
+            ) : undefined
+          }
           readonlyBanner={readonlyBanner}
           config={
             <BacktestConfig

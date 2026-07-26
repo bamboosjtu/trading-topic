@@ -1,11 +1,35 @@
 import { describe, expect, it } from "vitest";
-import type { BacktestRequest, LedgerEntry } from "../../shared/contracts";
+import type {
+  BacktestRequest,
+  DividendEvent,
+  LedgerEntry,
+  PricePoint,
+} from "../../shared/contracts";
 import {
+  backtestResultToSimpleResult,
   simulateBacktest,
-  simulateBacktestSimple,
 } from "./analysis";
 import { xirr } from "./finance";
 import { rebuildAccount } from "./ledger";
+
+/**
+ * 测试辅助：直接驱动 production 实现 simulateBacktest + backtestResultToSimpleResult，
+ * 不再依赖只属于测试的包装函数。AGENTS.md 要求“目标域测试必须驱动本域实现”。
+ */
+function runSimpleBacktest(
+  input: BacktestRequest,
+  symbol: string,
+  name: string,
+  priceRows: PricePoint[],
+  dividendRows: DividendEvent[],
+) {
+  const prices = priceRows
+    .filter((row) => row.date >= input.startDate && row.date <= input.endDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return backtestResultToSimpleResult(
+    simulateBacktest(input, symbol, name, prices, dividendRows, []),
+  );
+}
 
 const request: BacktestRequest = {
   symbols: ["601398"],
@@ -478,9 +502,9 @@ describe("产品端总收益净值口径", () => {
 });
 
 // 模态框审计明细直接复用主回测流水，不再维护第二套计算口径。
-describe("simulateBacktestSimple R1 回测明细", () => {
+describe("backtestResultToSimpleResult R1 回测明细", () => {
   it("基础月度买入：3 个月无分红，仅生成 buy 行，费用统一为 0", () => {
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -544,7 +568,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
   });
 
   it("contribution 与 buy 合并为一行，不单独产生 contribution 行", () => {
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-02",
@@ -567,7 +591,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
   it("分红到账后先回购，再执行同日定投买入", () => {
     // 1 月买入 100 股 @10；2 月除权日：每股分红 5 元，价格除权至 5 元
     // 同日仍执行 2 月定投买入
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -656,7 +680,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
   });
 
   it("送股/转增行改变累计股数，但不增加买入金额", () => {
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -694,7 +718,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
   });
 
   it("零碎股内部保留 6 位精度（价格非整除）", () => {
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-02",
@@ -714,7 +738,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
 
   it("起始月份跳过 + 非交易日跨月顺延（复用 P1-1/P1-2 逻辑）", () => {
     // startDate=2024-01-15, buyDay=1 → 2024-01-01 已过去 → 第一次投入在 2 月
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-15",
@@ -740,7 +764,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
 
   it("期末盈亏率与最后一行 buy 的盈亏率一致（无后续价格变动）", () => {
     // 最后一个交易日即最后买入日，价格不再变化
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -766,7 +790,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
   });
 
   it("分红到账后自动回购，下一笔定投金额不被分红重复放大", () => {
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -817,7 +841,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     // 除权日 2024-02-01，paymentDate=2024-02-05
     // 2 月 5 日再产生 dividend 行
     // buyDay=10 避免除权日同日买入，便于独立验证 paymentDate 行
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -874,7 +898,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
     // 3 月买入 3000/10=300 股 → 累计 600 股
     // 4 月除权时累计 900 股（3 月买入后），4 月分红 900*0.4=360 元
     // 5 月买入 3000/10=300 股 → 累计 1200 股
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",
@@ -932,7 +956,7 @@ describe("simulateBacktestSimple R1 回测明细", () => {
 
   it("不同分红金额与定投周期下期初现金始终为月度投入", () => {
     // 月度投入 5000，分红 2 元/股，验证期初现金始终为 5000
-    const result = simulateBacktestSimple(
+    const result = runSimpleBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-01",

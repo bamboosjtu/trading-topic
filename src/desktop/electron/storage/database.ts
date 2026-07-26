@@ -1,7 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import {
   BACKTEST_CALIBER_VERSION,
-  BACKTEST_EXPERIMENT_LIMIT,
+  RECENT_BACKTEST_EXPERIMENT_LIMIT,
 } from "../../shared/constants";
 import type {
   AppSettings,
@@ -15,7 +15,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent",
   dividendSource: "eastmoney",
@@ -274,7 +274,7 @@ export class LocalDatabase {
   }
 
   listBacktestExperiments(
-    limit = BACKTEST_EXPERIMENT_LIMIT,
+    limit = RECENT_BACKTEST_EXPERIMENT_LIMIT,
   ): BacktestExperimentSummary[] {
     const boundedLimit = Number.isFinite(limit)
       ? Math.max(1, Math.floor(limit))

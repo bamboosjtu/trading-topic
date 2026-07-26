@@ -4,7 +4,10 @@ import {
   DeleteOutlined,
   EyeOutlined,
 } from "@ant-design/icons";
-import { BACKTEST_RANGE_LABELS } from "../../../../shared/constants";
+import {
+  BACKTEST_RANGE_LABELS,
+  RECENT_BACKTEST_EXPERIMENT_LIMIT,
+} from "../../../../shared/constants";
 import type { BacktestExperimentSummary } from "../../api/client";
 import { money, percent } from "./formatters";
 
@@ -57,10 +60,14 @@ export function ExperimentHistoryTable({
     <section className="workspace-panel experiment-history-panel">
       <div className="experiment-history-heading">
         <div>
-          <h2>已保存的回测试验</h2>
-          <p>每次运行都会生成一份不可变快照；历史结果不会被相同参数覆盖。</p>
+          <h2>最近 {RECENT_BACKTEST_EXPERIMENT_LIMIT} 次回测试验</h2>
+          <p>
+            每次运行都会生成一份不可变快照；列表仅展示最近记录，数据库不会因此删除更早实验。
+          </p>
         </div>
-        <span className="experiment-count">共 {experiments.length} 次实验</span>
+        <span className="experiment-count">
+          当前返回 {experiments.length} 次
+        </span>
       </div>
       <Table
         rowKey="experimentId"

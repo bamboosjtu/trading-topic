@@ -22,6 +22,215 @@ function nonnegativeNumber(value: unknown): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function dateValue(value: unknown): string {
+  const text = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+}
+
+function textValue(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function stableRowFingerprint(row: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.entries(row).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function firstValue(
+  row: Record<string, unknown>,
+  fields: readonly string[],
+): string {
+  for (const field of fields) {
+    const value = textValue(row[field]);
+    if (value) return value;
+  }
+  return "";
+}
+
+function sourceSchemeKey(row: Record<string, unknown>): string {
+  const symbol = textValue(row["SECURITY_CODE"]);
+  const sourceId = firstValue(row, [
+    "ASSIGN_PLAN_ID",
+    "DIVIDEND_PLAN_ID",
+    "PLAN_ID",
+    "PLAN_CODE",
+    "SCHEME_ID",
+  ]);
+  if (sourceId) return `id:${symbol}:${sourceId}`;
+
+  const reportDate = dateValue(row["REPORT_DATE"]);
+  if (reportDate) return `report:${symbol}:${reportDate}`;
+
+  const planNoticeDate = dateValue(row["PLAN_NOTICE_DATE"]);
+  if (planNoticeDate) return `plan:${symbol}:${planNoticeDate}`;
+
+  // 无方案 ID、报告期或预案日期时，无法证明同一除权日的多行属于不同
+  // 方案。保守地视为同一方案并选最终版本，避免重复派息。
+  return `ex-date:${symbol}:${dateValue(row["EX_DIVIDEND_DATE"])}`;
+}
+
+function sourceVersionDate(row: Record<string, unknown>): string {
+  return [
+    "UPDATE_DATE",
+    "NOTICE_DATE",
+    "PUBLISH_DATE",
+    "PLAN_NOTICE_DATE",
+  ]
+    .map((field) => dateValue(row[field]))
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? "";
+}
+
+function transferRatio(row: Record<string, unknown>): number {
+  const direct = firstValue(row, ["IT_RATIO", "TRANSFER_RATIO"]);
+  if (direct) return nonnegativeNumber(direct);
+
+  // 部分历史响应只给 BONUS_IT_RATIO（送转合计），此时扣除送股比例得到
+  // 转增比例。真实新响应通常同时给 IT_RATIO。
+  return Math.max(
+    0,
+    nonnegativeNumber(row["BONUS_IT_RATIO"]) -
+      nonnegativeNumber(row["BONUS_RATIO"]),
+  );
+}
+
+interface CorporateActionCandidate {
+  event: DividendEvent;
+  schemeKey: string;
+  versionDate: string;
+  completeness: number;
+  fingerprint: string;
+}
+
+function candidateFromRow(
+  row: Record<string, unknown>,
+): CorporateActionCandidate | null {
+  const date = dateValue(row["EX_DIVIDEND_DATE"]);
+  const status = textValue(row["ASSIGN_PROGRESS"]);
+  if (!date || !status.includes("实施")) return null;
+
+  const event: DividendEvent = {
+    date,
+    recordDate:
+      dateValue(row["EQUITY_RECORD_DATE"]) || date,
+    paymentDate:
+      dateValue(
+        firstValue(row, ["DIVIDEND_ARRIVAL_DATE", "PAYMENT_DATE"]),
+      ) || null,
+    // PRETAX_BONUS_RMB 是每 10 股税前派息金额。
+    perShare: nonnegativeNumber(row["PRETAX_BONUS_RMB"]) / 10,
+    transferRatio: transferRatio(row),
+    bonusRatio: nonnegativeNumber(row["BONUS_RATIO"]),
+    status,
+  };
+  if (
+    event.perShare === 0 &&
+    event.transferRatio === 0 &&
+    event.bonusRatio === 0
+  ) {
+    return null;
+  }
+
+  const relevantFields = [
+    "REPORT_DATE",
+    "PLAN_NOTICE_DATE",
+    "NOTICE_DATE",
+    "PUBLISH_DATE",
+    "EQUITY_RECORD_DATE",
+    "EX_DIVIDEND_DATE",
+    "PRETAX_BONUS_RMB",
+    "IT_RATIO",
+    "TRANSFER_RATIO",
+    "BONUS_RATIO",
+    "BONUS_IT_RATIO",
+    "IMPL_PLAN_PROFILE",
+  ];
+  return {
+    event,
+    schemeKey: sourceSchemeKey(row),
+    versionDate: sourceVersionDate(row),
+    completeness: relevantFields.filter(
+      (field) => textValue(row[field]) !== "",
+    ).length,
+    fingerprint: stableRowFingerprint(row),
+  };
+}
+
+function laterCandidate(
+  left: CorporateActionCandidate,
+  right: CorporateActionCandidate,
+): CorporateActionCandidate {
+  if (left.versionDate !== right.versionDate) {
+    return left.versionDate > right.versionDate ? left : right;
+  }
+  if (left.completeness !== right.completeness) {
+    return left.completeness > right.completeness ? left : right;
+  }
+  return left.fingerprint > right.fingerprint ? left : right;
+}
+
+export function parseCorporateActions(
+  sourceRows: Array<Record<string, unknown>>,
+  startDate: string,
+  endDate: string,
+): DividendEvent[] {
+  // 第一步：完整行去重，消除接口分页、重试或缓存造成的完全重复记录。
+  const uniqueRows = new Map<string, Record<string, unknown>>();
+  for (const row of sourceRows) {
+    uniqueRows.set(stableRowFingerprint(row), row);
+  }
+
+  // 第二步：按源方案 ID / 报告期 / 方案公告日识别同一方案；同一方案的
+  // 多个实施版本仅保留公告日期最新、字段最完整的一条。
+  const finalByScheme = new Map<string, CorporateActionCandidate>();
+  for (const row of uniqueRows.values()) {
+    const candidate = candidateFromRow(row);
+    if (
+      !candidate ||
+      candidate.event.date < startDate ||
+      candidate.event.date > endDate
+    ) {
+      continue;
+    }
+    const existing = finalByScheme.get(candidate.schemeKey);
+    finalByScheme.set(
+      candidate.schemeKey,
+      existing ? laterCandidate(existing, candidate) : candidate,
+    );
+  }
+
+  // 第三步：只有已被识别为不同方案、但恰好同一除权日实施时才累加。
+  const mergedByDate = new Map<string, DividendEvent>();
+  for (const { event } of finalByScheme.values()) {
+    const existing = mergedByDate.get(event.date);
+    if (!existing) {
+      mergedByDate.set(event.date, { ...event });
+      continue;
+    }
+    existing.perShare =
+      Math.round((existing.perShare + event.perShare) * 1e6) / 1e6;
+    existing.transferRatio =
+      Math.round((existing.transferRatio + event.transferRatio) * 1e6) /
+      1e6;
+    existing.bonusRatio =
+      Math.round((existing.bonusRatio + event.bonusRatio) * 1e6) / 1e6;
+    existing.recordDate =
+      [existing.recordDate, event.recordDate].filter(Boolean).sort().at(-1) ??
+      event.date;
+    existing.paymentDate =
+      [existing.paymentDate, event.paymentDate]
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(-1) ?? null;
+  }
+
+  return [...mergedByDate.values()].sort((left, right) =>
+    left.date.localeCompare(right.date),
+  );
+}
+
 async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -201,58 +410,10 @@ export async function fetchCorporateActions(
   const payload = (await fetchJson(url)) as {
     result?: { data?: Array<Record<string, unknown>> };
   };
-  // P0-1：东方财富 PRETAX_BONUS_RMB 字段单位为“每 10 股派息（税前）”，
-  // 产品域统一除以 10 换算为每股口径，避免分红被放大十倍。
-  //
-  // P0-4：东方财富可能返回修订记录、重复方案或同日多行；按 ex_date
-  // groupby 后对 cash_dividend_per_share 求和。产品端此前把每一行都转换为
-  // 分红事件，会重复派息。此处按 date（除权除息日）合并：perShare 求和，
-  // recordDate/paymentDate 取该日第一条非空记录，transferRatio/bonusRatio
-  // 取最大值。TRANSFER_RATIO、BONUS_RATIO 都是每 10 股送转股数，计算时
-  // 统一除以 10 转成持股增幅。
-  const rawEvents = (payload.result?.data ?? [])
-    .map((row): DividendEvent => ({
-      date: String(row["EX_DIVIDEND_DATE"] ?? "").slice(0, 10),
-      recordDate: String(
-        row["EQUITY_RECORD_DATE"] ?? row["EX_DIVIDEND_DATE"] ?? "",
-      ).slice(0, 10),
-      paymentDate: row["DIVIDEND_ARRIVAL_DATE"]
-        ? String(row["DIVIDEND_ARRIVAL_DATE"]).slice(0, 10)
-        : null,
-      perShare: nonnegativeNumber(row["PRETAX_BONUS_RMB"]) / 10,
-      transferRatio: nonnegativeNumber(row["TRANSFER_RATIO"]),
-      bonusRatio: nonnegativeNumber(row["BONUS_RATIO"]),
-      status: String(row["ASSIGN_PROGRESS"] ?? ""),
-    }))
-    .filter(
-      (row) =>
-        row.date >= startDate &&
-        row.date <= endDate &&
-        row.status.includes("实施") &&
-        Number.isFinite(row.perShare) &&
-        row.perShare >= 0 &&
-        row.date.length === 10,
-    );
-
-  const mergedByDate = new Map<string, DividendEvent>();
-  for (const event of rawEvents) {
-    const existing = mergedByDate.get(event.date);
-    if (!existing) {
-      mergedByDate.set(event.date, { ...event });
-      continue;
-    }
-    existing.perShare = Math.round((existing.perShare + event.perShare) * 1e6) / 1e6;
-    if (!existing.recordDate && event.recordDate) {
-      existing.recordDate = event.recordDate;
-    }
-    if (!existing.paymentDate && event.paymentDate) {
-      existing.paymentDate = event.paymentDate;
-    }
-    existing.transferRatio = Math.max(existing.transferRatio, event.transferRatio);
-    existing.bonusRatio = Math.max(existing.bonusRatio, event.bonusRatio);
-  }
-  const rows = [...mergedByDate.values()].sort((a, b) =>
-    a.date.localeCompare(b.date),
+  const rows = parseCorporateActions(
+    payload.result?.data ?? [],
+    startDate,
+    endDate,
   );
   return {
     rows,

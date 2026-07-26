@@ -105,9 +105,16 @@ export interface BacktestMetrics {
   totalPnl: number;
   xirr: number | null;
   maxDrawdown: number;
-  maxDrawdownStart: string;
-  maxDrawdownEnd: string;
-  maxDrawdownMonths: number;
+  /** 最大回撤幅度对应的历史峰值日期。 */
+  maxDrawdownPeakDate: string;
+  /** 最大回撤幅度对应的历史谷值日期。 */
+  maxDrawdownTroughDate: string;
+  /** 全部回撤周期中持续时间最长的一次，按自然日折算为月。 */
+  longestDrawdownMonths: number;
+  longestDrawdownStart: string;
+  longestDrawdownEnd: string;
+  /** 最长回撤周期是否已重新达到其起始峰值。 */
+  longestDrawdownRecovered: boolean;
   totalDividend: number;
   endingCash: number;
 }
