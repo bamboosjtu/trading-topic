@@ -50,20 +50,20 @@ export function SettingsPage() {
   return (
     <div className="space-y-5 max-w-5xl">
       <div>
-        <Text className="text-xs tracking-[0.18em] uppercase !text-[#8a6a3e]">
-          Local control
-        </Text>
-        <Title level={2} className="!mt-1 !mb-1 !text-[26px]">
+        <div className="page-eyebrow">Local Control</div>
+        <Title level={2} className="!mt-1.5 !mb-1.5 !text-[24px] tracking-tight">
           本地设置
         </Title>
-        <Text type="secondary">查看固定口径，管理本地 SQLite、备份与运行日志。</Text>
+        <Text type="secondary" className="text-[13px]">
+          查看固定口径，管理本地 SQLite、备份与运行日志。
+        </Text>
       </div>
 
-      <div className="workspace-panel p-5">
+      <div className="workspace-panel p-6">
         <div className="flex items-center justify-between mb-4">
           <Space>
-            <DatabaseOutlined className="text-[#b88746]" />
-            <Text strong>数据与计算口径</Text>
+            <DatabaseOutlined className="text-gold-500" />
+            <Text strong className="text-[15px]">数据与计算口径</Text>
           </Space>
           <Tag bordered={false} color={health.data ? "success" : "default"}>
             {health.data ? "本地服务正常" : "检查中"}
@@ -93,7 +93,7 @@ export function SettingsPage() {
         </Paragraph>
       </div>
 
-      <div className="workspace-panel divide-y divide-[#edf0f2]">
+      <div className="workspace-panel divide-y divide-line-soft">
         {[
           {
             title: "导出 JSON 备份",
@@ -122,11 +122,11 @@ export function SettingsPage() {
         ].map((item) => (
           <div
             key={item.title}
-            className="data-row flex items-center justify-between px-5 py-5"
+            className="data-row flex items-center justify-between px-6 py-5"
           >
             <div>
               <Text strong>{item.title}</Text>
-              <div className="mt-1 text-xs text-[#6c7b84]">{item.detail}</div>
+              <div className="mt-1 text-xs text-ink-500">{item.detail}</div>
             </div>
             <Button icon={item.icon} onClick={item.action} loading={item.loading}>
               {item.label}
@@ -135,7 +135,7 @@ export function SettingsPage() {
         ))}
       </div>
 
-      <div className="px-1 text-xs text-[#7b8991]">
+      <div className="px-1 text-xs text-ink-400">
         仅供研究与记录，不构成投资建议。应用不连接券商、不申请交易权限、不执行下单。
       </div>
     </div>

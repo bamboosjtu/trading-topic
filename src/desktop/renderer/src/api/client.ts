@@ -15,6 +15,8 @@ export const api = {
   health: () => bridge().health(),
   runBacktest: (request: BacktestRequest) => bridge().runBacktest(request),
   listBacktests: () => bridge().listBacktests(),
+  runSimpleBacktest: (request: BacktestRequest) =>
+    bridge().runSimpleBacktest(request),
   listLedger: () => bridge().listLedger(),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
   reverseLedger: (entryId: string, reason: string) =>
@@ -35,4 +37,6 @@ export type {
   HealthResponse,
   LedgerEntry,
   LedgerEntryInput,
+  SimpleBacktestResult,
+  SimpleBacktestRow,
 } from "../../../shared/contracts";

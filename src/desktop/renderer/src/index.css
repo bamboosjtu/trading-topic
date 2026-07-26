@@ -4,7 +4,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 全局基线：现代 SaaS 风格的字号、行高、色彩对比 */
+/* 全局基线：暖瓷白工作区 + 近黑暖调文本 */
 html,
 body,
 #root {
@@ -19,12 +19,17 @@ body {
     "Microsoft YaHei", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f3f5f7;
-  color: #14232e;
+  background-color: #f5f2eb;
+  color: #1e1c18;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-/* 自定义滚动条，SaaS 工具典型细节 */
+::selection {
+  background: #eddcb4;
+  color: #3a2e14;
+}
+
+/* 自定义滚动条，与工作区同温 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -35,12 +40,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d4d4d4;
+  background: #d8d1c0;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a3a3a3;
+  background: #b4ac97;
 }
 
 /* 数字与金额使用等宽字体，金融工具典型用法 */
@@ -49,43 +54,112 @@ body {
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* 页眉眉题：香槟金小字 + 大写字距 */
+.page-eyebrow {
+  color: #875c28;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
 .workspace-enter {
   animation: workspace-in 220ms ease-out both;
 }
 
+/* 白面板：暖调细描边 + 极轻投影 */
 .workspace-panel {
   background: #fff;
-  border: 1px solid #dfe5e8;
-  border-radius: 10px;
+  border: 1px solid #e9e3d6;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px 0 rgba(69, 58, 33, 0.04),
+    0 8px 24px -16px rgba(69, 58, 33, 0.12);
 }
 
+/* 指标带：大数字 + 弱标签 */
 .metric-value {
-  color: #14232e;
-  font-size: 25px;
+  color: #1e1c18;
+  font-size: 28px;
   font-weight: 650;
-  letter-spacing: -0.035em;
-  line-height: 1.15;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
 }
 
 .metric-label {
-  color: #6c7b84;
+  color: #8a8474;
   font-size: 12px;
-  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+  margin-bottom: 10px;
 }
 
 .metric-strip > div + div {
-  border-left: 1px solid #e4e9ec;
+  border-left: 1px solid #f0ebdf;
 }
 
+/* 侧边栏品牌字标 */
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #e3c078 0%, #c2903f 100%);
+  color: #2a1e0a;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 10px -4px rgba(195, 146, 60, 0.5);
+}
+
+/* 顶栏状态胶囊 */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.status-pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-pill.ok {
+  background: #edf5ef;
+  color: #2e7d4f;
+}
+
+.status-pill.ok .dot {
+  background: #34a468;
+  box-shadow: 0 0 0 3px rgba(52, 164, 104, 0.18);
+}
+
+.status-pill.pending {
+  background: #f7f1e3;
+  color: #9a6a12;
+}
+
+.status-pill.pending .dot {
+  background: #d9a028;
+  box-shadow: 0 0 0 3px rgba(217, 160, 40, 0.18);
+}
+
+/* 数据行 hover：仅底色变化，不做位移 */
 .data-row {
-  transition:
-    background-color 140ms ease,
-    transform 140ms ease;
+  transition: background-color 140ms ease;
 }
 
 .data-row:hover {
-  background: #f8fafb;
-  transform: translateX(2px);
+  background: #faf6ee;
 }
 
 @keyframes workspace-in {

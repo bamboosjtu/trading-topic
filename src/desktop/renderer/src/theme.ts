@@ -1,31 +1,33 @@
 import type { ThemeConfig } from "antd";
 
 /**
- * 现代 SaaS 视觉风格基线（攒股收息 R1）。
+ * 私人研究工作台视觉基线（攒股收息 R1）。
  *
  * 设计取向：
- * - 墨蓝导航与暖金单一强调色，保持财富管理工具的克制；
- * - 雾白工作区与细分隔线，减少卡片堆叠；
- * - 字号层级清晰，数字使用等宽字体强化金融工具感。
+ * - 深墨蓝承担权威色（侧边栏、主按钮、链接），香槟金只做克制点缀；
+ * - 暖瓷白工作区 + 白面板 + 暖调细分隔线，参考私人银行的稳重感；
+ * - 数字使用等宽字体强化金融工具感，层级靠字重与留白而非投影堆叠。
  *
- * 与 Tailwind 配色对齐：见 tailwind.config.ts 中的 brand / ink 色板。
+ * 与 Tailwind 配色对齐：见 tailwind.config.ts 中的 navy / gold / ink / line 色板。
  */
 export const theme: ThemeConfig = {
   token: {
-    colorPrimary: "#b88746",
-    colorInfo: "#315f78",
-    colorSuccess: "#2d7650",
-    colorWarning: "#d97706",
-    colorError: "#dc2626",
-    colorTextBase: "#14232e",
-    colorBgBase: "#ffffff",
-    colorBorder: "#dfe5e8",
-    colorBorderSecondary: "#edf0f2",
-    colorBgLayout: "#f3f5f7",
-    colorBgContainer: "#ffffff",
+    colorPrimary: "#174b6b",
+    colorInfo: "#226186",
+    colorLink: "#226186",
+    colorSuccess: "#2e7d4f",
+    colorWarning: "#d98a06",
+    colorError: "#d4382c",
 
-    borderRadius: 7,
-    borderRadiusLG: 10,
+    colorTextBase: "#1e1c18",
+    colorBgBase: "#ffffff",
+    colorBgLayout: "#f5f2eb",
+    colorBgContainer: "#ffffff",
+    colorBorder: "#e0d9c8",
+    colorBorderSecondary: "#f0ebdf",
+
+    borderRadius: 8,
+    borderRadiusLG: 12,
     borderRadiusSM: 6,
 
     fontSize: 14,
@@ -38,9 +40,9 @@ export const theme: ThemeConfig = {
     fontSizeHeading4: 18,
     fontSizeHeading5: 16,
 
-    controlHeight: 32,
-    controlHeightLG: 40,
-    controlHeightSM: 24,
+    controlHeight: 34,
+    controlHeightLG: 42,
+    controlHeightSM: 26,
 
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif",
@@ -51,36 +53,53 @@ export const theme: ThemeConfig = {
   },
   components: {
     Layout: {
-      headerBg: "#f8fafb",
+      headerBg: "#ffffff",
       headerHeight: 56,
-      headerPadding: "0 24px",
-      bodyBg: "#f3f5f7",
-      siderBg: "#0d1b26",
+      headerPadding: "0 28px",
+      bodyBg: "#f5f2eb",
+      siderBg: "#0a1f2e",
     },
     Menu: {
-      darkItemBg: "#0d1b26",
-      darkItemSelectedBg: "#1a3040",
-      darkItemSelectedColor: "#e9c991",
-      darkItemHoverBg: "#142735",
+      darkItemBg: "transparent",
+      darkItemColor: "rgba(226, 232, 238, 0.66)",
+      darkItemHoverBg: "rgba(255, 255, 255, 0.06)",
+      darkItemHoverColor: "#ffffff",
+      darkItemSelectedBg: "rgba(212, 168, 87, 0.18)",
+      darkItemSelectedColor: "#ecc97f",
+      itemHeight: 40,
+      itemMarginInline: 12,
+      itemBorderRadius: 8,
     },
     Card: {
-      borderRadiusLG: 10,
+      borderRadiusLG: 12,
       boxShadowTertiary:
-        "0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02)",
+        "0 1px 2px 0 rgba(69, 58, 33, 0.04), 0 8px 24px -16px rgba(69, 58, 33, 0.12)",
     },
     Table: {
-      headerBg: "#f6f8f9",
-      headerColor: "#52636e",
-      rowHoverBg: "#f8fafb",
-      cellPaddingBlock: 12,
+      headerBg: "#faf7f0",
+      headerColor: "#6f6a5d",
+      headerSplitColor: "rgba(0, 0, 0, 0)",
+      rowHoverBg: "#faf6ee",
+      borderColor: "#f0ebdf",
+      cellPaddingBlock: 13,
+    },
+    Form: {
+      labelColor: "#4a463d",
+      labelFontSize: 13,
+    },
+    Button: {
+      borderRadius: 8,
+      controlHeight: 34,
+      controlHeightLG: 42,
+      fontWeight: 500,
+      primaryShadow: "0 2px 6px -2px rgba(18, 58, 84, 0.45)",
+      defaultBorderColor: "#dcd5c3",
     },
     Statistic: {
       contentFontSize: 28,
     },
-    Button: {
-      borderRadius: 8,
-      controlHeight: 32,
-      controlHeightLG: 40,
+    Drawer: {
+      paddingLG: 24,
     },
   },
 };

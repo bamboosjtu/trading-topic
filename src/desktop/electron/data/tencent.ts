@@ -123,7 +123,17 @@ export async function fetchCashDividends(
   const payload = (await fetchJson(url)) as {
     result?: { data?: Array<Record<string, unknown>> };
   };
-  const rows = (payload.result?.data ?? [])
+  // P0-1：东方财富 PRETAX_BONUS_RMB 字段单位为"每10股派息（税前）"，
+  // 研究端 normalize_dividends 明确执行 cash_per_10 / 10.0 得到每股分红。
+  // 产品端此前直接赋给 perShare，导致分红被放大 10 倍，并经分红再投资形成
+  // 指数式错误复利。此处统一换算为每股口径。
+  //
+  // P0-4：东方财富可能返回修订记录、重复方案或同日多行；研究端按 ex_date
+  // groupby 后对 cash_dividend_per_share 求和。产品端此前把每一行都转换为
+  // 分红事件，会重复派息。此处按 date（除权除息日）合并：perShare 求和，
+  // recordDate/paymentDate 取该日第一条非空记录，transferRatio/bonusRatio
+  // 取最大值（非现金公司行动已在 simulateBacktest 中阻断）。
+  const rawEvents = (payload.result?.data ?? [])
     .map((row): DividendEvent => ({
       date: String(row["EX_DIVIDEND_DATE"] ?? "").slice(0, 10),
       recordDate: String(
@@ -132,7 +142,7 @@ export async function fetchCashDividends(
       paymentDate: row["DIVIDEND_ARRIVAL_DATE"]
         ? String(row["DIVIDEND_ARRIVAL_DATE"]).slice(0, 10)
         : null,
-      perShare: Number(row["PRETAX_BONUS_RMB"] ?? 0),
+      perShare: Number(row["PRETAX_BONUS_RMB"] ?? 0) / 10,
       transferRatio: Number(row["TRANSFER_RATIO"] ?? 0),
       bonusRatio: Number(row["BONUS_RATIO"] ?? 0),
       status: String(row["ASSIGN_PROGRESS"] ?? ""),
@@ -141,8 +151,32 @@ export async function fetchCashDividends(
       (row) =>
         row.date >= startDate &&
         row.date <= endDate &&
-        row.status.includes("实施"),
+        row.status.includes("实施") &&
+        Number.isFinite(row.perShare) &&
+        row.perShare >= 0 &&
+        row.date.length === 10,
     );
+
+  const mergedByDate = new Map<string, DividendEvent>();
+  for (const event of rawEvents) {
+    const existing = mergedByDate.get(event.date);
+    if (!existing) {
+      mergedByDate.set(event.date, { ...event });
+      continue;
+    }
+    existing.perShare = Math.round((existing.perShare + event.perShare) * 1e6) / 1e6;
+    if (!existing.recordDate && event.recordDate) {
+      existing.recordDate = event.recordDate;
+    }
+    if (!existing.paymentDate && event.paymentDate) {
+      existing.paymentDate = event.paymentDate;
+    }
+    existing.transferRatio = Math.max(existing.transferRatio, event.transferRatio);
+    existing.bonusRatio = Math.max(existing.bonusRatio, event.bonusRatio);
+  }
+  const rows = [...mergedByDate.values()].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  );
   return {
     rows,
     provenance: {
@@ -150,7 +184,8 @@ export async function fetchCashDividends(
       fetchedAt: new Date().toISOString(),
       dataCutoff: rows[0]?.date ?? endDate,
       adjustment: "none",
-      caliberVersion: "bank-dca-r1-node-v1",
+      // 口径版本升级：每股分红 + 按除权日合并，对齐 research/bank-dca v1
+      caliberVersion: "bank-dca-r1-node-v2",
     },
   };
 }

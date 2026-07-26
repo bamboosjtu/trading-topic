@@ -65,6 +65,9 @@ function registerIpc(): void {
     service.runBacktest(request),
   );
   ipcMain.handle("backtest:list", () => service.listBacktests());
+  ipcMain.handle("backtest:simple", (_event, request: BacktestRequest) =>
+    service.runSimpleBacktest(request),
+  );
   ipcMain.handle("ledger:list", () => service.listLedger());
   ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>
     service.addLedger(input),

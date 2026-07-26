@@ -10,6 +10,8 @@ const api: DesktopApi = {
   runBacktest: (request: BacktestRequest) =>
     ipcRenderer.invoke("backtest:run", request),
   listBacktests: () => ipcRenderer.invoke("backtest:list"),
+  runSimpleBacktest: (request: BacktestRequest) =>
+    ipcRenderer.invoke("backtest:simple", request),
   listLedger: () => ipcRenderer.invoke("ledger:list"),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),

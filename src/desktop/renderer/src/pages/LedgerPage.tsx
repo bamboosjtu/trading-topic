@@ -75,13 +75,13 @@ export function LedgerPage() {
     <div className="space-y-5">
       <div className="flex items-end justify-between">
         <div>
-          <Text className="text-xs tracking-[0.18em] uppercase !text-[#8a6a3e]">
-            Immutable ledger
-          </Text>
-          <Title level={2} className="!mt-1 !mb-1 !text-[26px]">
+          <div className="page-eyebrow">Immutable Ledger</div>
+          <Title level={2} className="!mt-1.5 !mb-1.5 !text-[24px] tracking-tight">
             资金流水
           </Title>
-          <Text type="secondary">追加记录、追溯冲正；账户余额始终由有效流水重算。</Text>
+          <Text type="secondary" className="text-[13px]">
+            追加记录、追溯冲正；账户余额始终由有效流水重算。
+          </Text>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
           新增流水
@@ -89,8 +89,8 @@ export function LedgerPage() {
       </div>
 
       <div className="workspace-panel overflow-hidden">
-        <div className="px-5 py-4 flex items-center justify-between border-b border-[#edf0f2]">
-          <Text strong>全部记录</Text>
+        <div className="px-6 py-4 flex items-center justify-between border-b border-line-soft">
+          <Text strong className="text-[15px]">全部记录</Text>
           <Text type="secondary" className="text-xs">
             {ledger.data?.length ?? 0} 条 · CNY
           </Text>
@@ -102,7 +102,12 @@ export function LedgerPage() {
           pagination={{ pageSize: 12 }}
           locale={{ emptyText: "暂无流水；先录入一笔资金转入" }}
           columns={[
-            { title: "业务日期", dataIndex: "businessDate", width: 120 },
+            {
+              title: "业务日期",
+              dataIndex: "businessDate",
+              width: 120,
+              className: "tabular-nums",
+            },
             {
               title: "类型",
               dataIndex: "type",
@@ -111,16 +116,27 @@ export function LedgerPage() {
                 <Tag bordered={false}>{LABELS[value]}</Tag>
               ),
             },
-            { title: "股票 / 品种", render: (_, row) => row.symbol ?? row.repoCode ?? "—" },
+            {
+              title: "股票 / 品种",
+              className: "tabular-nums",
+              render: (_, row) => row.symbol ?? row.repoCode ?? "—",
+            },
             {
               title: "金额",
+              align: "right",
+              className: "tabular-nums",
               render: (_, row) =>
                 money(
                   row.amount ??
                     (row.price && row.quantity ? row.price * row.quantity : undefined),
                 ),
             },
-            { title: "数量", render: (_, row) => row.quantity ?? "—" },
+            {
+              title: "数量",
+              align: "right",
+              className: "tabular-nums",
+              render: (_, row) => row.quantity ?? "—",
+            },
             { title: "备注", dataIndex: "note", ellipsis: true },
             {
               title: "",

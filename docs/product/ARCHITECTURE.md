@@ -2,9 +2,11 @@
 
 > 状态：R1 实现基线
 >
-> 更新日期：2026-07-25
+> 更新日期：2026-07-26
 >
 > 配套需求：[PRD_R1.md](PRD_R1.md)
+>
+> 界面设计：[desktop_ui/](desktop_ui/) 目录下每个 Tab 的设计简述
 >
 > 仓库边界决策：[Labs、Research、Src 隔离](../decisions/0001-labs-research-src-isolation.md)
 
@@ -95,34 +97,18 @@ src/desktop/
 
 `shared/` 只属于产品域，用于 main、preload 与 renderer 的类型契约；它不是跨 Labs、Research、Src 的共享核心。
 
-## 5. 领域模块
+## 5. 领域模块与界面索引
 
-### 历史回测
+R1 领域逻辑集中在 `electron/domain/`，界面集中在 `renderer/src/pages/`。需求口径见 [PRD_R1.md](PRD_R1.md)，每个 Tab 的设计细节见 [desktop_ui/](desktop_ui/)。
 
-`electron/domain/analysis.ts` 实现：
+| 模块 | 领域代码 | 界面代码 | 需求 | 设计简述 |
+| --- | --- | --- | --- | --- |
+| 历史回测 | `domain/analysis.ts` | `pages/BacktestPage.tsx` | [PRD §3.1](PRD_R1.md) | [历史回测_ui_brief.md](desktop_ui/历史回测_ui_brief.md) |
+| 实际账本 | `domain/ledger.ts` | `pages/AccountPage.tsx` | [PRD §3.2](PRD_R1.md) | [资产账户_ui_brief.md](desktop_ui/资产账户_ui_brief.md) |
+| 资金流水 | `domain/ledger.ts` | `pages/LedgerPage.tsx` | [PRD §3.2](PRD_R1.md) | [资金流水_ui_brief.md](desktop_ui/资金流水_ui_brief.md) |
+| 本地设置 | — | `pages/SettingsPage.tsx` | [PRD §3.3](PRD_R1.md) | [本地设置_ui_brief.md](desktop_ui/本地设置_ui_brief.md) |
 
-- 单标的回测与最多 4 个标的同条件独立并排；
-- 每月固定金额、指定买入日、非交易日月内顺延；
-- 100 股整数倍、现金结转；
-- 买入佣金万分之 2.5、最低 5 元；
-- 现金分红入账并按事件日回购原标的；
-- 对送股、转增等 R1 不支持事件显式阻断；
-- 累计投入、最终资产、累计盈亏、XIRR、最大回撤、累计分红、期末现金；
-- 可追溯的逐笔流水与日度资产序列。
-
-金额在业务边界统一保留两位小数，股数使用整数。R1 的费用模型固定，不在设置中切换。
-
-### 实际账本
-
-`electron/domain/ledger.ts` 实现：
-
-- 资金转入、买入、卖出、现金分红、逆回购、资金转出和冲正；
-- 已保存流水不可原地覆盖；
-- 冲正通过新增关联记录使原记录失效；
-- 修正由“冲正原记录 + 新增正确记录”完成；
-- 从有效流水重建持仓、可用现金、逆回购资产、总资产、累计盈亏和 XIRR。
-
-持仓和账户汇总是派生结果，不写入可独立修改的余额表。
+金额在业务边界统一保留两位小数，股数使用整数（简化视图除外，零碎股保留 2 位小数）。
 
 ## 6. 数据来源
 
@@ -152,16 +138,9 @@ R1 使用 `sql.js` 在 Electron 主进程维护 SQLite，并把导出的数据�
 
 写操作完成后立即持久化。JSON 恢复先校验应用标识和 schema 版本，再生成恢复前安全备份，最后在事务中覆盖业务数据；校验或事务失败时不破坏当前数据库。
 
-## 8. SaaS 风格界面
+## 8. 界面风格
 
-R1 只有四个一级入口：
-
-- 历史回测：单个参数带、资产曲线、并排指标表与可追溯明细；
-- 资产账户：关键指标带与持仓表；
-- 资金流水：追加式记录表、新增表单与冲正入口；
-- 本地设置：来源和口径只读说明、备份恢复、日志导出。
-
-视觉使用墨蓝导航、雾白工作区与暖金单一强调色。信息层级依赖排版、留白和分隔线，避免卡片拼贴；动效仅用于页面进入、数据行反馈和图表更新。
+R1 只有四个一级入口：历史回测、资产账户、资金流水、本地设置。视觉使用墨蓝导航、雾白工作区与暖金单一强调色；信息层级依赖排版、留白和分隔线，避免卡片拼贴；动效仅用于页面进入、数据行反馈和图表更新。每个 Tab 的详细设计见 [desktop_ui/](desktop_ui/)。
 
 ## 9. 测试与验收
 
@@ -172,14 +151,3 @@ R1 只有四个一级入口：
 | 构建 | `npm run build`，验证 main、preload、renderer 三个入口 |
 | 隔离扫描 | `src/desktop/` 不含 Python，不引用 Labs 或 Research |
 | 手工冒烟 | 新建回测、录入流水、查看账户、备份恢复、导出日志 |
-
-R1 架构验收：
-
-- [x] 产品运行时为 Node.js/TypeScript，不包含 Python sidecar；
-- [x] main、preload、renderer 入口明确；
-- [x] 渲染层只通过受限 preload API 使用本地服务；
-- [x] 产品数据源未复用 Labs 注册模块；
-- [x] 产品构建和测试不读取 Research；
-- [x] 持仓和现金可从不可变流水重建；
-- [x] JSON 恢复前生成安全备份；
-- [x] 应用不存在下单接口或券商权限。

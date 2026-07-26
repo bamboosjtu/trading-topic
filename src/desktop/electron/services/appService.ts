@@ -5,9 +5,10 @@ import type {
   BacktestResult,
   LedgerEntry,
   LedgerEntryInput,
+  SimpleBacktestResult,
 } from "../../shared/contracts";
 import { fetchCashDividends, fetchUnadjustedPrices, stockName } from "../data/tencent";
-import { simulateBacktest } from "../domain/analysis";
+import { simulateBacktest, simulateBacktestSimple } from "../domain/analysis";
 import { rebuildAccount } from "../domain/ledger";
 import { LocalDatabase } from "../storage/database";
 
@@ -87,6 +88,54 @@ export class AppService {
 
   listBacktests(): BacktestResult[] {
     return this.database.listBacktests();
+  }
+
+  /**
+   * 简化交易成本回测（drawer 展示视图）。
+   *
+   * 复用 runBacktest 的行情/分红拉取与落库逻辑，但调用 simulateBacktestSimple
+   * 生成简化明细：费用0、contribution+buy 合并行、分红/除权独立行、零碎股、
+   * 分红到账不再投资。结果不落库，仅用于同条件对比展示。
+   */
+  async runSimpleBacktest(request: BacktestRequest): Promise<SimpleBacktestResult[]> {
+    const results: SimpleBacktestResult[] = [];
+    for (const symbol of request.symbols) {
+      const prices = await fetchUnadjustedPrices(
+        symbol,
+        request.startDate,
+        request.endDate,
+      );
+      if (results.length) {
+        await new Promise((resolve) => setTimeout(resolve, 1_200));
+      }
+      const dividends = await fetchCashDividends(
+        symbol,
+        request.startDate,
+        request.endDate,
+      );
+      // 简化视图同样刷新行情落库，保证 drawer 与列表口径一致
+      this.database.replaceMarketData(
+        symbol,
+        prices.rows,
+        dividends.rows,
+        prices.provenance.source,
+        prices.provenance.fetchedAt,
+      );
+      results.push(
+        simulateBacktestSimple(
+          request,
+          symbol,
+          stockName(symbol),
+          prices.rows,
+          dividends.rows,
+        ),
+      );
+    }
+    this.database.log(
+      "info",
+      `简化回测：${request.symbols.join(",")} ${request.startDate}..${request.endDate}`,
+    );
+    return results;
   }
 
   listLedger(): LedgerEntry[] {
