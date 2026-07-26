@@ -1,5 +1,6 @@
 import type {
   BacktestRequest,
+  BacktestWorkspaceState,
   DesktopApi,
   LedgerEntryInput,
 } from "../../../shared/contracts";
@@ -13,10 +14,16 @@ function bridge(): DesktopApi {
 
 export const api = {
   health: () => bridge().health(),
+  listStocks: () => bridge().listStocks(),
   runBacktest: (request: BacktestRequest) => bridge().runBacktest(request),
   listBacktests: () => bridge().listBacktests(),
-  runSimpleBacktest: (request: BacktestRequest) =>
-    bridge().runSimpleBacktest(request),
+  getBacktestDetail: (backtestId: string) =>
+    bridge().getBacktestDetail(backtestId),
+  getBacktestWorkspace: () => bridge().getBacktestWorkspace(),
+  saveBacktestWorkspace: (state: BacktestWorkspaceState) =>
+    bridge().saveBacktestWorkspace(state),
+  exportBacktestComparison: (backtestIds: string[]) =>
+    bridge().exportBacktestComparison(backtestIds),
   listLedger: () => bridge().listLedger(),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
   reverseLedger: (entryId: string, reason: string) =>
@@ -33,6 +40,9 @@ export type {
   AppSettings,
   BacktestRequest,
   BacktestResult,
+  BacktestCandlePeriod,
+  BacktestChartMetric,
+  BacktestWorkspaceState,
   EntryType,
   HealthResponse,
   LedgerEntry,
@@ -40,4 +50,5 @@ export type {
   PricePoint,
   SimpleBacktestResult,
   SimpleBacktestRow,
+  StockInfo,
 } from "../../../shared/contracts";

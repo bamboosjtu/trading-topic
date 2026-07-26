@@ -6,14 +6,25 @@ import type {
   LedgerEntry,
   LedgerEntryInput,
   SimpleBacktestResult,
+  BacktestWorkspaceState,
+  StockInfo,
 } from "../../shared/contracts";
-import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
+import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
+import {
+  BACKTEST_CALIBER_VERSION,
+  DATA_SOURCE_THROTTLE_MS,
+  DEFAULT_STOCKS,
+  STOCK_UNIVERSE_CACHE_MAX_AGE_MS,
+} from "../../shared/constants";
+import { fetchAStockUniverse } from "../data/stockUniverse";
 import {
   fetchCorporateActions,
   fetchUnadjustedPrices,
-  stockName,
 } from "../data/tencent";
-import { simulateBacktest, simulateBacktestSimple } from "../domain/analysis";
+import {
+  backtestResultToSimpleResult,
+  simulateBacktest,
+} from "../domain/analysis";
 import { rebuildAccount } from "../domain/ledger";
 import { LocalDatabase } from "../storage/database";
 
@@ -23,7 +34,7 @@ function validateLedger(input: LedgerEntryInput): void {
     if (!(Number(input.amount) > 0)) throw new Error("金额必须大于 0");
   }
   if (["buy", "sell"].includes(input.type)) {
-    if (!input.symbol || !/^(?:0|3|6|8)\d{5}$/.test(input.symbol)) {
+    if (!input.symbol || !/^\d{6}$/.test(input.symbol)) {
       throw new Error("请输入有效的 6 位 A 股代码");
     }
     if (!(Number(input.price) > 0)) throw new Error("成交价格必须大于 0");
@@ -36,7 +47,7 @@ function validateLedger(input: LedgerEntryInput): void {
   }
   if (
     input.type === "dividend" &&
-    (!input.symbol || !/^(?:0|3|6|8)\d{5}$/.test(input.symbol))
+    (!input.symbol || !/^\d{6}$/.test(input.symbol))
   ) {
     throw new Error("现金分红必须关联有效的 A 股代码");
   }
@@ -48,8 +59,39 @@ function validateLedger(input: LedgerEntryInput): void {
 export class AppService {
   constructor(private readonly database: LocalDatabase) {}
 
+  async listStocks(): Promise<StockInfo[]> {
+    const cached = this.database.listStockUniverse();
+    const fetchedAt = cached[0]?.fetchedAt;
+    const cacheIsFresh =
+      fetchedAt !== undefined &&
+      Date.now() - Date.parse(fetchedAt) < STOCK_UNIVERSE_CACHE_MAX_AGE_MS;
+    if (cacheIsFresh) return cached;
+
+    try {
+      const response = await fetchAStockUniverse();
+      this.database.replaceStockUniverse(
+        response.rows,
+        response.source,
+        response.fetchedAt,
+      );
+      this.database.log(
+        "info",
+        `已刷新 A 股代码表：${response.rows.length} 个标的`,
+      );
+      return response.rows;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.database.log("warn", `刷新 A 股代码表失败，使用本地快照：${message}`);
+      if (cached.length) return cached;
+      return DEFAULT_STOCKS.map(({ symbol, name }) => ({ symbol, name }));
+    }
+  }
+
   async runBacktest(request: BacktestRequest): Promise<BacktestResult[]> {
     const results: BacktestResult[] = [];
+    const stocks = await this.listStocks();
+    const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
+    const batchId = randomUUID();
     for (const symbol of request.symbols) {
       const prices = await fetchUnadjustedPrices(
         symbol,
@@ -58,7 +100,9 @@ export class AppService {
       );
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
       if (results.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1_200));
+        await new Promise((resolve) =>
+          setTimeout(resolve, DATA_SOURCE_THROTTLE_MS),
+        );
       }
       const dividends = await fetchCorporateActions(
         symbol,
@@ -72,16 +116,17 @@ export class AppService {
         prices.provenance.source,
         prices.provenance.fetchedAt,
       );
-      results.push(
-        simulateBacktest(
-          request,
-          symbol,
-          stockName(symbol),
-          prices.rows,
-          dividends.rows,
-          [prices.provenance, dividends.provenance],
-        ),
+      const result = simulateBacktest(
+        request,
+        symbol,
+        names.get(symbol) ?? symbol,
+        prices.rows,
+        dividends.rows,
+        [prices.provenance, dividends.provenance],
       );
+      result.strategyKey = buildBacktestStrategyKey(request, symbol);
+      result.batchId = batchId;
+      results.push(result);
     }
     this.database.saveBacktests(results);
     this.database.log(
@@ -103,51 +148,22 @@ export class AppService {
       );
   }
 
-  /**
-   * R1 回测审计明细（模态框展示视图）。
-   *
-   * 复用 runBacktest 的行情/公司行动拉取逻辑；simulateBacktestSimple 内部
-   * 直接复用主回测结果，仅转换为审计友好的行结构，不维护第二套计算口径。
-   */
-  async runSimpleBacktest(request: BacktestRequest): Promise<SimpleBacktestResult[]> {
-    const results: SimpleBacktestResult[] = [];
-    for (const symbol of request.symbols) {
-      const prices = await fetchUnadjustedPrices(
-        symbol,
-        request.startDate,
-        request.endDate,
-      );
-      if (results.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1_200));
-      }
-      const dividends = await fetchCorporateActions(
-        symbol,
-        request.startDate,
-        request.endDate,
-      );
-      // 明细视图同样刷新行情落库，保证模态框与列表数据快照一致。
-      this.database.replaceMarketData(
-        symbol,
-        prices.rows,
-        dividends.rows,
-        prices.provenance.source,
-        prices.provenance.fetchedAt,
-      );
-      results.push(
-        simulateBacktestSimple(
-          request,
-          symbol,
-          stockName(symbol),
-          prices.rows,
-          dividends.rows,
-        ),
-      );
-    }
-    this.database.log(
-      "info",
-      `生成回测明细：${request.symbols.join(",")} ${request.startDate}..${request.endDate}`,
-    );
-    return results;
+  getBacktestDetail(backtestId: string): SimpleBacktestResult {
+    const result = this.database.getBacktest(backtestId);
+    if (!result) throw new Error("找不到回测记录，可能已被新参数结果替换");
+    return backtestResultToSimpleResult(result);
+  }
+
+  getBacktestWorkspace(): BacktestWorkspaceState | null {
+    return this.database.getBacktestWorkspace();
+  }
+
+  saveBacktestWorkspace(state: BacktestWorkspaceState): void {
+    this.database.saveBacktestWorkspace(state);
+  }
+
+  listBacktestsByIds(ids: string[]): BacktestResult[] {
+    return this.database.listBacktestsByIds(ids);
   }
 
   listLedger(): LedgerEntry[] {

@@ -2,7 +2,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BacktestRequest, LedgerEntryInput } from "../shared/contracts";
+import type {
+  BacktestRequest,
+  BacktestWorkspaceState,
+  LedgerEntryInput,
+} from "../shared/contracts";
+import { buildBacktestWorkbook } from "./export/backtestWorkbook";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
 
@@ -64,9 +69,34 @@ function registerIpc(): void {
   ipcMain.handle("backtest:run", (_event, request: BacktestRequest) =>
     service.runBacktest(request),
   );
+  ipcMain.handle("stocks:list", () => service.listStocks());
   ipcMain.handle("backtest:list", () => service.listBacktests());
-  ipcMain.handle("backtest:simple", (_event, request: BacktestRequest) =>
-    service.runSimpleBacktest(request),
+  ipcMain.handle("backtest:detail", (_event, backtestId: string) =>
+    service.getBacktestDetail(backtestId),
+  );
+  ipcMain.handle("backtest:workspace:get", () =>
+    service.getBacktestWorkspace(),
+  );
+  ipcMain.handle(
+    "backtest:workspace:save",
+    (_event, state: BacktestWorkspaceState) =>
+      service.saveBacktestWorkspace(state),
+  );
+  ipcMain.handle(
+    "backtest:comparison:export",
+    async (_event, backtestIds: string[]) => {
+      const results = service.listBacktestsByIds(backtestIds);
+      if (!results.length) throw new Error("没有可导出的回测结果");
+      const result = await dialog.showSaveDialog({
+        title: "导出回测对比与明细",
+        defaultPath: `攒股收息-回测对比-${timestamp()}.xlsx`,
+        filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
+      });
+      if (result.canceled || !result.filePath) return { cancelled: true };
+      writeFileSync(result.filePath, await buildBacktestWorkbook(results));
+      database.log("info", `已导出 ${results.length} 条回测结果及明细`);
+      return { cancelled: false, path: result.filePath };
+    },
   );
   ipcMain.handle("ledger:list", () => service.listLedger());
   ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>

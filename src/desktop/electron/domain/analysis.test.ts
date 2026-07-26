@@ -16,6 +16,32 @@ const request: BacktestRequest = {
 };
 
 describe("simulateBacktest", () => {
+  it("允许最多 10 个 A 股标的，并拒绝第 11 个", () => {
+    const symbols = Array.from({ length: 10 }, (_, index) =>
+      String(600000 + index),
+    );
+    expect(() =>
+      simulateBacktest(
+        { ...request, symbols },
+        symbols[0],
+        "测试股票",
+        [{ date: "2024-01-02", close: 10 }],
+        [],
+        [],
+      ),
+    ).not.toThrow();
+    expect(() =>
+      simulateBacktest(
+        { ...request, symbols: [...symbols, "600010"] },
+        symbols[0],
+        "测试股票",
+        [{ date: "2024-01-02", close: 10 }],
+        [],
+        [],
+      ),
+    ).toThrow("R1 支持 1 至 10 个标的同条件并排");
+  });
+
   it("允许零碎股，并把现金分红全额回购原标的", () => {
     const result = simulateBacktest(
       request,

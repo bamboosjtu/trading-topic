@@ -29,20 +29,26 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactECharts from "echarts-for-react";
-import { SUPPORTED_BANKS } from "../../../shared/constants";
+import {
+  BACKTEST_COMPARISON_PAGE_SIZE,
+  BACKTEST_DETAIL_PAGE_SIZE,
+  BACKTEST_MAX_SYMBOLS,
+  BACKTEST_RANGE_LABELS,
+  BACKTEST_RANGE_YEARS,
+  DEFAULT_BACKTEST_SYMBOLS,
+  DEFAULT_STOCKS,
+} from "../../../shared/constants";
 import {
   api,
+  type BacktestCandlePeriod,
+  type BacktestChartMetric,
   type BacktestRequest,
   type BacktestResult,
+  type BacktestWorkspaceState,
   type PricePoint,
   type SimpleBacktestResult,
   type SimpleBacktestRow,
 } from "../api/client";
-
-const BANK_OPTIONS = SUPPORTED_BANKS.map(({ symbol, name }) => ({
-  value: symbol,
-  label: name,
-}));
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -58,10 +64,18 @@ const EVENT_COLORS: Record<SimpleBacktestRow["event"], string> = {
   share_adjustment: "orange",
 };
 
-const CHART_COLORS = ["#1677ff", "#ff9f1a", "#12a594", "#7c6cf2"];
-
-type ChartMetric = "kline" | "return" | "drawdown";
-type CandlePeriod = "day" | "week" | "month";
+const CHART_COLORS = [
+  "#1677ff",
+  "#ff9f1a",
+  "#12a594",
+  "#7c6cf2",
+  "#ef5da8",
+  "#875bf7",
+  "#0ba5ec",
+  "#f79009",
+  "#6172f3",
+  "#039855",
+];
 
 interface CandlePoint {
   date: string;
@@ -97,12 +111,6 @@ function money(value: number): string {
 
 function percent(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(2)}%`;
-}
-
-function totalReturn(result: BacktestResult): number {
-  return result.metrics.totalContribution
-    ? result.metrics.totalPnl / result.metrics.totalContribution
-    : 0;
 }
 
 function longestDrawdownPeriod(result: BacktestResult): DrawdownPeriod {
@@ -164,7 +172,7 @@ function resultPrices(result: BacktestResult): PricePoint[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function periodKey(date: string, period: CandlePeriod): string {
+function periodKey(date: string, period: BacktestCandlePeriod): string {
   if (period === "month") return date.slice(0, 7);
   if (period === "day") return date;
   const value = new Date(`${date}T00:00:00Z`);
@@ -173,7 +181,10 @@ function periodKey(date: string, period: CandlePeriod): string {
   return value.toISOString().slice(0, 10);
 }
 
-function toCandles(prices: PricePoint[], period: CandlePeriod): CandlePoint[] {
+function toCandles(
+  prices: PricePoint[],
+  period: BacktestCandlePeriod,
+): CandlePoint[] {
   const groups = new Map<string, PricePoint[]>();
   for (const point of prices) {
     const key = periodKey(point.date, period);
@@ -202,59 +213,11 @@ function movingAverage(values: number[], window: number): Array<number | "-"> {
   });
 }
 
-function deriveSimpleRequest(record: BacktestResult): BacktestRequest {
-  return {
-    symbols: [record.symbol],
-    startDate: record.requestedStartDate || record.actualStartDate,
-    endDate: record.actualEndDate,
-    monthlyAmount: record.monthlyAmount,
-    buyDay: record.buyDay,
-  };
-}
-
-function downloadComparison(results: BacktestResult[]): void {
-  if (!results.length) return;
-  const rows = [
-    [
-      "标的",
-      "代码",
-      "累计投入",
-      "最终资产",
-      "累计收益",
-      "累计收益率",
-      "XIRR",
-      "最大回撤",
-      "最长亏损时间（月）",
-      "累计分红",
-      "期末现金",
-    ],
-    ...results.map((result) => [
-      result.name,
-      result.symbol,
-      result.metrics.totalContribution,
-      result.metrics.endingAsset,
-      result.metrics.totalPnl,
-      totalReturn(result),
-      result.metrics.xirr ?? "",
-      result.metrics.maxDrawdown,
-      longestDrawdownMonths(result),
-      result.metrics.totalDividend,
-      result.metrics.endingCash,
-    ]),
-  ];
-  const csv = rows
-    .map((row) =>
-      row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","),
-    )
-    .join("\r\n");
-  const url = URL.createObjectURL(
-    new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" }),
-  );
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `回测对比-${today()}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+function rangeDescription(result: BacktestResult): string {
+  if (result.rangeYears) return BACKTEST_RANGE_LABELS[result.rangeYears];
+  return `${result.requestedStartDate} 至 ${
+    result.requestedEndDate ?? result.actualEndDate
+  }`;
 }
 
 export function BacktestPage() {
@@ -262,13 +225,17 @@ export function BacktestPage() {
   const queryClient = useQueryClient();
   const [form] = Form.useForm<BacktestRequest>();
   const [currentResults, setCurrentResults] = useState<BacktestResult[]>([]);
-  const [currentRequest, setCurrentRequest] = useState<BacktestRequest | null>(null);
   const [detail, setDetail] = useState<BacktestResult | null>(null);
   const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | 15 | "custom">(3);
   const [rulesExpanded, setRulesExpanded] = useState(false);
-  const [chartMetric, setChartMetric] = useState<ChartMetric>("kline");
-  const [candlePeriod, setCandlePeriod] = useState<CandlePeriod>("day");
+  const [chartMetric, setChartMetric] =
+    useState<BacktestChartMetric>("kline");
+  const [candlePeriod, setCandlePeriod] =
+    useState<BacktestCandlePeriod>("day");
   const [chartSymbol, setChartSymbol] = useState("601398");
+  const [activeBatchId, setActiveBatchId] = useState<string>();
+  const [workspaceRestored, setWorkspaceRestored] = useState(false);
+  const [comparisonPage, setComparisonPage] = useState(1);
   const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const [detailPage, setDetailPage] = useState(1);
   const [detailEventFilters, setDetailEventFilters] = useState<
@@ -277,49 +244,86 @@ export function BacktestPage() {
   const buyDay = Form.useWatch("buyDay", form) ?? 1;
   const startDate = Form.useWatch("startDate", form) ?? dateYearsAgo(3);
   const endDate = Form.useWatch("endDate", form) ?? today();
+  const monthlyAmount = Form.useWatch("monthlyAmount", form) ?? 3000;
   const selectedSymbols = Form.useWatch("symbols", form) ?? [];
 
+  const stocks = useQuery({
+    queryKey: ["stocks"],
+    queryFn: api.listStocks,
+    staleTime: 60 * 60 * 1_000,
+  });
   const history = useQuery({
     queryKey: ["backtests"],
     queryFn: api.listBacktests,
   });
+  const workspace = useQuery({
+    queryKey: ["backtest:workspace"],
+    queryFn: api.getBacktestWorkspace,
+  });
+
+  const stockOptions = useMemo(
+    () =>
+      (stocks.data?.length ? stocks.data : DEFAULT_STOCKS).map(
+        ({ symbol, name }) => ({
+          value: symbol,
+          label: name,
+          searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
+        }),
+      ),
+    [stocks.data],
+  );
 
   const mutation = useMutation({
     mutationFn: api.runBacktest,
     onSuccess: (results, variables) => {
       setCurrentResults(results);
-      setCurrentRequest(variables);
+      const batchId = results[0]?.batchId;
+      setActiveBatchId(batchId);
+      const state: BacktestWorkspaceState = {
+        request: variables,
+        chartMetric,
+        candlePeriod,
+        chartSymbol: results.some((result) => result.symbol === chartSymbol)
+          ? chartSymbol
+          : (results[0]?.symbol ?? chartSymbol),
+        lastBatchId: batchId,
+        updatedAt: new Date().toISOString(),
+      };
+      void api.saveBacktestWorkspace(state);
       void queryClient.invalidateQueries({ queryKey: ["backtests"] });
+      void queryClient.invalidateQueries({ queryKey: ["backtest:workspace"] });
       void queryClient.invalidateQueries({ queryKey: ["health"] });
       message.success(`已完成 ${results.length} 个标的回测`);
     },
     onError: (error) => message.error(error.message),
   });
-
-  const simpleRequest = useMemo<BacktestRequest | null>(() => {
-    if (!detail) return null;
-    if (currentRequest) return { ...currentRequest, symbols: [detail.symbol] };
-    return deriveSimpleRequest(detail);
-  }, [detail, currentRequest]);
-
-  const simpleQuery = useQuery({
-    queryKey: ["backtest:simple", simpleRequest],
-    queryFn: () => api.runSimpleBacktest(simpleRequest!),
-    enabled: Boolean(simpleRequest),
-    staleTime: 60_000,
+  const exportMutation = useMutation({
+    mutationFn: (ids: string[]) => api.exportBacktestComparison(ids),
+    onSuccess: (result) => {
+      if (!result.cancelled) message.success("已导出 XLSX 对比结果与逐项明细");
+    },
+    onError: (error) => message.error(error.message),
   });
 
-  const simpleResult: SimpleBacktestResult | undefined = useMemo(
-    () => simpleQuery.data?.find((row) => row.symbol === detail?.symbol),
-    [simpleQuery.data, detail?.symbol],
-  );
+  const simpleQuery = useQuery({
+    queryKey: ["backtest:detail", detail?.id],
+    queryFn: () => api.getBacktestDetail(detail!.id),
+    enabled: Boolean(detail),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const simpleResult: SimpleBacktestResult | undefined = simpleQuery.data;
   const filteredDetailRows = useMemo(() => {
     const rows = simpleResult?.rows ?? [];
     if (!detailEventFilters.length) return rows;
     return rows.filter((row) => detailEventFilters.includes(row.event));
   }, [detailEventFilters, simpleResult?.rows]);
   const detailRows = useMemo(
-    () => filteredDetailRows.slice((detailPage - 1) * 20, detailPage * 20),
+    () =>
+      filteredDetailRows.slice(
+        (detailPage - 1) * BACKTEST_DETAIL_PAGE_SIZE,
+        detailPage * BACKTEST_DETAIL_PAGE_SIZE,
+      ),
     [detailPage, filteredDetailRows],
   );
 
@@ -328,17 +332,61 @@ export function BacktestPage() {
     setDetailEventFilters([]);
   }, [detail?.id]);
 
+  useEffect(() => {
+    if (!workspace.isFetched || workspaceRestored) return;
+    const saved = workspace.data;
+    if (saved) {
+      form.setFieldsValue(saved.request);
+      setRangePreset(saved.request.rangeYears ?? "custom");
+      setChartMetric(saved.chartMetric);
+      setCandlePeriod(saved.candlePeriod);
+      setChartSymbol(saved.chartSymbol);
+      setActiveBatchId(saved.lastBatchId);
+    }
+    setWorkspaceRestored(true);
+  }, [form, workspace.data, workspace.isFetched, workspaceRestored]);
+
+  useEffect(() => {
+    if (!workspaceRestored) return;
+    const timer = window.setTimeout(() => {
+      const values = form.getFieldsValue();
+      if (!values.symbols?.length) return;
+      void api.saveBacktestWorkspace({
+        request: {
+          ...values,
+          rangeYears: rangePreset === "custom" ? undefined : rangePreset,
+        },
+        chartMetric,
+        candlePeriod,
+        chartSymbol,
+        lastBatchId: activeBatchId,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeBatchId,
+    candlePeriod,
+    chartMetric,
+    chartSymbol,
+    endDate,
+    form,
+    buyDay,
+    monthlyAmount,
+    rangePreset,
+    selectedSymbols,
+    startDate,
+    workspaceRestored,
+  ]);
+
   const results = useMemo(() => {
-    const source = currentResults.length
-      ? currentResults
-      : (history.data ?? []).filter((result) => selectedSymbols.includes(result.symbol));
-    const symbols = new Set<string>();
-    return source.filter((result) => {
-      if (symbols.has(result.symbol)) return false;
-      symbols.add(result.symbol);
-      return true;
-    }).slice(0, 4);
-  }, [currentResults, history.data, selectedSymbols]);
+    if (currentResults.length) return currentResults;
+    const persisted = (history.data ?? []).filter(
+      (result) => result.batchId && result.batchId === activeBatchId,
+    );
+    if (persisted.length) return persisted;
+    return [];
+  }, [activeBatchId, currentResults, history.data]);
 
   const rankedResults = useMemo(
     () =>
@@ -349,6 +397,33 @@ export function BacktestPage() {
       ),
     [results],
   );
+  const rankedComparisonResults = useMemo(
+    () =>
+      [...(history.data ?? [])].sort(
+        (a, b) =>
+          (b.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
+          (a.metrics.xirr ?? Number.NEGATIVE_INFINITY),
+      ),
+    [history.data],
+  );
+  const comparisonRows = useMemo(
+    () =>
+      rankedComparisonResults.slice(
+        (comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE,
+        comparisonPage * BACKTEST_COMPARISON_PAGE_SIZE,
+      ),
+    [comparisonPage, rankedComparisonResults],
+  );
+
+  useEffect(() => {
+    const pageCount = Math.max(
+      1,
+      Math.ceil(
+        rankedComparisonResults.length / BACKTEST_COMPARISON_PAGE_SIZE,
+      ),
+    );
+    if (comparisonPage > pageCount) setComparisonPage(pageCount);
+  }, [comparisonPage, rankedComparisonResults.length]);
 
   useEffect(() => {
     if (results.length && !results.some((result) => result.symbol === chartSymbol)) {
@@ -596,12 +671,12 @@ export function BacktestPage() {
     form.setFieldsValue({ startDate: dateYearsAgo(years), endDate: today() });
   };
 
-  const metricTabs: Array<[ChartMetric, string]> = [
+  const metricTabs: Array<[BacktestChartMetric, string]> = [
     ["kline", "行情K线"],
     ["return", "收益率曲线"],
     ["drawdown", "最大回撤曲线"],
   ];
-  const candlePeriods: Array<[CandlePeriod, string]> = [
+  const candlePeriods: Array<[BacktestCandlePeriod, string]> = [
     ["day", "日K"],
     ["week", "周K"],
     ["month", "月K"],
@@ -629,13 +704,19 @@ export function BacktestPage() {
           form={form}
           layout="vertical"
           initialValues={{
-            symbols: ["601398", "601288", "601166"],
+            symbols: [...DEFAULT_BACKTEST_SYMBOLS],
             startDate: dateYearsAgo(3),
             endDate: today(),
             monthlyAmount: 3000,
             buyDay: 1,
+            rangeYears: 3,
           }}
-          onFinish={(values) => mutation.mutate(values)}
+          onFinish={(values) =>
+            mutation.mutate({
+              ...values,
+              rangeYears: rangePreset === "custom" ? undefined : rangePreset,
+            })
+          }
         >
           <Form.Item name="buyDay" hidden>
             <InputNumber />
@@ -657,13 +738,34 @@ export function BacktestPage() {
                 >
                   <Select
                     mode="multiple"
-                    maxCount={4}
-                    options={BANK_OPTIONS}
-                    placeholder="添加标的"
+                    maxCount={BACKTEST_MAX_SYMBOLS}
+                    maxTagCount="responsive"
+                    options={stockOptions}
+                    placeholder={
+                      stocks.isLoading ? "正在加载 A 股列表…" : "输入名称或代码搜索"
+                    }
                     className="backtest-symbol-select"
                     open={symbolPickerOpen}
                     onOpenChange={setSymbolPickerOpen}
-                    optionFilterProp="label"
+                    showSearch
+                    filterOption={(input, option) =>
+                      String(option?.searchText ?? "").includes(
+                        input.trim().toLocaleLowerCase("zh-CN"),
+                      )
+                    }
+                    optionRender={(option) => (
+                      <div className="stock-option">
+                        <span>{option.data.label}</span>
+                        <small className="tabular-nums">{option.value}</small>
+                      </div>
+                    )}
+                    notFoundContent={
+                      stocks.isLoading ? (
+                        <Skeleton active paragraph={{ rows: 2 }} title={false} />
+                      ) : (
+                        "未找到匹配的 A 股"
+                      )
+                    }
                   />
                 </Form.Item>
                 <Button
@@ -671,7 +773,7 @@ export function BacktestPage() {
                   size="small"
                   icon={<PlusOutlined />}
                   className="add-symbol-button"
-                  disabled={selectedSymbols.length >= 4}
+                  disabled={selectedSymbols.length >= BACKTEST_MAX_SYMBOLS}
                   onClick={() => setSymbolPickerOpen(true)}
                 >
                   添加标的
@@ -683,7 +785,7 @@ export function BacktestPage() {
               <div className="field-label">回测区间</div>
               <div className="range-control-row">
                 <div className="range-shortcuts" aria-label="快捷回测区间">
-                  {([3, 5, 10, 15] as const).map((range) => (
+                  {BACKTEST_RANGE_YEARS.map((range) => (
                     <button
                       key={range}
                       type="button"
@@ -833,8 +935,13 @@ export function BacktestPage() {
               <Button
                 aria-label="导出对比结果"
                 icon={<DownloadOutlined />}
-                disabled={!results.length}
-                onClick={() => downloadComparison(rankedResults)}
+                loading={exportMutation.isPending}
+                disabled={!rankedComparisonResults.length}
+                onClick={() =>
+                  exportMutation.mutate(
+                    rankedComparisonResults.map((result) => result.id),
+                  )
+                }
               >
                 导出
               </Button>
@@ -881,12 +988,13 @@ export function BacktestPage() {
       <section className="workspace-panel comparison-panel">
         <div className="comparison-title">回测结果对比（按 XIRR 排序）</div>
         <Table
+          className="comparison-table"
           rowKey="id"
           pagination={false}
-          loading={history.isLoading && !results.length}
-          dataSource={rankedResults}
+          loading={history.isLoading}
+          dataSource={comparisonRows}
           locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
-          scroll={{ x: 1060 }}
+          scroll={{ x: 1320 }}
           onRow={(record) => ({
             onDoubleClick: () => setDetail(record),
             className: "data-row",
@@ -897,8 +1005,16 @@ export function BacktestPage() {
               width: 58,
               align: "center",
               render: (_, _row, index) => (
-                <span className={`rank rank-${index + 1}`}>
-                  {index + 1}
+                <span
+                  className={`rank rank-${
+                    (comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE +
+                    index +
+                    1
+                  }`}
+                >
+                  {(comparisonPage - 1) * BACKTEST_COMPARISON_PAGE_SIZE +
+                    index +
+                    1}
                   <TrophyFilled />
                 </span>
               ),
@@ -910,6 +1026,18 @@ export function BacktestPage() {
                 <div className="symbol-cell">
                   <strong>{row.name}</strong>
                   <span className="tabular-nums">{row.symbol}</span>
+                </div>
+              ),
+            },
+            {
+              title: "回测参数",
+              width: 138,
+              render: (_, row) => (
+                <div className="strategy-parameter">
+                  <strong>{rangeDescription(row)}</strong>
+                  <small>
+                    {money(row.monthlyAmount)}/月 · 每月{row.buyDay}日
+                  </small>
                 </div>
               ),
             },
@@ -1000,7 +1128,16 @@ export function BacktestPage() {
           ]}
         />
         <div className="comparison-footer">
-          <span>共 {rankedResults.length} 个标的</span>
+          <span>共 {rankedComparisonResults.length} 条回测记录</span>
+          <Pagination
+            size="small"
+            current={comparisonPage}
+            pageSize={BACKTEST_COMPARISON_PAGE_SIZE}
+            total={rankedComparisonResults.length}
+            showSizeChanger={false}
+            hideOnSinglePage
+            onChange={setComparisonPage}
+          />
         </div>
       </section>
 
@@ -1017,7 +1154,7 @@ export function BacktestPage() {
             "回测明细"
           )
         }
-        width={1400}
+        width={1280}
         open={Boolean(detail)}
         footer={null}
         style={{ top: 38 }}
@@ -1083,13 +1220,13 @@ export function BacktestPage() {
                   {
                     title: "日期",
                     dataIndex: "date",
-                    width: 110,
+                    width: 96,
                     className: "tabular-nums",
                   },
                   {
                     title: "事件",
                     dataIndex: "event",
-                    width: 100,
+                    width: 60,
                     render: (event: SimpleBacktestRow["event"]) => (
                       <Tag color={EVENT_COLORS[event]} bordered={false}>
                         {EVENT_LABELS[event]}
@@ -1106,7 +1243,7 @@ export function BacktestPage() {
                   {
                     title: "期初现金",
                     dataIndex: "openingCash",
-                    width: 120,
+                    width: 108,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1114,7 +1251,7 @@ export function BacktestPage() {
                   {
                     title: "外部投入",
                     dataIndex: "externalContribution",
-                    width: 110,
+                    width: 96,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value > 0 ? money(value) : "—",
@@ -1122,7 +1259,7 @@ export function BacktestPage() {
                   {
                     title: "收盘价",
                     dataIndex: "price",
-                    width: 90,
+                    width: 82,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value.toFixed(2),
@@ -1130,7 +1267,7 @@ export function BacktestPage() {
                   {
                     title: "新增股数",
                     dataIndex: "shares",
-                    width: 105,
+                    width: 92,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number, row) =>
@@ -1138,7 +1275,7 @@ export function BacktestPage() {
                   },
                   {
                     title: "发生金额",
-                    width: 120,
+                    width: 108,
                     align: "right",
                     className: "tabular-nums",
                     render: (_, row) => {
@@ -1154,7 +1291,7 @@ export function BacktestPage() {
                   {
                     title: "累计股数",
                     dataIndex: "cumulativeShares",
-                    width: 115,
+                    width: 100,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value.toFixed(2),
@@ -1162,7 +1299,7 @@ export function BacktestPage() {
                   {
                     title: "累计投入",
                     dataIndex: "cumulativeContribution",
-                    width: 120,
+                    width: 108,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1170,7 +1307,7 @@ export function BacktestPage() {
                   {
                     title: "累计分红",
                     dataIndex: "cumulativeDividend",
-                    width: 120,
+                    width: 108,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1178,7 +1315,7 @@ export function BacktestPage() {
                   {
                     title: "期末现金",
                     dataIndex: "endingCash",
-                    width: 110,
+                    width: 98,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1186,7 +1323,7 @@ export function BacktestPage() {
                   {
                     title: "盈亏率",
                     dataIndex: "returnRate",
-                    width: 90,
+                    width: 82,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => (
@@ -1222,14 +1359,19 @@ export function BacktestPage() {
                 <Select
                   aria-label="每页条数"
                   size="small"
-                  value={20}
-                  options={[{ value: 20, label: "20条/页" }]}
+                  value={BACKTEST_DETAIL_PAGE_SIZE}
+                  options={[
+                    {
+                      value: BACKTEST_DETAIL_PAGE_SIZE,
+                      label: `${BACKTEST_DETAIL_PAGE_SIZE}条/页`,
+                    },
+                  ]}
                   className="detail-page-size"
                 />
                 <Pagination
                   size="small"
                   current={detailPage}
-                  pageSize={20}
+                  pageSize={BACKTEST_DETAIL_PAGE_SIZE}
                   total={filteredDetailRows.length}
                   showSizeChanger={false}
                   hideOnSinglePage={false}

@@ -39,6 +39,8 @@ export interface BacktestRequest {
   endDate: string;
   monthlyAmount: number;
   buyDay: number;
+  /** 快捷区间；存在时用于稳定识别同一组回测参数。 */
+  rangeYears?: 3 | 5 | 10 | 15;
   /**
    * 分红到账处理口径。
    * - `ex_date`（默认）：除权日记入现金并立即回购；
@@ -90,10 +92,17 @@ export interface BacktestResult {
   symbol: string;
   name: string;
   requestedStartDate: string;
+  requestedEndDate?: string;
   actualStartDate: string;
   actualEndDate: string;
   monthlyAmount: number;
   buyDay: number;
+  rangeYears?: 3 | 5 | 10 | 15;
+  dividendTiming?: "ex_date" | "payment_date";
+  /** 同一标的和同一组参数的稳定键。 */
+  strategyKey?: string;
+  /** 同一次点击“开始回测”产生的结果批次。 */
+  batchId?: string;
   metrics: BacktestMetrics;
   transactions: BacktestTransaction[];
   equityCurve: EquityPoint[];
@@ -253,11 +262,32 @@ export interface RestoreResult extends ExportResult {
   safetyBackupPath?: string;
 }
 
+export interface StockInfo {
+  symbol: string;
+  name: string;
+}
+
+export type BacktestChartMetric = "kline" | "return" | "drawdown";
+export type BacktestCandlePeriod = "day" | "week" | "month";
+
+export interface BacktestWorkspaceState {
+  request: BacktestRequest;
+  chartMetric: BacktestChartMetric;
+  candlePeriod: BacktestCandlePeriod;
+  chartSymbol: string;
+  lastBatchId?: string;
+  updatedAt: string;
+}
+
 export interface DesktopApi {
   health(): Promise<HealthResponse>;
+  listStocks(): Promise<StockInfo[]>;
   runBacktest(request: BacktestRequest): Promise<BacktestResult[]>;
   listBacktests(): Promise<BacktestResult[]>;
-  runSimpleBacktest(request: BacktestRequest): Promise<SimpleBacktestResult[]>;
+  getBacktestDetail(backtestId: string): Promise<SimpleBacktestResult>;
+  getBacktestWorkspace(): Promise<BacktestWorkspaceState | null>;
+  saveBacktestWorkspace(state: BacktestWorkspaceState): Promise<void>;
+  exportBacktestComparison(backtestIds: string[]): Promise<ExportResult>;
   listLedger(): Promise<LedgerEntry[]>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { BACKTEST_MAX_SYMBOLS } from "../../shared/constants";
 import type {
   BacktestRequest,
   BacktestResult,
@@ -23,10 +24,13 @@ function shareIncreaseRatio(event: DividendEvent): number {
 }
 
 function assertInput(input: BacktestRequest): void {
-  if (input.symbols.length < 1 || input.symbols.length > 4) {
-    throw new Error("R1 支持 1 至 4 个标的同条件并排");
+  if (
+    input.symbols.length < 1 ||
+    input.symbols.length > BACKTEST_MAX_SYMBOLS
+  ) {
+    throw new Error(`R1 支持 1 至 ${BACKTEST_MAX_SYMBOLS} 个标的同条件并排`);
   }
-  if (input.symbols.some((symbol) => !/^(?:0|3|6|8)\d{5}$/.test(symbol))) {
+  if (input.symbols.some((symbol) => !/^\d{6}$/.test(symbol))) {
     throw new Error("仅支持 6 位 A 股股票代码");
   }
   if (!(input.monthlyAmount > 0)) throw new Error("每月金额必须大于 0");
@@ -276,10 +280,13 @@ export function simulateBacktest(
     symbol,
     name,
     requestedStartDate: input.startDate,
+    requestedEndDate: input.endDate,
     actualStartDate: first.date,
     actualEndDate: last.date,
     monthlyAmount: input.monthlyAmount,
     buyDay: input.buyDay,
+    rangeYears: input.rangeYears,
+    dividendTiming,
     metrics: {
       totalContribution,
       endingAsset,
@@ -321,6 +328,21 @@ export function simulateBacktestSimple(
     prices,
     dividendRows,
     [],
+  );
+  return backtestResultToSimpleResult(backtest);
+}
+
+/**
+ * 将已持久化的主回测结果转换为审计明细。
+ *
+ * 详情弹窗和 XLSX 导出都使用这一转换，不再重新请求行情或二次回测，
+ * 因而与用户当时看到的结果使用完全相同的数据快照。
+ */
+export function backtestResultToSimpleResult(
+  backtest: BacktestResult,
+): SimpleBacktestResult {
+  const prices = [...(backtest.priceSeries ?? [])].sort((a, b) =>
+    a.date.localeCompare(b.date),
   );
   const pricesByDate = new Map(prices.map((row) => [row.date, row.close]));
   const rows: SimpleBacktestRow[] = [];
@@ -424,11 +446,16 @@ export function simulateBacktestSimple(
     }
   }
 
-  const last = prices.at(-1)!;
+  const lastPrice =
+    prices.at(-1)?.close ??
+    [...backtest.transactions]
+      .reverse()
+      .find((transaction) => transaction.price > 0)?.price ??
+    0;
   const endingShares = cumulativeShares;
   const endingCost = cumulativeContribution;
   const endingInvestment = cumulativeInvestment;
-  const endingMarketValue = roundMoney(endingShares * last.close);
+  const endingMarketValue = roundMoney(endingShares * lastPrice);
   const endingCash = backtest.metrics.endingCash;
   const returnRate =
     endingCost > 0
@@ -436,13 +463,13 @@ export function simulateBacktestSimple(
       : 0;
 
   return {
-    symbol,
-    name,
-    requestedStartDate: input.startDate,
-    actualStartDate: prices[0].date,
-    actualEndDate: last.date,
-    monthlyAmount: input.monthlyAmount,
-    buyDay: input.buyDay,
+    symbol: backtest.symbol,
+    name: backtest.name,
+    requestedStartDate: backtest.requestedStartDate,
+    actualStartDate: backtest.actualStartDate,
+    actualEndDate: backtest.actualEndDate,
+    monthlyAmount: backtest.monthlyAmount,
+    buyDay: backtest.buyDay,
     rows,
     endingShares,
     endingCost,

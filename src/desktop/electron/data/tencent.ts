@@ -3,19 +3,16 @@ import type {
   DividendEvent,
   PricePoint,
 } from "../../shared/contracts";
-import {
-  BACKTEST_CALIBER_VERSION,
-  SUPPORTED_BANK_NAME_BY_SYMBOL,
-} from "../../shared/constants";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 
 const TENCENT_URL =
   "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
 const EASTMONEY_URL =
   "https://datacenter-web.eastmoney.com/api/data/v1/get";
 
-function marketSymbol(symbol: string): string {
+export function marketSymbol(symbol: string): string {
   if (symbol.startsWith("6")) return `sh${symbol}`;
-  if (symbol.startsWith("8")) return `bj${symbol}`;
+  if (/^[489]/.test(symbol)) return `bj${symbol}`;
   return `sz${symbol}`;
 }
 
@@ -185,8 +182,4 @@ export async function fetchCorporateActions(
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
   };
-}
-
-export function stockName(symbol: string): string {
-  return SUPPORTED_BANK_NAME_BY_SYMBOL[symbol] ?? symbol;
 }
