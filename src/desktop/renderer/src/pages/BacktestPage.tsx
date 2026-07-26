@@ -2,21 +2,31 @@ import { useMemo, useState } from "react";
 import {
   App,
   Button,
-  Drawer,
   Form,
   Input,
   InputNumber,
+  Modal,
+  Popover,
   Select,
-  Space,
+  Skeleton,
   Table,
-  Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import {
-  PlayCircleOutlined,
-  HistoryOutlined,
+  CalendarOutlined,
+  ClockCircleOutlined,
+  DollarOutlined,
+  DownloadOutlined,
+  GiftOutlined,
+  InfoCircleOutlined,
   LineChartOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  RiseOutlined,
+  SettingOutlined,
+  TrophyFilled,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactECharts from "echarts-for-react";
@@ -28,8 +38,9 @@ import {
   type SimpleBacktestRow,
 } from "../api/client";
 
-const { Title, Text } = Typography;
-const BANK_OPTIONS = [
+const { Text } = Typography;
+
+const BANKS = [
   ["601398", "工商银行"],
   ["601939", "建设银行"],
   ["601288", "农业银行"],
@@ -37,7 +48,12 @@ const BANK_OPTIONS = [
   ["600036", "招商银行"],
   ["601166", "兴业银行"],
   ["600016", "民生银行"],
-].map(([value, name]) => ({ value, label: `${name} · ${value}` }));
+] as const;
+
+const BANK_OPTIONS = BANKS.map(([value, name]) => ({
+  value,
+  label: `${name}　${value}`,
+}));
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -47,11 +63,20 @@ const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
 };
 
 const EVENT_COLORS: Record<SimpleBacktestRow["event"], string> = {
-  buy: "gold",
-  dividend: "success",
-  dividend_reinvest: "processing",
-  share_adjustment: "warning",
+  buy: "blue",
+  dividend: "green",
+  dividend_reinvest: "cyan",
+  share_adjustment: "orange",
 };
+
+const CHART_COLORS = ["#1677ff", "#ff9f1a", "#12a594", "#7c6cf2"];
+
+type ChartMetric = "asset" | "return" | "drawdown";
+type ChartRange = "all" | 1 | 3 | 5 | "max";
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function dateYearsAgo(years: number): string {
   const date = new Date();
@@ -68,10 +93,45 @@ function money(value: number): string {
 }
 
 function percent(value: number | null): string {
-  return value === null ? "不可计算" : `${(value * 100).toFixed(2)}%`;
+  return value === null ? "—" : `${(value * 100).toFixed(2)}%`;
 }
 
-/** 从 BacktestResult 推导明细请求（用于查看历史结果时回填参数） */
+function totalReturn(result: BacktestResult): number {
+  return result.metrics.totalContribution
+    ? result.metrics.totalPnl / result.metrics.totalContribution
+    : 0;
+}
+
+function longestDrawdownMonths(result: BacktestResult): number {
+  let peak = Number.NEGATIVE_INFINITY;
+  let drawdownStart: string | null = null;
+  let longestDays = 0;
+
+  for (const point of result.equityCurve) {
+    const value = point.nav ?? point.asset;
+    if (value >= peak) {
+      if (drawdownStart) {
+        longestDays = Math.max(
+          longestDays,
+          (Date.parse(point.date) - Date.parse(drawdownStart)) / 86_400_000,
+        );
+      }
+      peak = value;
+      drawdownStart = null;
+    } else if (!drawdownStart) {
+      drawdownStart = point.date;
+    }
+  }
+
+  if (drawdownStart && result.actualEndDate) {
+    longestDays = Math.max(
+      longestDays,
+      (Date.parse(result.actualEndDate) - Date.parse(drawdownStart)) / 86_400_000,
+    );
+  }
+  return Math.max(0, Math.round(longestDays / 30.4375));
+}
+
 function deriveSimpleRequest(record: BacktestResult): BacktestRequest {
   return {
     symbols: [record.symbol],
@@ -82,6 +142,51 @@ function deriveSimpleRequest(record: BacktestResult): BacktestRequest {
   };
 }
 
+function downloadComparison(results: BacktestResult[]): void {
+  if (!results.length) return;
+  const rows = [
+    [
+      "标的",
+      "代码",
+      "累计投入",
+      "最终资产",
+      "累计收益",
+      "累计收益率",
+      "XIRR",
+      "最大回撤",
+      "最长亏损时间（月）",
+      "累计分红",
+      "期末现金",
+    ],
+    ...results.map((result) => [
+      result.name,
+      result.symbol,
+      result.metrics.totalContribution,
+      result.metrics.endingAsset,
+      result.metrics.totalPnl,
+      totalReturn(result),
+      result.metrics.xirr ?? "",
+      result.metrics.maxDrawdown,
+      longestDrawdownMonths(result),
+      result.metrics.totalDividend,
+      result.metrics.endingCash,
+    ]),
+  ];
+  const csv = rows
+    .map((row) =>
+      row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","),
+    )
+    .join("\r\n");
+  const url = URL.createObjectURL(
+    new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `回测对比-${today()}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function BacktestPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
@@ -89,10 +194,17 @@ export function BacktestPage() {
   const [currentResults, setCurrentResults] = useState<BacktestResult[]>([]);
   const [currentRequest, setCurrentRequest] = useState<BacktestRequest | null>(null);
   const [detail, setDetail] = useState<BacktestResult | null>(null);
+  const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | "custom">("custom");
+  const [rulesExpanded, setRulesExpanded] = useState(false);
+  const [chartMetric, setChartMetric] = useState<ChartMetric>("asset");
+  const [chartRange, setChartRange] = useState<ChartRange>("all");
+  const buyDay = Form.useWatch("buyDay", form) ?? 1;
+
   const history = useQuery({
     queryKey: ["backtests"],
     queryFn: api.listBacktests,
   });
+
   const mutation = useMutation({
     mutationFn: api.runBacktest,
     onSuccess: (results, variables) => {
@@ -105,12 +217,9 @@ export function BacktestPage() {
     onError: (error) => message.error(error.message),
   });
 
-  // 回测审计明细按当前选中标的 + 当前请求参数获取。
   const simpleRequest = useMemo<BacktestRequest | null>(() => {
     if (!detail) return null;
-    if (currentRequest) {
-      return { ...currentRequest, symbols: [detail.symbol] };
-    }
+    if (currentRequest) return { ...currentRequest, symbols: [detail.symbol] };
     return deriveSimpleRequest(detail);
   }, [detail, currentRequest]);
 
@@ -126,580 +235,811 @@ export function BacktestPage() {
     [simpleQuery.data, detail?.symbol],
   );
 
-  const results = currentResults.length ? currentResults : history.data?.slice(0, 4) ?? [];
+  const results = useMemo(
+    () => currentResults.length ? currentResults : history.data?.slice(0, 4) ?? [],
+    [currentResults, history.data],
+  );
 
-  const chartOption = useMemo(
-    () => ({
-      animationDuration: 500,
+  const rankedResults = useMemo(
+    () => [...results].sort((a, b) => b.metrics.endingAsset - a.metrics.endingAsset),
+    [results],
+  );
+
+  const metrics = useMemo(() => {
+    const endingAsset = rankedResults[0];
+    const xirrWinner = [...results].sort(
+      (a, b) => (b.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
+        (a.metrics.xirr ?? Number.NEGATIVE_INFINITY),
+    )[0];
+    const deepestDrawdown = [...results].sort(
+      (a, b) => a.metrics.maxDrawdown - b.metrics.maxDrawdown,
+    )[0];
+    const longestDrawdown = [...results].sort(
+      (a, b) => longestDrawdownMonths(b) - longestDrawdownMonths(a),
+    )[0];
+    const dividendWinner = [...results].sort(
+      (a, b) => b.metrics.totalDividend - a.metrics.totalDividend,
+    )[0];
+
+    return [
+      {
+        label: "每个标的累计投入",
+        value: results[0] ? money(results[0].metrics.totalContribution) : "—",
+        helper: "",
+        icon: <DollarOutlined />,
+        tone: "blue",
+      },
+      {
+        label: "最终资产（最高）",
+        value: endingAsset ? money(endingAsset.metrics.endingAsset) : "—",
+        helper: endingAsset?.name ?? "",
+        icon: <RiseOutlined />,
+        tone: "orange",
+      },
+      {
+        label: "XIRR（最高）",
+        value: xirrWinner ? percent(xirrWinner.metrics.xirr) : "—",
+        helper: xirrWinner?.name ?? "",
+        icon: <TrophyFilled />,
+        tone: "coral",
+      },
+      {
+        label: "最大回撤（最低）",
+        value: deepestDrawdown ? percent(deepestDrawdown.metrics.maxDrawdown) : "—",
+        helper: deepestDrawdown?.name ?? "",
+        icon: <LineChartOutlined />,
+        tone: "teal",
+      },
+      {
+        label: "最长亏损时间（最短）",
+        value: longestDrawdown ? `${longestDrawdownMonths(longestDrawdown)} 个月` : "—",
+        helper: longestDrawdown?.name ?? "",
+        icon: <ClockCircleOutlined />,
+        tone: "indigo",
+      },
+      {
+        label: "累计分红（最高）",
+        value: dividendWinner ? money(dividendWinner.metrics.totalDividend) : "—",
+        helper: dividendWinner?.name ?? "",
+        icon: <GiftOutlined />,
+        tone: "amber",
+      },
+    ];
+  }, [rankedResults, results]);
+
+  const chartOption = useMemo(() => {
+    const latestDate = results[0]?.equityCurve.at(-1)?.date;
+    const cutoff =
+      latestDate && typeof chartRange === "number"
+        ? new Date(
+            new Date(latestDate).setFullYear(new Date(latestDate).getFullYear() - chartRange),
+          )
+            .toISOString()
+            .slice(0, 10)
+        : null;
+    const visibleCurve = (result: BacktestResult) =>
+      result.equityCurve.filter((point) => !cutoff || point.date >= cutoff);
+    const baseCurve = results[0] ? visibleCurve(results[0]) : [];
+
+    const series = results.map((result, index) => {
+      let peak = 0;
+      return {
+        name: result.name,
+        type: "line",
+        showSymbol: false,
+        smooth: 0.08,
+        data: visibleCurve(result).map((point) => {
+          if (chartMetric === "asset") return point.asset;
+          if (chartMetric === "return") {
+            return point.contribution ? point.asset / point.contribution - 1 : 0;
+          }
+          const value = point.nav ?? point.asset;
+          peak = Math.max(peak, value);
+          return peak ? value / peak - 1 : 0;
+        }),
+        lineStyle: {
+          width: 1.8,
+          color: CHART_COLORS[index],
+          type: undefined as "dashed" | undefined,
+        },
+        itemStyle: { color: CHART_COLORS[index] },
+        emphasis: { focus: "series" },
+      };
+    });
+
+    if (chartMetric === "asset" && baseCurve.length) {
+      series.push({
+        name: "累计投入（每个标的）",
+        type: "line",
+        showSymbol: false,
+        smooth: 0,
+        data: baseCurve.map((point) => point.contribution),
+        lineStyle: { width: 1.3, color: "#8799b3", type: "dashed" },
+        itemStyle: { color: "#8799b3" },
+        emphasis: { focus: "series" },
+      });
+    }
+
+    return {
+      animationDuration: 420,
       tooltip: {
         trigger: "axis",
         backgroundColor: "#ffffff",
-        borderColor: "#e9e3d6",
+        borderColor: "#dfe6ef",
         borderWidth: 1,
-        padding: [10, 14],
-        textStyle: { color: "#1e1c18", fontSize: 12 },
+        padding: [9, 12],
+        textStyle: { color: "#183251", fontSize: 11 },
         extraCssText:
-          "box-shadow: 0 8px 24px -8px rgba(69, 58, 33, 0.25); border-radius: 8px;",
-        valueFormatter: (value: number) => money(value),
+          "box-shadow: 0 10px 28px -10px rgba(20,42,76,.28);border-radius:6px;",
+        valueFormatter: (value: number) =>
+          chartMetric === "asset" ? money(value) : percent(value),
       },
-      axisPointer: {
-        type: "line",
-        lineStyle: { color: "#d8cfba", type: "dashed" },
-      },
-      grid: { left: 16, right: 24, top: 36, bottom: 24, containLabel: true },
+      grid: { left: 14, right: 12, top: 38, bottom: 18, containLabel: true },
       legend: {
-        top: 0,
-        right: 0,
+        top: 2,
+        left: 28,
         icon: "roundRect",
-        itemWidth: 14,
-        itemHeight: 4,
-        textStyle: { color: "#7b7668", fontSize: 12 },
+        itemWidth: 16,
+        itemHeight: 2,
+        itemGap: 24,
+        textStyle: { color: "#64758c", fontSize: 11 },
       },
       xAxis: {
         type: "category",
         boundaryGap: false,
-        data: results[0]?.equityCurve.map((row) => row.date) ?? [],
-        axisLabel: { hideOverlap: true, color: "#a39e8d", fontSize: 11 },
-        axisLine: { lineStyle: { color: "#e0d9c8" } },
+        data: baseCurve.map((point) => point.date),
+        axisLabel: {
+          hideOverlap: true,
+          color: "#71839b",
+          fontSize: 10,
+          formatter: (value: string) => value.slice(0, 7),
+        },
+        axisLine: { lineStyle: { color: "#dce4ed" } },
         axisTick: { show: false },
       },
       yAxis: {
         type: "value",
+        scale: chartRange === "max",
         axisLabel: {
-          color: "#a39e8d",
-          fontSize: 11,
-          formatter: (value: number) => `${Math.round(value / 10_000)}万`,
+          color: "#71839b",
+          fontSize: 10,
+          formatter: (value: number) =>
+            chartMetric === "asset"
+              ? value === 0 ? "0" : `${Math.round(value / 10_000)}万`
+              : `${Math.round(value * 100)}%`,
         },
-        splitLine: { lineStyle: { color: "#f0ebdf" } },
+        splitLine: { lineStyle: { color: "#e9eef4" } },
       },
-      series: results.map((result) => ({
-        name: result.name,
-        type: "line",
-        showSymbol: false,
-        smooth: 0.15,
-        data: result.equityCurve.map((row) => row.asset),
-        lineStyle: { width: 2.5 },
-        areaStyle: { opacity: 0.05 },
-        emphasis: { focus: "series" },
-      })),
-      color: ["#c79345", "#226186", "#3e7d5b", "#97506b"],
-    }),
-    [results],
+      series,
+      color: CHART_COLORS,
+    };
+  }, [chartMetric, chartRange, results]);
+
+  const detailYears = useMemo(
+    () =>
+      Array.from(new Set(simpleResult?.rows.map((row) => row.date.slice(0, 4)) ?? []))
+        .sort()
+        .map((year) => ({ text: year, value: year })),
+    [simpleResult],
   );
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="page-eyebrow">Historical Simulation</div>
-          <Title level={2} className="!mt-1.5 !mb-1.5 !text-[24px] tracking-tight">
-            历史回测
-          </Title>
-          <Text type="secondary" className="text-[13px]">
-            固定金额、整数手、现金结转与现金分红回购；同一条件最多并排 4 个 A 股。
-          </Text>
-        </div>
-        <Tag icon={<HistoryOutlined />} bordered={false} color="gold" className="!mr-0">
-          已保存 {history.data?.length ?? 0} 次结果
-        </Tag>
-      </div>
+  const setDatePreset = (years: 3 | 5 | 10 | "custom") => {
+    setRangePreset(years);
+    if (years !== "custom") {
+      form.setFieldsValue({ startDate: dateYearsAgo(years), endDate: today() });
+    }
+  };
 
-      <div className="workspace-panel px-6 pt-6 pb-5">
+  const metricTabs: Array<[ChartMetric, string]> = [
+    ["asset", "资产曲线"],
+    ["return", "收益率曲线"],
+    ["drawdown", "回撤曲线"],
+  ];
+  const chartRanges: Array<[ChartRange, string]> = [
+    ["all", "全部"],
+    [1, "1年"],
+    [3, "3年"],
+    [5, "5年"],
+    ["max", "最大"],
+  ];
+
+  return (
+    <div className="backtest-page">
+      <header className="page-heading backtest-heading">
+        <h1>历史回测</h1>
+        <div className="flex items-center gap-5">
+          <p>固定金额、允许零碎股、分红再投资，长期定投收益与风险分析</p>
+          <button
+            type="button"
+            className="inline-link"
+            onClick={() => setRulesExpanded((value) => !value)}
+          >
+            回测规则说明
+            <InfoCircleOutlined />
+          </button>
+        </div>
+      </header>
+
+      <section className="workspace-panel backtest-config">
         <Form
           form={form}
           layout="vertical"
           initialValues={{
-            symbols: ["601398"],
+            symbols: ["601398", "601288", "601166"],
             startDate: dateYearsAgo(5),
-            endDate: new Date().toISOString().slice(0, 10),
+            endDate: today(),
             monthlyAmount: 3000,
             buyDay: 1,
           }}
           onFinish={(values) => mutation.mutate(values)}
         >
-          <div className="grid grid-cols-[minmax(280px,1.5fr)_repeat(4,minmax(120px,0.7fr))_auto] gap-3 items-end">
+          <Form.Item name="buyDay" hidden>
+            <InputNumber />
+          </Form.Item>
+          <div className="backtest-config-grid">
             <Form.Item
               name="symbols"
-              label="A 股标的"
+              label="标的选择"
               rules={[{ required: true, message: "至少选择一个标的" }]}
-              className="!mb-0"
+              className="!mb-0 min-w-0"
             >
               <Select
-                mode="tags"
+                mode="multiple"
                 maxCount={4}
-                tokenSeparators={[",", "，", " "]}
                 options={BANK_OPTIONS}
-                placeholder="输入 6 位股票代码"
-                size="large"
+                placeholder="添加标的"
+                className="backtest-symbol-select"
+                suffixIcon={<PlusOutlined />}
+                allowClear
               />
             </Form.Item>
-            <Form.Item name="startDate" label="开始日期" className="!mb-0">
-              <Input type="date" size="large" />
+
+            <div className="backtest-range">
+              <div className="field-label">回测区间</div>
+              <div className="range-shortcuts" aria-label="快捷回测区间">
+                {([3, 5, 10, "custom"] as const).map((range) => (
+                  <button
+                    key={range}
+                    type="button"
+                    className={rangePreset === range ? "active" : ""}
+                    onClick={() => setDatePreset(range)}
+                  >
+                    {range === "custom" ? "自定义" : `近${range}年`}
+                  </button>
+                ))}
+              </div>
+              <div className="date-range-inputs">
+                <Form.Item name="startDate" className="!mb-0">
+                  <Input
+                    type="date"
+                    aria-label="开始日期"
+                    onChange={() => setRangePreset("custom")}
+                  />
+                </Form.Item>
+                <span>至</span>
+                <Form.Item name="endDate" className="!mb-0">
+                  <Input
+                    type="date"
+                    aria-label="结束日期"
+                    onChange={() => setRangePreset("custom")}
+                  />
+                </Form.Item>
+              </div>
+            </div>
+
+            <Form.Item name="monthlyAmount" label="每月投入金额" className="!mb-0">
+              <InputNumber<number>
+                min={100}
+                step={500}
+                precision={2}
+                suffix="元"
+                className="w-full"
+                formatter={(value) =>
+                  value === undefined
+                    ? ""
+                    : Number(value).toLocaleString("zh-CN", {
+                        minimumFractionDigits: 2,
+                      })
+                }
+                parser={(value) => Number(value?.replaceAll(",", "") ?? 0)}
+              />
             </Form.Item>
-            <Form.Item name="endDate" label="结束日期" className="!mb-0">
-              <Input type="date" size="large" />
-            </Form.Item>
-            <Form.Item name="monthlyAmount" label="每月投入" className="!mb-0">
-              <InputNumber min={100} step={500} suffix="元" className="w-full" size="large" />
-            </Form.Item>
-            <Form.Item name="buyDay" label="指定买入日" className="!mb-0">
-              <InputNumber min={1} max={28} suffix="日" className="w-full" size="large" />
-            </Form.Item>
+
+            <div>
+              <div className="field-label fee-label">
+                <span>费用模式</span>
+                <Popover
+                  placement="bottomRight"
+                  trigger="click"
+                  content={
+                    <div className="advanced-settings">
+                      <label htmlFor="advanced-buy-day">指定买入日</label>
+                      <InputNumber
+                        id="advanced-buy-day"
+                        min={1}
+                        max={28}
+                        value={buyDay}
+                        suffix="日"
+                        onChange={(value) => form.setFieldValue("buyDay", value ?? 1)}
+                      />
+                      <p>非交易日自动顺延到下一交易日。</p>
+                    </div>
+                  }
+                >
+                  <button type="button" className="inline-link compact">
+                    <SettingOutlined />
+                    高级设置
+                  </button>
+                </Popover>
+              </div>
+              <Select
+                value="zero"
+                aria-label="费用模式"
+                options={[{ value: "zero", label: "R1 简化费用（0 元）" }]}
+                className="w-full"
+              />
+            </div>
+
             <Button
               type="primary"
               htmlType="submit"
-              icon={<PlayCircleOutlined />}
               loading={mutation.isPending}
-              size="large"
+              className="start-backtest-button"
             >
               开始回测
             </Button>
           </div>
-          <div className="mt-5 pt-4 border-t border-line-soft text-xs text-ink-500">
-            <Space size={8} wrap>
-              <span>快捷区间</span>
-              {[3, 5, 10].map((years) => (
-                <Button
-                  key={years}
-                  type="link"
-                  size="small"
-                  className="!px-0"
-                  onClick={() =>
-                    form.setFieldsValue({
-                      startDate: dateYearsAgo(years),
-                      endDate: new Date().toISOString().slice(0, 10),
-                    })
-                  }
-                >
-                  近 {years} 年
-                </Button>
-              ))}
-              <span className="text-ink-300">|</span>
-              <span>
-                不复权收盘价 · 非交易日顺延 · 允许零碎股 · 费用 0 元 ·
-                现金分红自动回购 · 送股/转增按除权日入账
-              </span>
-            </Space>
-          </div>
-        </Form>
-      </div>
 
-      {results.length ? (
-        <>
-          <div className="workspace-panel px-6 pt-5 pb-3">
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <Text strong className="text-[15px]">资产曲线</Text>
-                <Text type="secondary" className="ml-2 text-xs">
-                  持仓市值 + 期末现金
-                </Text>
-              </div>
-              <Text type="secondary" className="text-xs">
-                数据来自每个结果记录的独立快照
-              </Text>
+          <div className="backtest-rules">
+            <div className="backtest-rule-list">
+              <span>回测规则：</span>
+              <span>不复权收盘价</span>
+              <i />
+              <span>允许零碎股</span>
+              <i />
+              <span>分红再投资（回购原标的）</span>
+              <i />
+              <span>剩余资金参与后续回购</span>
+              <i />
+              <span>费用 0 元，不计印花税和过户费</span>
             </div>
-            <ReactECharts option={chartOption} style={{ height: 320 }} />
+            <button
+              type="button"
+              className="rules-toggle"
+              onClick={() => setRulesExpanded((value) => !value)}
+            >
+              {rulesExpanded ? "收起" : "展开"}
+              <span className={rulesExpanded ? "rotate-180" : ""}>⌄</span>
+            </button>
           </div>
-          <div className="workspace-panel overflow-hidden">
-            <div className="px-6 py-4 flex items-center justify-between border-b border-line-soft">
-              <Text strong className="text-[15px]">同条件比较</Text>
-              <Text type="secondary" className="text-xs">
-                点击行查看回测明细
-              </Text>
+          {rulesExpanded && (
+            <div className="backtest-rules-expanded">
+              指定买入日遇非交易日顺延；送股与转增按除权日增加股数；现金分红按登记日持股计算，
+              到账后立即全额回购原标的。
             </div>
-            <Table
-              rowKey="id"
-              pagination={false}
-              dataSource={results}
-              onRow={(record) => ({
-                onClick: () => setDetail(record),
-                className: "data-row cursor-pointer",
-              })}
-              columns={[
-                {
-                  title: "标的",
-                  width: 180,
-                  render: (_, row) => (
-                    <div>
-                      <Text strong>{row.name}</Text>
-                      <div className="text-xs text-ink-400 tabular-nums">{row.symbol}</div>
-                    </div>
-                  ),
-                },
-                {
-                  title: "累计外部投入",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => money(row.metrics.totalContribution),
-                },
-                {
-                  title: "最终资产",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => money(row.metrics.endingAsset),
-                },
-                {
-                  title: "累计盈亏",
-                  align: "right",
-                  render: (_, row) => (
-                    <Text
-                      type={row.metrics.totalPnl >= 0 ? "success" : "danger"}
-                      className="tabular-nums"
-                    >
-                      {money(row.metrics.totalPnl)}
-                    </Text>
-                  ),
-                },
-                {
-                  title: "XIRR",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => percent(row.metrics.xirr),
-                },
-                {
-                  title: "最大回撤",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => percent(row.metrics.maxDrawdown),
-                },
-                {
-                  title: "累计分红",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => money(row.metrics.totalDividend),
-                },
-                {
-                  title: "期末现金",
-                  align: "right",
-                  className: "tabular-nums",
-                  render: (_, row) => money(row.metrics.endingCash),
-                },
-              ]}
-            />
+          )}
+        </Form>
+      </section>
+
+      <section className="workspace-panel backtest-metrics" aria-label="回测概览">
+        {metrics.map((metric) => (
+          <div className="backtest-metric" key={metric.label}>
+            <span className={`metric-icon ${metric.tone}`}>{metric.icon}</span>
+            <div className="min-w-0">
+              <div className="metric-caption">{metric.label}</div>
+              <div className="metric-number tabular-nums">{metric.value}</div>
+              <div className="metric-helper">{metric.helper || "\u00a0"}</div>
+            </div>
           </div>
-        </>
-      ) : (
-        <div className="workspace-panel min-h-[320px] flex items-center justify-center">
-          <div className="text-center py-10">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gold-50 text-[24px] text-gold-500">
-              <LineChartOutlined />
+        ))}
+      </section>
+
+      <section className="workspace-panel backtest-chart-panel">
+        <div className="chart-toolbar">
+          <div className="chart-title">资产曲线</div>
+          <div className="chart-metric-tabs" role="tablist" aria-label="图表指标">
+            {metricTabs.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={chartMetric === key}
+                className={chartMetric === key ? "active" : ""}
+                onClick={() => setChartMetric(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="chart-actions">
+            <div className="chart-range-tabs" aria-label="图表区间">
+              {chartRanges.map(([key, label]) => (
+                <button
+                  key={String(key)}
+                  type="button"
+                  className={chartRange === key ? "active" : ""}
+                  onClick={() => setChartRange(key)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <Text strong className="text-[15px]">还没有回测结果</Text>
-            <div className="mt-1.5 text-[13px] text-ink-400">
-              设置参数并开始，结果会自动保存到本地 SQLite。
-            </div>
+            <span className="toolbar-divider" />
+            <Tooltip title="曲线视图">
+              <Button aria-label="曲线视图" icon={<LineChartOutlined />} />
+            </Tooltip>
+            <Tooltip title="恢复全部区间">
+              <Button
+                aria-label="恢复全部区间"
+                icon={<ReloadOutlined />}
+                onClick={() => setChartRange("all")}
+              />
+            </Tooltip>
+            <Tooltip title="导出对比结果">
+              <Button
+                aria-label="导出对比结果"
+                icon={<DownloadOutlined />}
+                disabled={!results.length}
+                onClick={() => downloadComparison(rankedResults)}
+              />
+            </Tooltip>
           </div>
         </div>
-      )}
-
-      <Drawer
-        title={detail ? `${detail.name} · 回测明细` : "回测明细"}
-        width={1152}
-        open={Boolean(detail)}
-        onClose={() => setDetail(null)}
-      >
-        {detail && (
-          <Tabs
-            defaultActiveKey="simple"
-            items={[
-              {
-                key: "simple",
-                label: "R1 回测明细",
-                children: (
-                  <Space direction="vertical" size="large" className="w-full">
-                    <div className="metric-strip grid grid-cols-5 border-y border-line-soft py-4">
-                      {[
-                        [
-                          "实际区间",
-                          `${simpleResult?.actualStartDate ?? detail.actualStartDate} — ${
-                            simpleResult?.actualEndDate ?? detail.actualEndDate
-                          }`,
-                        ],
-                        [
-                          "明细行数",
-                          `${simpleResult?.rows.length ?? 0} 条`,
-                        ],
-                        [
-                          "累计外部投入",
-                          money(simpleResult?.endingCost ?? 0),
-                        ],
-                        [
-                          "累计买入金额",
-                          money(simpleResult?.endingInvestment ?? 0),
-                        ],
-                        [
-                          "当前盈亏率",
-                          percent(simpleResult?.returnRate ?? null),
-                        ],
-                      ].map(([label, value]) => (
-                        <div key={label} className="px-4 first:pl-0">
-                          <div className="metric-label">{label}</div>
-                          <Text strong className="tabular-nums">{value}</Text>
-                        </div>
-                      ))}
-                    </div>
-                    {simpleQuery.isLoading && (
-                      <Text type="secondary">正在加载回测明细…</Text>
-                    )}
-                    {simpleQuery.isError && (
-                      <Tag color="error">
-                        加载失败：{simpleQuery.error instanceof Error ? simpleQuery.error.message : "未知错误"}
-                      </Tag>
-                    )}
-                    {simpleResult && (
-                      <Table
-                        size="small"
-                        rowKey={(row, index) => `${row.date}-${row.event}-${index}`}
-                        pagination={{ pageSize: 20, showSizeChanger: false }}
-                        dataSource={simpleResult.rows}
-                        scroll={{ x: 1420 }}
-                        columns={[
-                          {
-                            title: "日期",
-                            dataIndex: "date",
-                            width: 110,
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.date.localeCompare(b.date),
-                            defaultSortOrder: "ascend",
-                            filters: [
-                              { text: "2024", value: "2024" },
-                              { text: "2025", value: "2025" },
-                              { text: "2026", value: "2026" },
-                            ],
-                            onFilter: (value, row) => row.date.startsWith(String(value)),
-                          },
-                          {
-                            title: "事件",
-                            dataIndex: "event",
-                            width: 90,
-                            render: (event: SimpleBacktestRow["event"]) => (
-                              <Tag color={EVENT_COLORS[event]} bordered={false}>
-                                {EVENT_LABELS[event]}
-                              </Tag>
-                            ),
-                            filters: [
-                              { text: "定投买入", value: "buy" },
-                              { text: "分红到账", value: "dividend" },
-                              { text: "分红回购", value: "dividend_reinvest" },
-                              { text: "送转入账", value: "share_adjustment" },
-                            ],
-                            onFilter: (value, row) => row.event === value,
-                          },
-                          {
-                            title: "期初现金",
-                            dataIndex: "openingCash",
-                            width: 110,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.openingCash - b.openingCash,
-                            render: (value: number) => money(value),
-                          },
-                          {
-                            title: "收盘价",
-                            dataIndex: "price",
-                            width: 90,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.price - b.price,
-                            render: (value: number) => value.toFixed(2),
-                          },
-                          {
-                            title: "本次新增股数",
-                            dataIndex: "shares",
-                            width: 120,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.shares - b.shares,
-                            render: (value: number, row) =>
-                              row.event === "dividend" ? "—" : value.toFixed(2),
-                          },
-                          {
-                            title: "累计股数",
-                            dataIndex: "cumulativeShares",
-                            width: 100,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.cumulativeShares - b.cumulativeShares,
-                            render: (value: number) => value.toFixed(2),
-                          },
-                          {
-                            title: "本期外部投入",
-                            dataIndex: "externalContribution",
-                            width: 120,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) =>
-                              a.externalContribution - b.externalContribution,
-                            render: (value: number) => value > 0 ? money(value) : "—",
-                          },
-                          {
-                            title: "发生金额",
-                            width: 120,
-                            align: "right",
-                            className: "tabular-nums",
-                            render: (_, row) => {
-                              if (row.event === "share_adjustment") {
-                                return (
-                                  <Text type="secondary">
-                                    每 10 股 +{row.shareRatio?.toFixed(4) ?? "—"}
-                                  </Text>
-                                );
-                              }
-                              if (row.event === "dividend") {
-                                return money(row.dividendAmount ?? 0);
-                              }
-                              return money(row.tradeAmount);
-                            },
-                          },
-                          {
-                            title: "累计外部投入",
-                            dataIndex: "cumulativeContribution",
-                            width: 125,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) =>
-                              a.cumulativeContribution - b.cumulativeContribution,
-                            render: (value: number) => money(value),
-                          },
-                          {
-                            title: "累计买入金额",
-                            dataIndex: "cumulativeInvestment",
-                            width: 125,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) =>
-                              a.cumulativeInvestment - b.cumulativeInvestment,
-                            render: (value: number) => money(value),
-                          },
-                          {
-                            title: "期末现金",
-                            dataIndex: "endingCash",
-                            width: 110,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.endingCash - b.endingCash,
-                            render: (value: number) => money(value),
-                          },
-                          {
-                            title: "盈亏率",
-                            dataIndex: "returnRate",
-                            width: 100,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.returnRate - b.returnRate,
-                            render: (value: number) => (
-                              <Text type={value >= 0 ? "success" : "danger"}>
-                                {percent(value)}
-                              </Text>
-                            ),
-                          },
-                        ]}
-                      />
-                    )}
-                    <div className="text-xs text-ink-500">
-                      口径：交易费用 0 · 允许零碎股 · 现金分红到账后全额回购原标的 ·
-                      送股/转增按登记日持股和每 10 股比例在除权日入账。累计外部投入
-                      只统计用户资金，累计买入金额统计定投买入与分红回购成交额。
-                    </div>
-                  </Space>
-                ),
-              },
-              {
-                key: "actual",
-                label: "实际交易（含费用）",
-                children: (
-                  <Space direction="vertical" size="large" className="w-full">
-                    {detail.warnings.map((warning) => (
-                      <Tag key={warning} color="warning">
-                        {warning}
-                      </Tag>
-                    ))}
-                    <Table
-                      size="small"
-                      rowKey={(row, index) => `${row.date}-${row.type}-${index}`}
-                      pagination={{ pageSize: 20, showSizeChanger: false }}
-                      dataSource={detail.transactions}
-                      scroll={{ x: 864 }}
-                      columns={[
-                        {
-                          title: "日期",
-                          dataIndex: "date",
-                          width: 110,
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.date.localeCompare(b.date),
-                          defaultSortOrder: "ascend",
-                        },
-                        {
-                          title: "类型",
-                          dataIndex: "type",
-                          width: 120,
-                          className: "tabular-nums",
-                          filters: [
-                            { text: "contribution", value: "contribution" },
-                            { text: "buy", value: "buy" },
-                            { text: "dividend", value: "dividend" },
-                            { text: "dividend_reinvest", value: "dividend_reinvest" },
-                            { text: "share_adjustment", value: "share_adjustment" },
-                          ],
-                          onFilter: (value, row) => row.type === value,
-                        },
-                        {
-                          title: "数量",
-                          dataIndex: "quantity",
-                          width: 80,
-                          align: "right",
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.quantity - b.quantity,
-                        },
-                        {
-                          title: "价格",
-                          dataIndex: "price",
-                          width: 80,
-                          align: "right",
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.price - b.price,
-                        },
-                        {
-                          title: "金额",
-                          width: 110,
-                          align: "right",
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.amount - b.amount,
-                          render: (_, row) => money(row.amount),
-                        },
-                        {
-                          title: "费用",
-                          width: 90,
-                          align: "right",
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.fee - b.fee,
-                          render: (_, row) => money(row.fee),
-                        },
-                        {
-                          title: "现金",
-                          width: 110,
-                          align: "right",
-                          className: "tabular-nums",
-                          sorter: (a, b) => a.cashAfter - b.cashAfter,
-                          render: (_, row) => money(row.cashAfter),
-                        },
-                      ]}
-                    />
-                    <div>
-                      <Text strong>数据来源</Text>
-                      {detail.provenance.map((item) => (
-                        <div key={item.source} className="mt-2 text-xs text-ink-500">
-                          {item.source} · 截止 {item.dataCutoff} · 获取 {item.fetchedAt}
-                        </div>
-                      ))}
-                    </div>
-                  </Space>
-                ),
-              },
-            ]}
+        {history.isLoading && !results.length ? (
+          <div className="chart-loading">
+            <Skeleton active paragraph={{ rows: 5 }} title={false} />
+          </div>
+        ) : (
+          <ReactECharts
+            notMerge
+            option={chartOption}
+            className="backtest-chart"
+            style={{ height: 235 }}
           />
         )}
-      </Drawer>
+      </section>
+
+      <section className="workspace-panel comparison-panel">
+        <div className="comparison-title">标的对比</div>
+        <Table
+          rowKey="id"
+          pagination={false}
+          loading={history.isLoading && !results.length}
+          dataSource={rankedResults}
+          locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
+          scroll={{ x: 1120 }}
+          onRow={(record) => ({
+            onDoubleClick: () => setDetail(record),
+            className: "data-row",
+          })}
+          columns={[
+            {
+              title: "排序",
+              width: 58,
+              align: "center",
+              render: (_, _row, index) => (
+                <span className={`rank rank-${index + 1}`}>
+                  {index + 1}
+                  <TrophyFilled />
+                </span>
+              ),
+            },
+            {
+              title: "标的",
+              width: 132,
+              render: (_, row) => (
+                <div className="symbol-cell">
+                  <strong>{row.name}</strong>
+                  <span className="tabular-nums">{row.symbol}</span>
+                </div>
+              ),
+            },
+            {
+              title: "累计投入",
+              width: 106,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.totalContribution),
+            },
+            {
+              title: "最终资产",
+              width: 106,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.endingAsset),
+            },
+            {
+              title: "累计收益",
+              width: 106,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.totalPnl),
+            },
+            {
+              title: "累计收益率",
+              width: 90,
+              className: "tabular-nums",
+              render: (_, row) => percent(totalReturn(row)),
+            },
+            {
+              title: "XIRR",
+              width: 82,
+              className: "tabular-nums",
+              render: (_, row) => percent(row.metrics.xirr),
+            },
+            {
+              title: "最大回撤",
+              width: 90,
+              className: "tabular-nums",
+              render: (_, row) => percent(row.metrics.maxDrawdown),
+            },
+            {
+              title: "最长亏损时间",
+              width: 105,
+              className: "tabular-nums",
+              render: (_, row) => `${longestDrawdownMonths(row)} 个月`,
+            },
+            {
+              title: "累计分红",
+              width: 104,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.totalDividend),
+            },
+            {
+              title: "期末现金",
+              width: 98,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.endingCash),
+            },
+            {
+              title: "操作",
+              width: 88,
+              fixed: "right",
+              render: (_, row) => (
+                <Button
+                  type="link"
+                  size="small"
+                  className="view-detail-button"
+                  onClick={() => setDetail(row)}
+                >
+                  查看详情
+                  <span>›</span>
+                </Button>
+              ),
+            },
+          ]}
+        />
+        <div className="comparison-footer">
+          <span>共 {rankedResults.length} 个标的</span>
+          <Button
+            icon={<DownloadOutlined />}
+            disabled={!rankedResults.length}
+            onClick={() => downloadComparison(rankedResults)}
+          >
+            导出对比结果
+          </Button>
+        </div>
+      </section>
+
+      <Modal
+        title={
+          detail ? (
+            <div className="detail-modal-title">
+              <span>{detail.name}</span>
+              <span className="tabular-nums">{detail.symbol}</span>
+              <i />
+              <span>回测明细</span>
+            </div>
+          ) : (
+            "回测明细"
+          )
+        }
+        width={1200}
+        open={Boolean(detail)}
+        footer={null}
+        centered
+        destroyOnHidden
+        className="backtest-detail-modal"
+        onCancel={() => setDetail(null)}
+      >
+        {detail && (
+          <div className="detail-modal-body">
+            <div className="detail-summary">
+              {[
+                [
+                  "实际区间",
+                  `${simpleResult?.actualStartDate ?? detail.actualStartDate} — ${
+                    simpleResult?.actualEndDate ?? detail.actualEndDate
+                  }`,
+                ],
+                ["明细行数", `${simpleResult?.rows.length ?? 0} 条`],
+                ["累计外部投入", money(simpleResult?.endingCost ?? 0)],
+                ["累计买入金额", money(simpleResult?.endingInvestment ?? 0)],
+                ["当前盈亏率", percent(simpleResult?.returnRate ?? null)],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <strong className="tabular-nums">{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            {simpleQuery.isLoading && (
+              <div className="detail-loading">
+                <Skeleton active paragraph={{ rows: 8 }} />
+              </div>
+            )}
+            {simpleQuery.isError && (
+              <div className="detail-error">
+                加载失败：
+                {simpleQuery.error instanceof Error ? simpleQuery.error.message : "未知错误"}
+              </div>
+            )}
+            {simpleResult && (
+              <Table
+                size="small"
+                rowKey={(row, index) => `${row.date}-${row.event}-${index ?? 0}`}
+                pagination={{
+                  pageSize: 20,
+                  showSizeChanger: false,
+                  showQuickJumper: false,
+                  hideOnSinglePage: false,
+                  position: ["bottomRight"],
+                }}
+                dataSource={simpleResult.rows}
+                scroll={{ x: 1400, y: 468 }}
+                columns={[
+                  {
+                    title: "日期",
+                    dataIndex: "date",
+                    width: 108,
+                    fixed: "left",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.date.localeCompare(b.date),
+                    defaultSortOrder: "ascend",
+                    filters: detailYears,
+                    onFilter: (value, row) => row.date.startsWith(String(value)),
+                  },
+                  {
+                    title: "事件",
+                    dataIndex: "event",
+                    width: 96,
+                    fixed: "left",
+                    render: (event: SimpleBacktestRow["event"]) => (
+                      <Tag color={EVENT_COLORS[event]} bordered={false}>
+                        {EVENT_LABELS[event]}
+                      </Tag>
+                    ),
+                    filters: Object.entries(EVENT_LABELS).map(([value, label]) => ({
+                      text: label,
+                      value,
+                    })),
+                    onFilter: (value, row) => row.event === value,
+                  },
+                  {
+                    title: "期初现金",
+                    dataIndex: "openingCash",
+                    width: 112,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.openingCash - b.openingCash,
+                    render: (value: number) => money(value),
+                  },
+                  {
+                    title: "收盘价",
+                    dataIndex: "price",
+                    width: 88,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.price - b.price,
+                    render: (value: number) => value.toFixed(2),
+                  },
+                  {
+                    title: "本次新增股数",
+                    dataIndex: "shares",
+                    width: 120,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.shares - b.shares,
+                    render: (value: number, row) =>
+                      row.event === "dividend" ? "—" : value.toFixed(2),
+                  },
+                  {
+                    title: "累计股数",
+                    dataIndex: "cumulativeShares",
+                    width: 106,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.cumulativeShares - b.cumulativeShares,
+                    render: (value: number) => value.toFixed(2),
+                  },
+                  {
+                    title: "本期外部投入",
+                    dataIndex: "externalContribution",
+                    width: 120,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.externalContribution - b.externalContribution,
+                    render: (value: number) => value > 0 ? money(value) : "—",
+                  },
+                  {
+                    title: "发生金额",
+                    width: 128,
+                    align: "right",
+                    className: "tabular-nums",
+                    render: (_, row) => {
+                      if (row.event === "share_adjustment") {
+                        return `每10股 +${row.shareRatio?.toFixed(4) ?? "—"}`;
+                      }
+                      if (row.event === "dividend") {
+                        return money(row.dividendAmount ?? 0);
+                      }
+                      return money(row.tradeAmount);
+                    },
+                  },
+                  {
+                    title: "累计外部投入",
+                    dataIndex: "cumulativeContribution",
+                    width: 126,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) =>
+                      a.cumulativeContribution - b.cumulativeContribution,
+                    render: (value: number) => money(value),
+                  },
+                  {
+                    title: "累计买入金额",
+                    dataIndex: "cumulativeInvestment",
+                    width: 126,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) =>
+                      a.cumulativeInvestment - b.cumulativeInvestment,
+                    render: (value: number) => money(value),
+                  },
+                  {
+                    title: "期末现金",
+                    dataIndex: "endingCash",
+                    width: 110,
+                    align: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.endingCash - b.endingCash,
+                    render: (value: number) => money(value),
+                  },
+                  {
+                    title: "盈亏率",
+                    dataIndex: "returnRate",
+                    width: 94,
+                    align: "right",
+                    fixed: "right",
+                    className: "tabular-nums",
+                    sorter: (a, b) => a.returnRate - b.returnRate,
+                    render: (value: number) => (
+                      <Text type={value >= 0 ? "success" : "danger"}>
+                        {percent(value)}
+                      </Text>
+                    ),
+                  },
+                ]}
+              />
+            )}
+
+            <div className="detail-modal-footer">
+              <div>
+                <strong>口径</strong>
+                <span>
+                  交易费用 0 · 允许零碎股 · 现金分红全额回购 · 送股/转增按除权日入账
+                </span>
+              </div>
+              <div className="detail-provenance">
+                <CalendarOutlined />
+                {detail.provenance.map((item) => (
+                  <span key={`${item.source}-${item.dataCutoff}`}>
+                    {item.source} · 截止 {item.dataCutoff}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

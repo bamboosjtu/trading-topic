@@ -4,9 +4,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { theme } from "./theme";
 import { AppLayout } from "./components/AppLayout";
 import { BacktestPage } from "./pages/BacktestPage";
-import { AccountPage } from "./pages/AccountPage";
-import { LedgerPage } from "./pages/LedgerPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SkeletonPage } from "./pages/SkeletonPage";
 
 export function App() {
   return (
@@ -16,9 +14,25 @@ export function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Navigate to="/backtest" replace />} />
             <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/ledger" element={<LedgerPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            {[
+              "/portfolio-backtest",
+              "/symbol-compare",
+              "/projection",
+              "/overview",
+              "/positions",
+              "/trades",
+              "/dividend-calendar",
+              "/cashflow",
+              "/repo",
+              "/data-sources",
+              "/fees",
+              "/backup",
+              "/settings",
+            ].map((path) => (
+              <Route key={path} path={path} element={<SkeletonPage />} />
+            ))}
+            <Route path="/account" element={<Navigate to="/overview" replace />} />
+            <Route path="/ledger" element={<Navigate to="/cashflow" replace />} />
             <Route path="*" element={<Navigate to="/backtest" replace />} />
           </Route>
         </Routes>
