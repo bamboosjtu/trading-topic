@@ -25,6 +25,11 @@ function marketSymbol(symbol: string): string {
   return `sz${symbol}`;
 }
 
+function nonnegativeNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -91,16 +96,16 @@ export async function fetchUnadjustedPrices(
   return {
     rows: sorted,
     provenance: {
-      source: "腾讯财经 stock_zh_a_hist_tx（产品域独立适配）",
+      source: "腾讯财经 newfqkline（产品域独立适配）",
       fetchedAt,
       dataCutoff: sorted.at(-1)!.date,
       adjustment: "none",
-      caliberVersion: "bank-dca-r1-node-v1",
+      caliberVersion: "bank-dca-r1-node-v3",
     },
   };
 }
 
-export async function fetchCashDividends(
+export async function fetchCorporateActions(
   symbol: string,
   startDate: string,
   endDate: string,
@@ -123,16 +128,15 @@ export async function fetchCashDividends(
   const payload = (await fetchJson(url)) as {
     result?: { data?: Array<Record<string, unknown>> };
   };
-  // P0-1：东方财富 PRETAX_BONUS_RMB 字段单位为"每10股派息（税前）"，
-  // 研究端 normalize_dividends 明确执行 cash_per_10 / 10.0 得到每股分红。
-  // 产品端此前直接赋给 perShare，导致分红被放大 10 倍，并经分红再投资形成
-  // 指数式错误复利。此处统一换算为每股口径。
+  // P0-1：东方财富 PRETAX_BONUS_RMB 字段单位为“每 10 股派息（税前）”，
+  // 产品域统一除以 10 换算为每股口径，避免分红被放大十倍。
   //
-  // P0-4：东方财富可能返回修订记录、重复方案或同日多行；研究端按 ex_date
+  // P0-4：东方财富可能返回修订记录、重复方案或同日多行；按 ex_date
   // groupby 后对 cash_dividend_per_share 求和。产品端此前把每一行都转换为
   // 分红事件，会重复派息。此处按 date（除权除息日）合并：perShare 求和，
   // recordDate/paymentDate 取该日第一条非空记录，transferRatio/bonusRatio
-  // 取最大值（非现金公司行动已在 simulateBacktest 中阻断）。
+  // 取最大值。TRANSFER_RATIO、BONUS_RATIO 都是每 10 股送转股数，计算时
+  // 统一除以 10 转成持股增幅。
   const rawEvents = (payload.result?.data ?? [])
     .map((row): DividendEvent => ({
       date: String(row["EX_DIVIDEND_DATE"] ?? "").slice(0, 10),
@@ -142,9 +146,9 @@ export async function fetchCashDividends(
       paymentDate: row["DIVIDEND_ARRIVAL_DATE"]
         ? String(row["DIVIDEND_ARRIVAL_DATE"]).slice(0, 10)
         : null,
-      perShare: Number(row["PRETAX_BONUS_RMB"] ?? 0) / 10,
-      transferRatio: Number(row["TRANSFER_RATIO"] ?? 0),
-      bonusRatio: Number(row["BONUS_RATIO"] ?? 0),
+      perShare: nonnegativeNumber(row["PRETAX_BONUS_RMB"]) / 10,
+      transferRatio: nonnegativeNumber(row["TRANSFER_RATIO"]),
+      bonusRatio: nonnegativeNumber(row["BONUS_RATIO"]),
       status: String(row["ASSIGN_PROGRESS"] ?? ""),
     }))
     .filter(
@@ -182,10 +186,9 @@ export async function fetchCashDividends(
     provenance: {
       source: "东方财富 RPT_SHAREBONUS_DET（产品域独立适配）",
       fetchedAt: new Date().toISOString(),
-      dataCutoff: rows[0]?.date ?? endDate,
+      dataCutoff: rows.at(-1)?.date ?? endDate,
       adjustment: "none",
-      // 口径版本升级：每股分红 + 按除权日合并，对齐 research/bank-dca v1
-      caliberVersion: "bank-dca-r1-node-v2",
+      caliberVersion: "bank-dca-r1-node-v3",
     },
   };
 }

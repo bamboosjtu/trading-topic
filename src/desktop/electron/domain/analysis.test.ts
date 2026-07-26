@@ -19,7 +19,7 @@ const request: BacktestRequest = {
 };
 
 describe("simulateBacktest", () => {
-  it("顺延到月内交易日并始终按 100 股整数倍买入", () => {
+  it("允许零碎股，并把现金分红全额回购原标的", () => {
     const result = simulateBacktest(
       request,
       "601398",
@@ -46,38 +46,54 @@ describe("simulateBacktest", () => {
     );
 
     expect(result.actualStartDate).toBe("2024-01-02");
+    const buys = result.transactions.filter(
+      (row) => row.type === "buy" || row.type === "dividend_reinvest",
+    );
+    expect(buys.some((row) => !Number.isInteger(row.quantity))).toBe(true);
     expect(
-      result.transactions
-        .filter((row) => row.type === "buy" || row.type === "dividend_reinvest")
-        .every((row) => row.quantity % 100 === 0),
-    ).toBe(true);
+      result.transactions.filter((row) => row.type === "dividend_reinvest"),
+    ).toHaveLength(1);
     expect(result.metrics.totalContribution).toBe(3_000);
-    expect(result.metrics.totalDividend).toBe(100);
-    expect(result.metrics.endingCash).toBe(385);
-    expect(result.metrics.endingAsset).toBe(2_785);
+    expect(result.metrics.totalDividend).toBeCloseTo(111.11, 2);
+    expect(result.metrics.endingCash).toBe(0);
+    expect(result.metrics.endingAsset).toBeCloseTo(2_777.78, 2);
   });
 
-  it("遇到非现金公司行动时阻断计算", () => {
-    expect(() =>
-      simulateBacktest(
-        request,
-        "601398",
-        "工商银行",
-        [{ date: "2024-01-02", close: 9 }],
-        [
-          {
-            date: "2024-01-02",
-            recordDate: "2024-01-01",
-            paymentDate: null,
-            perShare: 0,
-            transferRatio: 1,
-            bonusRatio: 0,
-            status: "实施",
-          },
-        ],
-        [],
-      ),
-    ).toThrow(/不支持/);
+  it("送股和转增按每 10 股比例在除权日增加持股", () => {
+    const result = simulateBacktest(
+      {
+        ...request,
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+      },
+      "601398",
+      "工商银行",
+      [
+        { date: "2024-01-02", close: 10 },
+        { date: "2024-02-01", close: 10 },
+      ],
+      [
+        {
+          date: "2024-02-01",
+          recordDate: "2024-01-31",
+          paymentDate: null,
+          perShare: 0,
+          transferRatio: 1,
+          bonusRatio: 1,
+          status: "实施",
+        },
+      ],
+      [],
+    );
+    const adjustment = result.transactions.find(
+      (row) => row.type === "share_adjustment",
+    );
+    expect(adjustment?.quantity).toBe(20);
+    expect(adjustment?.shareRatio).toBe(2);
+    const totalShares = result.transactions
+      .filter((row) => row.type === "buy" || row.type === "share_adjustment")
+      .reduce((sum, row) => sum + row.quantity, 0);
+    expect(totalShares).toBe(220);
   });
 });
 
@@ -322,19 +338,14 @@ describe("P1-2 非交易日跨月顺延", () => {
   });
 });
 
-// P1-4：分红日不应动用全部剩余现金，只使用分红池。剩余定投资金滚动至下一次计划投资日。
-describe("P1-4 分红现金隔离", () => {
-  it("分红再投资只用分红池，不动用定投剩余资金", () => {
-    // 定投 2000，买 1 手 @10=1005，dcaCash 剩 995
-    // 分红 100 股 * 10 元 = 1000，dividendCash=1000，不足 1 手（1005），不买
-    // 旧逻辑：cash=995+1000=1995，凑够买 1 手，shares=200
-    // 新逻辑：dividendCash=1000 不足 1 手，不买，shares=100，定投剩余 995 保留
+describe("R1 分红回购", () => {
+  it("再小的现金分红也能买入零碎股，分红不会长期留在期末现金", () => {
     const result = simulateBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-02",
         endDate: "2024-02-01",
-        monthlyAmount: 2_000,
+        monthlyAmount: 1_000,
         buyDay: 2,
       },
       "601398",
@@ -348,7 +359,7 @@ describe("P1-4 分红现金隔离", () => {
           date: "2024-02-01",
           recordDate: "2024-01-31",
           paymentDate: null,
-          perShare: 10,
+          perShare: 0.1,
           transferRatio: 0,
           bonusRatio: 0,
           status: "实施",
@@ -356,28 +367,22 @@ describe("P1-4 分红现金隔离", () => {
       ],
       [],
     );
-    // 分红再投资未发生（dividendCash 不足 1 手，且不借用定投剩余）
-    const reinvest = result.transactions.filter(
+    const reinvest = result.transactions.find(
       (row) => row.type === "dividend_reinvest",
     );
-    expect(reinvest).toHaveLength(0);
-    expect(result.metrics.totalDividend).toBe(1_000);
-    // shares 仍为定投买入的 100 股
-    const buyTx = result.transactions.filter((row) => row.type === "buy");
-    expect(buyTx.reduce((sum, row) => sum + row.quantity, 0)).toBe(100);
-    // dcaCash=995 + dividendCash=1000 = 1995
-    expect(result.metrics.endingCash).toBe(1_995);
-    expect(result.metrics.endingAsset).toBe(100 * 10 + 1_995);
+    expect(result.metrics.totalDividend).toBe(10);
+    expect(reinvest?.amount).toBe(10);
+    expect(reinvest?.quantity).toBe(1);
+    expect(result.metrics.endingCash).toBe(0);
   });
 
-  it("分红池足以买入时只使用分红池", () => {
-    // 分红 100 股 * 20 元 = 2000，dividendCash=2000，可买 1 手（1005）
+  it("同日定投不参与此前登记日对应的分红资格", () => {
     const result = simulateBacktest(
       {
         symbols: ["601398"],
         startDate: "2024-01-02",
         endDate: "2024-02-01",
-        monthlyAmount: 2_000,
+        monthlyAmount: 1_000,
         buyDay: 2,
       },
       "601398",
@@ -391,7 +396,7 @@ describe("P1-4 分红现金隔离", () => {
           date: "2024-02-01",
           recordDate: "2024-01-31",
           paymentDate: null,
-          perShare: 20,
+          perShare: 1,
           transferRatio: 0,
           bonusRatio: 0,
           status: "实施",
@@ -399,104 +404,7 @@ describe("P1-4 分红现金隔离", () => {
       ],
       [],
     );
-    const reinvest = result.transactions.filter(
-      (row) => row.type === "dividend_reinvest",
-    );
-    expect(reinvest).toHaveLength(1);
-    expect(reinvest[0].quantity).toBe(100);
-    // 分红池 2000 - 1005 = 995；定投池 995；合计 1990
-    expect(result.metrics.endingCash).toBe(1_990);
-    expect(result.metrics.endingAsset).toBe(200 * 10 + 1_990);
-  });
-});
-
-// P1-5：闲置现金参与国债逆回购，按实际日历天数计息。
-describe("P1-5 逆回购计息", () => {
-  it("repoRate=0 时不计息（默认行为，向后兼容）", () => {
-    const result = simulateBacktest(
-      {
-        symbols: ["601398"],
-        startDate: "2024-01-02",
-        endDate: "2024-01-03",
-        monthlyAmount: 1_100,
-        buyDay: 2,
-      },
-      "601398",
-      "工商银行",
-      [
-        { date: "2024-01-02", close: 10 },
-        { date: "2024-01-03", close: 10 },
-      ],
-      [],
-      [],
-    );
-    expect(result.metrics.totalRepoInterest).toBe(0);
-    // 无 repo_interest 交易
-    expect(
-      result.transactions.filter((row) => row.type === "repo_interest"),
-    ).toHaveLength(0);
-    // dcaCash=1100-1005=95
-    expect(result.metrics.endingCash).toBe(95);
-  });
-
-  it("repoRate>0 时对闲置现金按日历日计息", () => {
-    // 定投 1100，买 1 手 @10=1005，dcaCash 剩 95
-    // repoRate=1.0（100%，放大以便测试可见），1 个日历日
-    // 利息 = 95 * 1.0 * 1 / 365 ≈ 0.26
-    const result = simulateBacktest(
-      {
-        symbols: ["601398"],
-        startDate: "2024-01-02",
-        endDate: "2024-01-03",
-        monthlyAmount: 1_100,
-        buyDay: 2,
-        repoRate: 1.0,
-      },
-      "601398",
-      "工商银行",
-      [
-        { date: "2024-01-02", close: 10 },
-        { date: "2024-01-03", close: 10 },
-      ],
-      [],
-      [],
-    );
-    const expectedInterest = Math.round((95 * 1.0 * 1) / 365 * 100) / 100;
-    expect(result.metrics.totalRepoInterest).toBeCloseTo(expectedInterest, 2);
-    expect(result.metrics.totalRepoInterest).toBeGreaterThan(0);
-    // dcaCash = 95 + 利息
-    expect(result.metrics.endingCash).toBeCloseTo(95 + expectedInterest, 2);
-    // 产生 repo_interest 交易
-    const repoTx = result.transactions.filter(
-      (row) => row.type === "repo_interest",
-    );
-    expect(repoTx.length).toBeGreaterThanOrEqual(1);
-    expect(result.equityCurve.at(-1)!.asset).toBeGreaterThan(100 * 10 + 95);
-  });
-
-  it("周末跨日历日按实际天数计息（周五→周一=3 天）", () => {
-    // 2024-01-05 周五 → 2024-01-08 周一，日历日 3 天
-    const result = simulateBacktest(
-      {
-        symbols: ["601398"],
-        startDate: "2024-01-05",
-        endDate: "2024-01-08",
-        monthlyAmount: 1_100,
-        buyDay: 5,
-        repoRate: 1.0,
-      },
-      "601398",
-      "工商银行",
-      [
-        { date: "2024-01-05", close: 10 },
-        { date: "2024-01-08", close: 10 },
-      ],
-      [],
-      [],
-    );
-    // dcaCash 剩 95，3 天利息 = 95 * 1.0 * 3 / 365 ≈ 0.78
-    const expectedInterest = Math.round((95 * 1.0 * 3) / 365 * 100) / 100;
-    expect(result.metrics.totalRepoInterest).toBeCloseTo(expectedInterest, 2);
+    expect(result.metrics.totalDividend).toBe(100);
   });
 });
 
@@ -650,7 +558,7 @@ describe("simulateBacktestDetail 回测明细列表", () => {
     expect(result.totalReturn).toBeCloseTo(3_100 / 3_000 - 1, 6);
   });
 
-  it("零碎股保留 2 位小数（价格非整除）", () => {
+  it("零碎股内部保留 6 位精度（价格非整除）", () => {
     const result = simulateBacktestDetail(
       {
         symbols: ["601398"],
@@ -664,9 +572,8 @@ describe("simulateBacktestDetail 回测明细列表", () => {
       [{ date: "2024-01-02", close: 7.5 }],
       [],
     );
-    // 1000 / 7.5 = 133.333... → 133.33
-    expect(result.rows[0].shares).toBe(133.33);
-    expect(result.endingShares).toBe(133.33);
+    expect(result.rows[0].shares).toBeCloseTo(133.333333, 6);
+    expect(result.endingShares).toBeCloseTo(133.333333, 6);
   });
 
   it("分红日用除权前持仓计算，再投资按除权后价格买入", () => {
@@ -699,12 +606,9 @@ describe("simulateBacktestDetail 回测明细列表", () => {
       ],
     );
     const divRow = result.rows.find((r) => r.event === "dividend_reinvest")!;
-    expect(divRow.shares).toBe(Math.round((100 / 9) * 100) / 100);
+    expect(divRow.shares).toBeCloseTo(100 / 9, 6);
     expect(divRow.dividendAmount).toBe(100);
-    // 分红再投资后累计股数 = 100 + 11.11 = 111.11
-    expect(divRow.cumulativeShares).toBe(
-      Math.round((100 + 100 / 9) * 100) / 100,
-    );
+    expect(divRow.cumulativeShares).toBeCloseTo(100 + 100 / 9, 6);
     // 市值 = 111.11 * 9 ≈ 1000（分红再投资等价于后复权，市值连续）
     expect(divRow.marketValue).toBeCloseTo(1_000, 1);
   });
@@ -772,9 +676,8 @@ describe("simulateBacktestDetail 回测明细列表", () => {
   });
 });
 
-// 简化交易成本回测（drawer 展示视图）：费用0 + contribution/buy 合并行 +
-// 分红/除权独立行 + 零碎股 + 分红到账不再投资。
-describe("simulateBacktestSimple 简化交易成本回测", () => {
+// Drawer 审计明细直接复用主回测流水，不再维护第二套计算口径。
+describe("simulateBacktestSimple R1 回测明细", () => {
   it("基础月度买入：3 个月无分红，仅生成 buy 行，费用统一为 0", () => {
     const result = simulateBacktestSimple(
       {
@@ -805,7 +708,10 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     expect(jan.price).toBe(10);
     expect(jan.shares).toBe(100);
     expect(jan.cumulativeShares).toBe(100);
-    expect(jan.cumulativeCost).toBe(1_000);
+    expect(jan.externalContribution).toBe(1_000);
+    expect(jan.cumulativeContribution).toBe(1_000);
+    expect(jan.tradeAmount).toBe(1_000);
+    expect(jan.cumulativeInvestment).toBe(1_000);
     expect(jan.endingCash).toBe(0);
     // 盈亏率 = (10*100 + 0) / 1000 - 1 = 0
     expect(jan.returnRate).toBe(0);
@@ -815,17 +721,20 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     expect(feb.openingCash).toBe(1_000);
     expect(feb.shares).toBe(100);
     expect(feb.cumulativeShares).toBe(200);
-    expect(feb.cumulativeCost).toBe(2_000);
+    expect(feb.cumulativeContribution).toBe(2_000);
+    expect(feb.cumulativeInvestment).toBe(2_000);
     expect(feb.endingCash).toBe(0);
 
     // 3 月买入：累计 300 股，累计投入 3000
     const mar = result.rows[2];
     expect(mar.cumulativeShares).toBe(300);
-    expect(mar.cumulativeCost).toBe(3_000);
+    expect(mar.cumulativeContribution).toBe(3_000);
+    expect(mar.cumulativeInvestment).toBe(3_000);
 
     // 期末指标
     expect(result.endingShares).toBe(300);
     expect(result.endingCost).toBe(3_000);
+    expect(result.endingInvestment).toBe(3_000);
     expect(result.endingMarketValue).toBe(3_000);
     expect(result.endingCash).toBe(0);
     expect(result.totalDividendAmount).toBe(0);
@@ -849,11 +758,11 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     // 简化视图不存在 contribution 类型事件
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].event).toBe("buy");
-    // amount 字段即本期投入金额（合并展示）
-    expect(result.rows[0].amount).toBe(1_000);
+    expect(result.rows[0].externalContribution).toBe(1_000);
+    expect(result.rows[0].tradeAmount).toBe(1_000);
   });
 
-  it("分红日生成 ex_right + dividend + buy 三行（同日按序），费用为 0", () => {
+  it("分红到账后先回购，再执行同日定投买入", () => {
     // 1 月买入 100 股 @10；2 月除权日：每股分红 5 元，价格除权至 5 元
     // 同日仍执行 2 月定投买入
     const result = simulateBacktestSimple(
@@ -883,12 +792,12 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
       ],
     );
 
-    // 4 行：1 月 buy + 2 月 ex_right + 2 月 dividend + 2 月 buy
+    // 4 行：1 月 buy + 2 月 dividend + dividend_reinvest + buy
     expect(result.rows).toHaveLength(4);
     expect(result.rows.map((row) => row.event)).toEqual([
       "buy",
-      "ex_right",
       "dividend",
+      "dividend_reinvest",
       "buy",
     ]);
 
@@ -896,59 +805,90 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     const jan = result.rows[0];
     expect(jan.shares).toBe(100);
     expect(jan.cumulativeShares).toBe(100);
-    expect(jan.cumulativeCost).toBe(1_000);
+    expect(jan.cumulativeContribution).toBe(1_000);
     expect(jan.endingCash).toBe(0);
 
-    // 2 月 ex_right 行：信息行，不改股数/现金；记录除权前价格
-    const ex = result.rows[1];
-    expect(ex.openingCash).toBe(0);
-    expect(ex.price).toBe(5);
-    expect(ex.shares).toBe(0);
-    expect(ex.cumulativeShares).toBe(100);
-    expect(ex.cumulativeCost).toBe(1_000);
-    expect(ex.endingCash).toBe(0);
-    expect(ex.prevClose).toBe(10);
-    expect(ex.dividendPerShare).toBe(5);
-    // 盈亏率 = (5*100 + 0) / 1000 - 1 = -0.5
-    expect(ex.returnRate).toBe(-0.5);
-
-    // 2 月 dividend 行：分红 100*5=500 元到账，不再投资
-    const div = result.rows[2];
+    // 2 月 dividend 行：分红 100*5=500 元到账。
+    const div = result.rows[1];
     expect(div.openingCash).toBe(0);
     expect(div.price).toBe(5);
     expect(div.shares).toBe(0);
     expect(div.cumulativeShares).toBe(100);
-    expect(div.cumulativeCost).toBe(1_000);
-    expect(div.amount).toBe(500);
+    expect(div.cumulativeContribution).toBe(1_000);
+    expect(div.dividendAmount).toBe(500);
     expect(div.endingCash).toBe(500);
     expect(div.dividendPerShare).toBe(5);
-    // 盈亏率 = (5*100 + 500) / 1000 - 1 = 0
     expect(div.returnRate).toBe(0);
 
-    // 2 月 buy 行：期初现金 = 0（定投池）+ 1000（本期投入）= 1000
-    //   （分红现金隔离，不混入定投期初现金）
-    //   买入 1000/5=200 股，累计 300 股，期末现金 = 0（定投池）+ 500（分红池）= 500
+    const reinvest = result.rows[2];
+    expect(reinvest.openingCash).toBe(500);
+    expect(reinvest.shares).toBe(100);
+    expect(reinvest.cumulativeShares).toBe(200);
+    expect(reinvest.tradeAmount).toBe(500);
+    expect(reinvest.cumulativeInvestment).toBe(1_500);
+    expect(reinvest.endingCash).toBe(0);
+
+    // 2 月定投再买入 200 股。
     const feb = result.rows[3];
     expect(feb.openingCash).toBe(1_000);
     expect(feb.price).toBe(5);
     expect(feb.shares).toBe(200);
-    expect(feb.cumulativeShares).toBe(300);
-    expect(feb.cumulativeCost).toBe(2_000);
-    expect(feb.amount).toBe(1_000);
-    expect(feb.endingCash).toBe(500);
-    // 盈亏率 = (5*300 + 500) / 2000 - 1 = 0
+    expect(feb.cumulativeShares).toBe(400);
+    expect(feb.cumulativeContribution).toBe(2_000);
+    expect(feb.tradeAmount).toBe(1_000);
+    expect(feb.cumulativeInvestment).toBe(2_500);
+    expect(feb.endingCash).toBe(0);
     expect(feb.returnRate).toBe(0);
 
     // 期末指标
-    expect(result.endingShares).toBe(300);
+    expect(result.endingShares).toBe(400);
     expect(result.endingCost).toBe(2_000);
-    expect(result.endingMarketValue).toBe(1_500);
-    expect(result.endingCash).toBe(500);
+    expect(result.endingInvestment).toBe(2_500);
+    expect(result.endingMarketValue).toBe(2_000);
+    expect(result.endingCash).toBe(0);
     expect(result.totalDividendAmount).toBe(500);
     expect(result.returnRate).toBe(0);
   });
 
-  it("零碎股保留 2 位小数（价格非整除）", () => {
+  it("送股/转增行改变累计股数，但不增加买入金额", () => {
+    const result = simulateBacktestSimple(
+      {
+        symbols: ["601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+        monthlyAmount: 1_000,
+        buyDay: 1,
+      },
+      "601398",
+      "工商银行",
+      [
+        { date: "2024-01-02", close: 10 },
+        { date: "2024-02-01", close: 10 },
+      ],
+      [
+        {
+          date: "2024-02-01",
+          recordDate: "2024-01-31",
+          paymentDate: null,
+          perShare: 0,
+          transferRatio: 1,
+          bonusRatio: 1,
+          status: "实施",
+        },
+      ],
+    );
+    const adjustment = result.rows.find(
+      (row) => row.event === "share_adjustment",
+    )!;
+    expect(adjustment.shares).toBe(20);
+    expect(adjustment.cumulativeShares).toBe(120);
+    expect(adjustment.shareRatio).toBe(2);
+    expect(adjustment.cumulativeInvestment).toBe(1_000);
+    expect(result.endingShares).toBe(220);
+    expect(result.endingInvestment).toBe(2_000);
+  });
+
+  it("零碎股内部保留 6 位精度（价格非整除）", () => {
     const result = simulateBacktestSimple(
       {
         symbols: ["601398"],
@@ -962,10 +902,9 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
       [{ date: "2024-01-02", close: 7.5 }],
       [],
     );
-    // 1000 / 7.5 = 133.333... → 133.33
-    expect(result.rows[0].shares).toBe(133.33);
-    expect(result.rows[0].cumulativeShares).toBe(133.33);
-    expect(result.endingShares).toBe(133.33);
+    expect(result.rows[0].shares).toBeCloseTo(133.333333, 6);
+    expect(result.rows[0].cumulativeShares).toBeCloseTo(133.333333, 6);
+    expect(result.endingShares).toBeCloseTo(133.333333, 6);
   });
 
   it("起始月份跳过 + 非交易日跨月顺延（复用 P1-1/P1-2 逻辑）", () => {
@@ -1021,10 +960,7 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     expect(result.returnRate).toBeCloseTo(0.5, 6);
   });
 
-  it("分红到账不再投资：分红现金隔离，不混入定投期初现金", () => {
-    // 1 月买入 100 股 @10，2 月分红 100*1=100 元
-    // 2 月买入期初现金 = 0（定投池）+ 1000（本期投入）= 1000（不含分红）
-    // 2 月买入 1000/10=100 股，期末现金 = 0（定投池）+ 100（分红池）= 100
+  it("分红到账后自动回购，下一笔定投金额不被分红重复放大", () => {
     const result = simulateBacktestSimple(
       {
         symbols: ["601398"],
@@ -1051,24 +987,28 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
         },
       ],
     );
-    // 4 行：1 月 buy + 2 月 ex_right + 2 月 dividend + 2 月 buy
+    // 4 行：1 月 buy + 2 月 dividend + dividend_reinvest + buy
     expect(result.rows).toHaveLength(4);
     const div = result.rows.find((r) => r.event === "dividend")!;
-    expect(div.amount).toBe(100);
+    expect(div.dividendAmount).toBe(100);
     expect(div.endingCash).toBe(100);
+    const reinvest = result.rows.find(
+      (r) => r.event === "dividend_reinvest",
+    )!;
+    expect(reinvest.tradeAmount).toBe(100);
+    expect(reinvest.shares).toBe(10);
+    expect(reinvest.endingCash).toBe(0);
     const feb = result.rows.find(
       (r) => r.event === "buy" && r.date === "2024-02-01",
     )!;
-    // 期初现金 = 0（定投池）+ 1000（本期投入）= 1000
-    // （分红现金 100 隔离在 dividendCash 池，不混入定投期初现金）
     expect(feb.openingCash).toBe(1_000);
     expect(feb.shares).toBe(100);
-    expect(feb.cumulativeShares).toBe(200);
-    // 期末现金 = 0（定投池）+ 100（分红池）= 100
-    expect(feb.endingCash).toBe(100);
+    expect(feb.cumulativeShares).toBe(210);
+    expect(feb.cumulativeInvestment).toBe(2_100);
+    expect(feb.endingCash).toBe(0);
   });
 
-  it("paymentDate 模式：分红在到账日记入现金，除权日仅记录信息行", () => {
+  it("paymentDate 模式：在到账日分红并立即回购", () => {
     // 除权日 2024-02-01，paymentDate=2024-02-05
     // 2 月 5 日再产生 dividend 行
     // buyDay=10 避免除权日同日买入，便于独立验证 paymentDate 行
@@ -1079,6 +1019,7 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
         endDate: "2024-02-10",
         monthlyAmount: 1_000,
         buyDay: 10,
+        dividendTiming: "payment_date",
       },
       "601398",
       "工商银行",
@@ -1100,35 +1041,29 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
         },
       ],
     );
-    // 1 月 buy + 2 月 ex_right + 2 月 5 日 dividend + 2 月 10 日 buy
+    // 1 月 buy + 2 月 5 日 dividend/reinvest + 2 月 10 日 buy
     expect(result.rows.map((r) => r.event)).toEqual([
       "buy",
-      "ex_right",
       "dividend",
+      "dividend_reinvest",
       "buy",
     ]);
-    const ex = result.rows.find((r) => r.event === "ex_right")!;
-    expect(ex.date).toBe("2024-02-01");
-    expect(ex.endingCash).toBe(0); // 除权日不改现金
     const div = result.rows.find((r) => r.event === "dividend")!;
     expect(div.date).toBe("2024-02-05");
-    // 1 月买入 100 股，分红金额 = 100 * 1 = 100
-    expect(div.amount).toBe(100);
-    // 2 月 10 日 buy 的期初现金 = 0（定投池）+ 1000（本期投入）= 1000（不含分红）
+    expect(div.dividendAmount).toBe(100);
+    const reinvest = result.rows.find(
+      (r) => r.event === "dividend_reinvest",
+    )!;
+    expect(reinvest.date).toBe("2024-02-05");
+    expect(reinvest.endingCash).toBe(0);
     const febBuy = result.rows.find(
       (r) => r.event === "buy" && r.date === "2024-02-10",
     )!;
     expect(febBuy.openingCash).toBe(1_000);
-    // 期末现金 = 0（定投池）+ 100（分红池）= 100
-    expect(febBuy.endingCash).toBe(100);
+    expect(febBuy.endingCash).toBe(0);
   });
 
-  // 专项回归：修复分红金额被错误重复计入后续每笔定投期初现金的 bug。
-  // 旧实现将分红累加到单一 prevEndingCash 池，导致分红后每次定投的期初现金
-  // = 月度投入 + 累积分红（如 3000 + 2148.11 = 5148.11），违反"分红到账不再
-  // 投资"的口径。新实现将 dcaCash 与 dividendCash 隔离，buy 行期初现金仅含
-  // dcaCash + 月度投入，分红现金仅累加到 dividendCash 并展示在期末现金中。
-  it("分红后多次定投期初现金稳定为月度投入（修复重复计入 bug）", () => {
+  it("多次分红均只回购一次，不重复计入后续定投资金", () => {
     // 工商银行 5 个月回测，2 月分红 0.3 元/股，4 月分红 0.4 元/股
     // 1 月买入 3000/10=300 股，2 月分红 300*0.3=90 元
     // 3 月买入 3000/10=300 股 → 累计 600 股
@@ -1179,26 +1114,15 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     for (const buy of buys) {
       expect(buy.openingCash).toBe(3_000);
     }
-    // 1 月 buy：无分红，期末现金 = 0
-    expect(buys[0].endingCash).toBe(0);
-    // 2 月 buy：当日先除权+分红 90，再买入，期末现金 = 0 + 90 = 90
-    expect(buys[1].endingCash).toBe(90);
-    // 3 月 buy：期末现金 = 0 + 90 = 90
-    expect(buys[2].endingCash).toBe(90);
-    // 4 月 buy：当日先除权+分红 360（按 900 股计），再买入
-    //   期末现金 = 0 + 90 + 360 = 450
-    expect(buys[3].endingCash).toBe(450);
-    // 5 月 buy：期末现金 = 0 + 450 = 450
-    expect(buys[4].endingCash).toBe(450);
-
-    // 累计分红 = 90 + 360 = 450
-    expect(result.totalDividendAmount).toBe(450);
-    expect(result.endingCash).toBe(450);
-    // 期末累计股数 = 5 * 300 = 1500 股，市值 = 15000，累计投入 = 15000
-    // 盈亏率 = (15000 + 450) / 15000 - 1 = 0.03
-    expect(result.endingShares).toBe(1_500);
+    for (const buy of buys) {
+      expect(buy.endingCash).toBe(0);
+    }
+    expect(result.totalDividendAmount).toBeCloseTo(453.6, 2);
+    expect(result.endingCash).toBe(0);
+    expect(result.endingShares).toBeCloseTo(1_545.36, 6);
     expect(result.endingCost).toBe(15_000);
-    expect(result.endingMarketValue).toBe(15_000);
+    expect(result.endingInvestment).toBeCloseTo(15_453.6, 2);
+    expect(result.endingMarketValue).toBeCloseTo(15_453.6, 2);
   });
 
   it("不同分红金额与定投周期下期初现金始终为月度投入", () => {
@@ -1237,12 +1161,10 @@ describe("simulateBacktestSimple 简化交易成本回测", () => {
     expect(buys[0].openingCash).toBe(5_000);
     expect(buys[1].openingCash).toBe(5_000);
     expect(buys[2].openingCash).toBe(5_000);
-    // 1 月期末现金 = 0
     expect(buys[0].endingCash).toBe(0);
-    // 2 月期末现金 = 0 + 1250 = 1250
-    expect(buys[1].endingCash).toBe(1_250);
-    // 3 月期末现金 = 0 + 1250 = 1250
-    expect(buys[2].endingCash).toBe(1_250);
+    expect(buys[1].endingCash).toBe(0);
+    expect(buys[2].endingCash).toBe(0);
     expect(result.totalDividendAmount).toBe(1_250);
+    expect(result.endingInvestment).toBe(16_250);
   });
 });

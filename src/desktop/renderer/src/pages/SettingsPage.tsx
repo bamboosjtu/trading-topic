@@ -81,15 +81,19 @@ export function SettingsPage() {
             东方财富 · 已实施税前现金分红
           </Descriptions.Item>
           <Descriptions.Item label="佣金">
-            万分之 {(settings.data?.commissionRate ?? 0.00025) * 10_000}，最低{" "}
-            {settings.data?.minimumCommission ?? 5} 元
+            {settings.data?.commissionRate === 0
+              ? "R1 回测费用为 0"
+              : `万分之 ${(settings.data?.commissionRate ?? 0) * 10_000}，最低 ${
+                  settings.data?.minimumCommission ?? 0
+                } 元`}
           </Descriptions.Item>
           <Descriptions.Item label="口径版本">
-            {settings.data?.caliberVersion ?? "bank-dca-r1-node-v1"}
+            {settings.data?.caliberVersion ?? "bank-dca-r1-node-v3"}
           </Descriptions.Item>
         </Descriptions>
         <Paragraph type="secondary" className="!mb-0 !mt-4 text-xs">
-          R1 不计卖出印花税、分红税、过户费与滑点；期末资产按市值估算，不扣期末卖出费用。
+          R1 为研究回测口径：允许零碎股，买入费用为 0；不计印花税、分红税、过户费与滑点。
+          期末资产按市值估算，不假设卖出。
         </Paragraph>
       </div>
 

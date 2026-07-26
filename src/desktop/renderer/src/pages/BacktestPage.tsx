@@ -42,13 +42,15 @@ const BANK_OPTIONS = [
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
   dividend: "分红到账",
-  ex_right: "除权调整",
+  dividend_reinvest: "分红回购",
+  share_adjustment: "送转入账",
 };
 
 const EVENT_COLORS: Record<SimpleBacktestRow["event"], string> = {
   buy: "gold",
   dividend: "success",
-  ex_right: "warning",
+  dividend_reinvest: "processing",
+  share_adjustment: "warning",
 };
 
 function dateYearsAgo(years: number): string {
@@ -69,7 +71,7 @@ function percent(value: number | null): string {
   return value === null ? "不可计算" : `${(value * 100).toFixed(2)}%`;
 }
 
-/** 从 BacktestResult 推导简化回测请求（用于查看历史结果时回填参数） */
+/** 从 BacktestResult 推导明细请求（用于查看历史结果时回填参数） */
 function deriveSimpleRequest(record: BacktestResult): BacktestRequest {
   return {
     symbols: [record.symbol],
@@ -103,7 +105,7 @@ export function BacktestPage() {
     onError: (error) => message.error(error.message),
   });
 
-  // 简化回测数据按当前选中标的 + 当前请求参数获取
+  // 回测审计明细按当前选中标的 + 当前请求参数获取。
   const simpleRequest = useMemo<BacktestRequest | null>(() => {
     if (!detail) return null;
     if (currentRequest) {
@@ -274,8 +276,8 @@ export function BacktestPage() {
               ))}
               <span className="text-ink-300">|</span>
               <span>
-                不复权收盘价 · 非交易日顺延 · 100 股整数倍 · 佣金万 2.5，最低 5 元 ·
-                分红税前口径并回购原标的
+                不复权收盘价 · 非交易日顺延 · 允许零碎股 · 费用 0 元 ·
+                现金分红自动回购 · 送股/转增按除权日入账
               </span>
             </Space>
           </div>
@@ -325,7 +327,7 @@ export function BacktestPage() {
                   ),
                 },
                 {
-                  title: "累计投入",
+                  title: "累计外部投入",
                   align: "right",
                   className: "tabular-nums",
                   render: (_, row) => money(row.metrics.totalContribution),
@@ -402,10 +404,10 @@ export function BacktestPage() {
             items={[
               {
                 key: "simple",
-                label: "简化明细（费用 0 · 零碎股）",
+                label: "R1 回测明细",
                 children: (
                   <Space direction="vertical" size="large" className="w-full">
-                    <div className="metric-strip grid grid-cols-4 border-y border-line-soft py-4">
+                    <div className="metric-strip grid grid-cols-5 border-y border-line-soft py-4">
                       {[
                         [
                           "实际区间",
@@ -418,8 +420,12 @@ export function BacktestPage() {
                           `${simpleResult?.rows.length ?? 0} 条`,
                         ],
                         [
-                          "累计投入",
+                          "累计外部投入",
                           money(simpleResult?.endingCost ?? 0),
+                        ],
+                        [
+                          "累计买入金额",
+                          money(simpleResult?.endingInvestment ?? 0),
                         ],
                         [
                           "当前盈亏率",
@@ -433,7 +439,7 @@ export function BacktestPage() {
                       ))}
                     </div>
                     {simpleQuery.isLoading && (
-                      <Text type="secondary">正在加载简化明细…</Text>
+                      <Text type="secondary">正在加载回测明细…</Text>
                     )}
                     {simpleQuery.isError && (
                       <Tag color="error">
@@ -446,7 +452,7 @@ export function BacktestPage() {
                         rowKey={(row, index) => `${row.date}-${row.event}-${index}`}
                         pagination={{ pageSize: 20, showSizeChanger: false }}
                         dataSource={simpleResult.rows}
-                        scroll={{ x: 1080 }}
+                        scroll={{ x: 1420 }}
                         columns={[
                           {
                             title: "日期",
@@ -474,7 +480,8 @@ export function BacktestPage() {
                             filters: [
                               { text: "定投买入", value: "buy" },
                               { text: "分红到账", value: "dividend" },
-                              { text: "除权调整", value: "ex_right" },
+                              { text: "分红回购", value: "dividend_reinvest" },
+                              { text: "送转入账", value: "share_adjustment" },
                             ],
                             onFilter: (value, row) => row.event === value,
                           },
@@ -494,26 +501,17 @@ export function BacktestPage() {
                             align: "right",
                             className: "tabular-nums",
                             sorter: (a, b) => a.price - b.price,
-                            render: (value: number, row) =>
-                              row.event === "ex_right" && row.prevClose != null ? (
-                                <Space size={4}>
-                                  <Text type="secondary">{row.prevClose.toFixed(2)}</Text>
-                                  <span>→</span>
-                                  <Text strong>{value.toFixed(2)}</Text>
-                                </Space>
-                              ) : (
-                                value.toFixed(2)
-                              ),
+                            render: (value: number) => value.toFixed(2),
                           },
                           {
-                            title: "本期买入",
+                            title: "本次新增股数",
                             dataIndex: "shares",
-                            width: 100,
+                            width: 120,
                             align: "right",
                             className: "tabular-nums",
                             sorter: (a, b) => a.shares - b.shares,
                             render: (value: number, row) =>
-                              row.event === "buy" ? value.toFixed(2) : "—",
+                              row.event === "dividend" ? "—" : value.toFixed(2),
                           },
                           {
                             title: "累计股数",
@@ -525,12 +523,52 @@ export function BacktestPage() {
                             render: (value: number) => value.toFixed(2),
                           },
                           {
-                            title: "累计投入",
-                            dataIndex: "cumulativeCost",
-                            width: 110,
+                            title: "本期外部投入",
+                            dataIndex: "externalContribution",
+                            width: 120,
                             align: "right",
                             className: "tabular-nums",
-                            sorter: (a, b) => a.cumulativeCost - b.cumulativeCost,
+                            sorter: (a, b) =>
+                              a.externalContribution - b.externalContribution,
+                            render: (value: number) => value > 0 ? money(value) : "—",
+                          },
+                          {
+                            title: "发生金额",
+                            width: 120,
+                            align: "right",
+                            className: "tabular-nums",
+                            render: (_, row) => {
+                              if (row.event === "share_adjustment") {
+                                return (
+                                  <Text type="secondary">
+                                    每 10 股 +{row.shareRatio?.toFixed(4) ?? "—"}
+                                  </Text>
+                                );
+                              }
+                              if (row.event === "dividend") {
+                                return money(row.dividendAmount ?? 0);
+                              }
+                              return money(row.tradeAmount);
+                            },
+                          },
+                          {
+                            title: "累计外部投入",
+                            dataIndex: "cumulativeContribution",
+                            width: 125,
+                            align: "right",
+                            className: "tabular-nums",
+                            sorter: (a, b) =>
+                              a.cumulativeContribution - b.cumulativeContribution,
+                            render: (value: number) => money(value),
+                          },
+                          {
+                            title: "累计买入金额",
+                            dataIndex: "cumulativeInvestment",
+                            width: 125,
+                            align: "right",
+                            className: "tabular-nums",
+                            sorter: (a, b) =>
+                              a.cumulativeInvestment - b.cumulativeInvestment,
                             render: (value: number) => money(value),
                           },
                           {
@@ -555,28 +593,13 @@ export function BacktestPage() {
                               </Text>
                             ),
                           },
-                          {
-                            title: "金额/分红",
-                            dataIndex: "amount",
-                            width: 110,
-                            align: "right",
-                            className: "tabular-nums",
-                            sorter: (a, b) => a.amount - b.amount,
-                            render: (value: number, row) =>
-                              row.event === "ex_right" ? (
-                                <Text type="secondary">
-                                  每股 {row.dividendPerShare?.toFixed(4) ?? "—"}
-                                </Text>
-                              ) : (
-                                money(value)
-                              ),
-                          },
                         ]}
                       />
                     )}
                     <div className="text-xs text-ink-500">
-                      口径：交易费用 0 · 零碎股（2 位小数） · contribution 与 buy 合并行 ·
-                      分红到账不再投资 · 除权日仅记录价格变化。
+                      口径：交易费用 0 · 允许零碎股 · 现金分红到账后全额回购原标的 ·
+                      送股/转增按登记日持股和每 10 股比例在除权日入账。累计外部投入
+                      只统计用户资金，累计买入金额统计定投买入与分红回购成交额。
                     </div>
                   </Space>
                 ),
@@ -616,7 +639,7 @@ export function BacktestPage() {
                             { text: "buy", value: "buy" },
                             { text: "dividend", value: "dividend" },
                             { text: "dividend_reinvest", value: "dividend_reinvest" },
-                            { text: "repo_interest", value: "repo_interest" },
+                            { text: "share_adjustment", value: "share_adjustment" },
                           ],
                           onFilter: (value, row) => row.type === value,
                         },

@@ -14,19 +14,14 @@ import type {
 } from "../../shared/contracts";
 import { maximumDrawdown, roundMoney, xirr } from "./finance";
 
-const LOT_SIZE = 100;
-const COMMISSION_RATE = 0.00025;
-const MINIMUM_COMMISSION = 5;
-
-function calendarDaysBetween(a: string, b: string): number {
-  return Math.round(
-    (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000,
-  );
+/** 内部股数保留 6 位小数，界面按需显示 2 位，避免长期累计漂移。 */
+function roundShares(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-/** 零碎股保留 2 位小数（用于回测明细列表的同条件比较视图） */
-function roundShares(value: number): number {
-  return Math.round(value * 100) / 100;
+/** 东方财富送股、转增字段均为“每 10 股增加多少股”。 */
+function shareIncreaseRatio(event: DividendEvent): number {
+  return (event.transferRatio + event.bonusRatio) / 10;
 }
 
 function assertInput(input: BacktestRequest): void {
@@ -53,10 +48,6 @@ function monthsBetween(startDate: string, endDate: string): string[] {
   return result;
 }
 
-function commission(amount: number): number {
-  return roundMoney(Math.max(MINIMUM_COMMISSION, amount * COMMISSION_RATE));
-}
-
 export function simulateBacktest(
   input: BacktestRequest,
   symbol: string,
@@ -74,15 +65,6 @@ export function simulateBacktest(
     throw new Error(`${symbol} 行情包含无效收盘价`);
   }
 
-  const unsupported = dividendRows.filter(
-    (row) => row.transferRatio > 0 || row.bonusRatio > 0,
-  );
-  if (unsupported.length) {
-    throw new Error(
-      `${symbol} 存在 R1 不支持的送股、转增或配股事件，请缩短区间后重试`,
-    );
-  }
-
   const dividendsByDate = new Map<string, DividendEvent[]>();
   for (const event of dividendRows) {
     if (event.date < input.startDate || event.date > input.endDate) continue;
@@ -91,9 +73,8 @@ export function simulateBacktest(
     dividendsByDate.set(event.date, group);
   }
 
-  // P1-3：分红到账日模式区分。默认 ex_date（研究兼容模式，对齐
-  // research/bank-dca v1：除权日立即派息并再投资）。真实交易模式 payment_date
-  // 暂只建立索引，R2 完整支持（实际到账日后才能使用现金）。
+  // 分红到账日模式区分。默认 ex_date；payment_date 使用实际到账日，若到账日
+  // 不是交易日，则在下一个有收盘价的交易日执行回购。
   const dividendTiming = input.dividendTiming ?? "ex_date";
   const dividendsByPaymentDate = new Map<string, DividendEvent[]>();
   if (dividendTiming === "payment_date") {
@@ -101,9 +82,11 @@ export function simulateBacktest(
       if (event.date < input.startDate || event.date > input.endDate) continue;
       const effective = event.paymentDate ?? event.date;
       if (effective < input.startDate || effective > input.endDate) continue;
-      const group = dividendsByPaymentDate.get(effective) ?? [];
+      const execution = prices.find((row) => row.date >= effective);
+      if (!execution) continue;
+      const group = dividendsByPaymentDate.get(execution.date) ?? [];
       group.push(event);
-      dividendsByPaymentDate.set(effective, group);
+      dividendsByPaymentDate.set(execution.date, group);
     }
   }
   const activeDividends =
@@ -139,70 +122,85 @@ export function simulateBacktest(
   }
 
   let shares = 0;
-  // P1-4：现金隔离。拆分为定投待用现金与分红待再投资现金，避免分红日动用
-  // 全部剩余现金（含此前因不足一手而保留的定投资金）。剩余定投资金滚动至
-  // 下一次计划投资日，分红优先回购原标的，只使用分红池。
+  // 现金按来源隔离，便于审计：定投资金与分红资金分别产生买入流水。
   let dcaCash = 0;
   let dividendCash = 0;
   const totalCash = () => roundMoney(dcaCash + dividendCash);
   let totalContribution = 0;
   let totalDividend = 0;
-  let totalRepoInterest = 0;
   const holdingsHistory: Array<{ date: string; shares: number }> = [];
   const transactions: BacktestTransaction[] = [];
   const equityCurve: EquityPoint[] = [];
   const cashflows: Array<{ date: string; amount: number }> = [];
 
-  // P0-2：构建标的总收益净值（剔除外部投入），对齐 research
-  // build_total_return_history。每日收益率 = (close + 当日每股分红) / 前收 - 1，
+  // 构建剔除外部投入的标的总收益净值。每日收益率 =
+  // (close × 送转因子 + 当日每股现金分红) / 前收 - 1，
   // 累乘得 nav。最大回撤基于 nav 而非总资产，避免每月投入抬高净值掩盖真实跌幅。
   // 注意：nav 始终按除权日分红计算（标的理论净值），不受 dividendTiming 影响。
   let prevClose: number | null = null;
   let nav = 1;
 
-  // P1-5：国债逆回购计息。repoRate > 0 时，闲置现金（定投池 + 分红池）按
-  // 实际日历天数计息，对齐 research verification 的 repo_assumption
-  // "前一交易日 204001 定盘利率按实际日历天数计息至下一交易日"。
-  // R1 用固定保守年化利率；R2 接入历史 204001 定盘利率。
-  const repoRate = input.repoRate ?? 0;
-  let prevDate: string | null = null;
-
   for (const row of prices) {
-    // P1-5：每日先对闲置现金按日历日计息（前一交易日 → 当前交易日）
-    if (repoRate > 0 && prevDate !== null) {
-      const days = calendarDaysBetween(prevDate, row.date);
-      if (days > 0) {
-        const dcaInterest = roundMoney(dcaCash * repoRate * days / 365);
-        const dividendInterest = roundMoney(dividendCash * repoRate * days / 365);
-        if (dcaInterest > 0) {
-          dcaCash = roundMoney(dcaCash + dcaInterest);
-          totalRepoInterest = roundMoney(totalRepoInterest + dcaInterest);
-          transactions.push({
-            date: row.date,
-            type: "repo_interest",
-            quantity: 0,
-            price: 0,
-            amount: dcaInterest,
-            fee: 0,
-            cashAfter: totalCash(),
-          });
-        }
-        if (dividendInterest > 0) {
-          dividendCash = roundMoney(dividendCash + dividendInterest);
-          totalRepoInterest = roundMoney(totalRepoInterest + dividendInterest);
-          transactions.push({
-            date: row.date,
-            type: "repo_interest",
-            quantity: 0,
-            price: 0,
-            amount: dividendInterest,
-            fee: 0,
-            cashAfter: totalCash(),
-          });
-        }
+    // 送股/转增在除权日先入账。资格股数按登记日收盘后的历史持仓确定，
+    // 比例字段为“每 10 股增加多少股”，不是直接乘数。
+    for (const event of dividendsByDate.get(row.date) ?? []) {
+      const entitledShares =
+        holdingsHistory
+          .filter((item) => item.date <= event.recordDate)
+          .at(-1)?.shares ?? 0;
+      const ratio = shareIncreaseRatio(event);
+      const addedShares = roundShares(entitledShares * ratio);
+      if (addedShares <= 0) continue;
+      shares = roundShares(shares + addedShares);
+      transactions.push({
+        date: row.date,
+        type: "share_adjustment",
+        quantity: addedShares,
+        price: row.close,
+        amount: 0,
+        fee: 0,
+        cashAfter: totalCash(),
+        shareRatio: event.transferRatio + event.bonusRatio,
+      });
+    }
+
+    // P1-3：按 dividendTiming 选择到账日索引。现金分红到账后立即用分红池
+    // 全额回购原标的；R1 允许零碎股，因此分红不会因交易单位门槛长期滞留现金。
+    for (const event of activeDividends.get(row.date) ?? []) {
+      const entitledShares =
+        holdingsHistory
+          .filter((item) => item.date <= event.recordDate)
+          .at(-1)?.shares ?? 0;
+      const amount = roundMoney(entitledShares * event.perShare);
+      if (amount <= 0) continue;
+      dividendCash = roundMoney(dividendCash + amount);
+      totalDividend = roundMoney(totalDividend + amount);
+      transactions.push({
+        date: row.date,
+        type: "dividend",
+        quantity: entitledShares,
+        price: event.perShare,
+        amount,
+        fee: 0,
+        cashAfter: totalCash(),
+      });
+
+      const tradeAmount = dividendCash;
+      const quantity = roundShares(tradeAmount / row.close);
+      if (quantity > 0) {
+        shares = roundShares(shares + quantity);
+        dividendCash = 0;
+        transactions.push({
+          date: row.date,
+          type: "dividend_reinvest",
+          quantity,
+          price: row.close,
+          amount: tradeAmount,
+          fee: 0,
+          cashAfter: totalCash(),
+        });
       }
     }
-    prevDate = row.date;
 
     const contributionCount = scheduled.get(row.date) ?? 0;
     if (contributionCount) {
@@ -220,86 +218,41 @@ export function simulateBacktest(
         cashAfter: totalCash(),
       });
 
-      // P1-4：定投买入只用定投池现金
-      const maximumLots = Math.floor(dcaCash / (row.close * LOT_SIZE));
-      let lots = maximumLots;
-      while (lots > 0) {
-        const tradeAmount = roundMoney(lots * LOT_SIZE * row.close);
-        const fee = commission(tradeAmount);
-        if (tradeAmount + fee <= dcaCash) {
-          const quantity = lots * LOT_SIZE;
-          shares += quantity;
-          dcaCash = roundMoney(dcaCash - tradeAmount - fee);
-          transactions.push({
-            date: row.date,
-            type: "buy",
-            quantity,
-            price: row.close,
-            amount: tradeAmount,
-            fee,
-            cashAfter: totalCash(),
-          });
-          break;
-        }
-        lots -= 1;
-      }
-    }
-
-    // P1-3：按 dividendTiming 选择到账日索引。ex_date 模式下分红在除权日处理，
-    // payment_date 模式下分红在实际到账日处理（R2 完整支持，当前已建立索引）。
-    for (const event of activeDividends.get(row.date) ?? []) {
-      const entitledShares =
-        holdingsHistory
-          .filter((item) => item.date <= event.recordDate)
-          .at(-1)?.shares ?? 0;
-      const amount = roundMoney(entitledShares * event.perShare);
-      if (amount <= 0) continue;
-      // P1-4：分红进入分红池，不与定投池混用
-      dividendCash = roundMoney(dividendCash + amount);
-      totalDividend = roundMoney(totalDividend + amount);
-      transactions.push({
-        date: row.date,
-        type: "dividend",
-        quantity: entitledShares,
-        price: event.perShare,
-        amount,
-        fee: 0,
-        cashAfter: totalCash(),
-      });
-      // P1-4：分红再投资只用分红池现金，不动用定投剩余资金。
-      // 递减 lots 直到手续费+金额 <= dividendCash（与定投买入逻辑一致）。
-      let lots = Math.floor(dividendCash / (row.close * LOT_SIZE));
-      while (lots > 0) {
-        const quantity = lots * LOT_SIZE;
-        const tradeAmount = roundMoney(quantity * row.close);
-        const fee = commission(tradeAmount);
-        if (tradeAmount + fee <= dividendCash) {
-          shares += quantity;
-          dividendCash = roundMoney(dividendCash - tradeAmount - fee);
-          transactions.push({
-            date: row.date,
-            type: "dividend_reinvest",
-            quantity,
-            price: row.close,
-            amount: tradeAmount,
-            fee,
-            cashAfter: totalCash(),
-          });
-          break;
-        }
-        lots -= 1;
+      // R1 为研究回测口径：费用为 0、允许零碎股，定投资金全额买入。
+      const tradeAmount = dcaCash;
+      const quantity = roundShares(tradeAmount / row.close);
+      if (quantity > 0) {
+        shares = roundShares(shares + quantity);
+        dcaCash = 0;
+        transactions.push({
+          date: row.date,
+          type: "buy",
+          quantity,
+          price: row.close,
+          amount: tradeAmount,
+          fee: 0,
+          cashAfter: totalCash(),
+        });
       }
     }
 
     // nav 始终按除权日分红计算（标的理论净值）
-    const dividendPerShareToday = (dividendsByDate.get(row.date) ?? []).reduce(
-      (sum, e) => sum + e.perShare,
+    const corporateActionsToday = dividendsByDate.get(row.date) ?? [];
+    const dividendPerShareToday = corporateActionsToday.reduce(
+      (sum, event) => sum + event.perShare,
+      0,
+    );
+    const shareRatioToday = corporateActionsToday.reduce(
+      (sum, event) => sum + shareIncreaseRatio(event),
       0,
     );
     if (prevClose === null) {
       nav = 1;
     } else if (prevClose > 0) {
-      nav = nav * (row.close + dividendPerShareToday) / prevClose;
+      nav =
+        nav *
+        (row.close * (1 + shareRatioToday) + dividendPerShareToday) /
+        prevClose;
     }
     prevClose = row.close;
 
@@ -318,7 +271,7 @@ export function simulateBacktest(
   cashflows.push({ date: last.date, amount: endingAsset });
   // P0-2：最大回撤基于标的总收益净值（nav），而非每日账户总资产。
   // 外部每月投入会不断抬高总资产序列，掩盖真实跌幅；nav 剔除外部现金流，
-  // 与 research build_total_return_history 的 drawdown 口径一致。
+  // 该口径不会被后续外部投入人为抬高。
   const navSeries = equityCurve.map((row) => row.nav ?? 1);
   return {
     id: randomUUID(),
@@ -337,7 +290,6 @@ export function simulateBacktest(
       maxDrawdown: maximumDrawdown(navSeries),
       totalDividend,
       endingCash: totalCash(),
-      totalRepoInterest,
     },
     transactions,
     equityCurve,
@@ -351,7 +303,7 @@ export function simulateBacktest(
  * 回测明细列表（同条件比较视图）。
  *
  * 与 `simulateBacktest` 的差异：
- * - 零碎股（2 位小数），消除 100 股整数倍离散误差；
+ * - 允许零碎股，内部保留 6 位精度；
  * - 无手续费、无逆回购、无现金结转，纯理论持仓曲线；
  * - 分红日按除权前持仓全额分红再投资（零碎股），等价于后复权总收益口径；
  * - 输出每笔买入/分红再投资的明细行：买入股数、累计股数、价格、累计投入、累计盈亏。
@@ -374,15 +326,6 @@ export function simulateBacktestDetail(
   if (!prices.length) throw new Error(`${symbol} 在所选区间没有可用行情`);
   if (prices.some((row) => !Number.isFinite(row.close) || row.close <= 0)) {
     throw new Error(`${symbol} 行情包含无效收盘价`);
-  }
-
-  const unsupported = dividendRows.filter(
-    (row) => row.transferRatio > 0 || row.bonusRatio > 0,
-  );
-  if (unsupported.length) {
-    throw new Error(
-      `${symbol} 存在不支持的送股、转增或配股事件，请缩短区间后重试`,
-    );
   }
 
   // 分红按除权日分组（明细列表始终用 ex_date 口径，对齐研究端 total_return）
@@ -421,17 +364,40 @@ export function simulateBacktestDetail(
   let cumulativeCost = 0;
   let cumulativeDividendShares = 0;
   let totalDividendAmount = 0;
+  const holdingsHistory: Array<{ date: string; shares: number }> = [];
 
   for (const row of prices) {
     const price = row.close;
 
-    // 除权日：用除权前持仓算分红，全额按除权后价格买入零碎股。
-    // 处理顺序在 monthly_buy 之前，确保分红用除权前持仓（对齐研究端 recordDate 口径）。
+    // 除权日：先按登记日持股处理送股/转增，再用同一资格股数计算现金分红。
     const dividends = dividendsByDate.get(row.date);
     if (dividends) {
-      const totalPerShare = dividends.reduce((sum, e) => sum + e.perShare, 0);
-      if (totalPerShare > 0 && cumulativeShares > 0) {
-        const dividendAmount = roundMoney(cumulativeShares * totalPerShare);
+      for (const event of dividends) {
+        const entitledShares =
+          holdingsHistory
+            .filter((item) => item.date <= event.recordDate)
+            .at(-1)?.shares ?? 0;
+        const ratio = shareIncreaseRatio(event);
+        const addedShares = roundShares(entitledShares * ratio);
+        if (addedShares > 0) {
+          cumulativeShares = roundShares(cumulativeShares + addedShares);
+          const marketValue = roundMoney(cumulativeShares * price);
+          rows.push({
+            date: row.date,
+            event: "share_adjustment",
+            shares: addedShares,
+            cumulativeShares,
+            price,
+            amount: 0,
+            cumulativeCost,
+            cumulativeDividendShares,
+            marketValue,
+            cumulativePnl: roundMoney(marketValue - cumulativeCost),
+            shareRatio: (event.transferRatio + event.bonusRatio),
+          });
+        }
+        if (event.perShare <= 0 || entitledShares <= 0) continue;
+        const dividendAmount = roundMoney(entitledShares * event.perShare);
         const newShares = roundShares(dividendAmount / price);
         cumulativeShares = roundShares(cumulativeShares + newShares);
         cumulativeDividendShares = roundShares(
@@ -450,7 +416,7 @@ export function simulateBacktestDetail(
           cumulativeDividendShares,
           marketValue,
           cumulativePnl: roundMoney(marketValue - cumulativeCost),
-          dividendPerShare: totalPerShare,
+          dividendPerShare: event.perShare,
           dividendAmount,
         });
       }
@@ -476,6 +442,7 @@ export function simulateBacktestDetail(
         cumulativePnl: roundMoney(marketValue - cumulativeCost),
       });
     }
+    holdingsHistory.push({ date: row.date, shares: cumulativeShares });
   }
 
   const last = prices.at(-1)!;
@@ -506,18 +473,10 @@ export function simulateBacktestDetail(
 }
 
 /**
- * 简化交易成本回测（drawer 展示视图）。
+ * R1 回测审计明细（drawer 展示视图）。
  *
- * 规则：
- * - 交易费用统一按 0 计算；
- * - contribution（资金投入）与 buy（股票买入）合并为一行；
- * - 分红到账与除权调整各自独立行；
- * - 零碎股（2 位小数），分红以现金到账不再投资。
- *
- * 列：期初现金、收盘价、本期买入股数、累计股数、累计投入、期末现金、盈亏率。
- * 盈亏率 = (收盘价 × 累计股数 + 期末现金) / 累计投入 - 1。
- *
- * 事件顺序（同一天）：ex_right（除权信息）→ dividend（分红到账）→ buy（定投买入）。
+ * 不再维护一套“简化但不同”的回测算法，而是把 simulateBacktest 的实际交易
+ * 流水转换为可读明细，保证主结果、资产曲线与 drawer 完全同源。
  */
 export function simulateBacktestSimple(
   input: BacktestRequest,
@@ -526,157 +485,128 @@ export function simulateBacktestSimple(
   priceRows: PricePoint[],
   dividendRows: DividendEvent[],
 ): SimpleBacktestResult {
-  assertInput(input);
   const prices = priceRows
     .filter((row) => row.date >= input.startDate && row.date <= input.endDate)
     .sort((a, b) => a.date.localeCompare(b.date));
-  if (!prices.length) throw new Error(`${symbol} 在所选区间没有可用行情`);
-  if (prices.some((row) => !Number.isFinite(row.close) || row.close <= 0)) {
-    throw new Error(`${symbol} 行情包含无效收盘价`);
-  }
-
-  const unsupported = dividendRows.filter(
-    (row) => row.transferRatio > 0 || row.bonusRatio > 0,
+  const backtest = simulateBacktest(
+    input,
+    symbol,
+    name,
+    prices,
+    dividendRows,
+    [],
   );
-  if (unsupported.length) {
-    throw new Error(
-      `${symbol} 存在不支持的送股、转增或配股事件，请缩短区间后重试`,
-    );
-  }
-
-  // 除权日分组（ex_right 行）与分红到账日分组（dividend 行）
-  const dividendsByExDate = new Map<string, DividendEvent[]>();
-  const dividendsByPaymentDate = new Map<string, DividendEvent[]>();
-  for (const event of dividendRows) {
-    if (event.date < input.startDate || event.date > input.endDate) continue;
-    const exGroup = dividendsByExDate.get(event.date) ?? [];
-    exGroup.push(event);
-    dividendsByExDate.set(event.date, exGroup);
-    const payment = event.paymentDate ?? event.date;
-    if (payment >= input.startDate && payment <= input.endDate) {
-      const payGroup = dividendsByPaymentDate.get(payment) ?? [];
-      payGroup.push(event);
-      dividendsByPaymentDate.set(payment, payGroup);
-    }
-  }
-
-  // 复用 P1-1/P1-2 的 scheduled 逻辑
-  const scheduled = new Map<string, number>();
-  const warnings: string[] = [];
-  let lastSelectedDate = "";
-  for (const month of monthsBetween(input.startDate, input.endDate)) {
-    const target = `${month}-${String(input.buyDay).padStart(2, "0")}`;
-    if (target < input.startDate) continue;
-    if (lastSelectedDate && lastSelectedDate.slice(0, 7) === month) {
-      warnings.push(`${month} 已被上月顺延占用，本月不再投入`);
-      continue;
-    }
-    const execution = prices.find(
-      (row) => row.date >= target && row.date > lastSelectedDate,
-    );
-    if (execution) {
-      scheduled.set(execution.date, 1);
-      lastSelectedDate = execution.date;
-    } else {
-      warnings.push(`${month} 指定日后至回测结束无交易日，本月未投入`);
-    }
-  }
-
+  const pricesByDate = new Map(prices.map((row) => [row.date, row.close]));
   const rows: SimpleBacktestRow[] = [];
   let cumulativeShares = 0;
-  let cumulativeCost = 0;
-  // 分红现金与定投现金隔离（修复分红重复计入后续定投期初现金的 bug）：
-  // - dcaCash：定投池，每月投入全额买入零碎股，始终为 0；
-  // - dividendCash：分红池，累积分红到账金额，不参与定投买入。
-  // 期初现金（buy 行）= dcaCash + 本期投入（不含 dividendCash）；
-  // 期末现金（任意行）= dcaCash + dividendCash（反映账户实际现金余额）。
-  let dcaCash = 0;
-  let dividendCash = 0;
+  let cumulativeContribution = 0;
+  let cumulativeInvestment = 0;
+  let pendingContribution = 0;
   let totalDividendAmount = 0;
-  let prevClose: number | null = null;
 
-  const buildRow = (
-    date: string,
+  const addRow = (
+    transaction: BacktestTransaction,
     event: SimpleBacktestRow["event"],
     openingCash: number,
-    price: number,
-    shares: number,
-    amount: number,
-    endingCash: number,
     extras: Partial<SimpleBacktestRow> = {},
-  ): SimpleBacktestRow => {
+  ): void => {
+    const price = pricesByDate.get(transaction.date) ?? transaction.price;
+    const endingCash = transaction.cashAfter;
     const marketValue = roundMoney(cumulativeShares * price);
-    const returnRate = cumulativeCost > 0 ? (marketValue + endingCash) / cumulativeCost - 1 : 0;
-    return {
-      date,
+    const returnRate =
+      cumulativeContribution > 0
+        ? (marketValue + endingCash) / cumulativeContribution - 1
+        : 0;
+    rows.push({
+      date: transaction.date,
       event,
       openingCash: roundMoney(openingCash),
       price,
-      shares: roundShares(shares),
+      shares:
+        event === "dividend" ? 0 : roundShares(transaction.quantity),
       cumulativeShares: roundShares(cumulativeShares),
-      cumulativeCost: roundMoney(cumulativeCost),
+      externalContribution: 0,
+      cumulativeContribution: roundMoney(cumulativeContribution),
+      tradeAmount: 0,
+      cumulativeInvestment: roundMoney(cumulativeInvestment),
       endingCash: roundMoney(endingCash),
       returnRate,
-      amount: roundMoney(amount),
       ...extras,
-    };
+    });
   };
 
-  for (const row of prices) {
-    const price = row.close;
-
-    // 除权日：ex_right 行（信息性，记录价格变化，不改股数/现金）
-    const exEvents = dividendsByExDate.get(row.date);
-    if (exEvents) {
-      const totalPerShare = exEvents.reduce((sum, e) => sum + e.perShare, 0);
-      const cashBefore = roundMoney(dcaCash + dividendCash);
-      rows.push(
-        buildRow(row.date, "ex_right", cashBefore, price, 0, 0, cashBefore, {
-          prevClose: prevClose ?? price,
-          dividendPerShare: totalPerShare,
-        }),
+  for (const transaction of backtest.transactions) {
+    if (transaction.type === "contribution") {
+      pendingContribution = roundMoney(
+        pendingContribution + transaction.amount,
       );
-    }
-
-    // 分红到账日：dividend 行（增加 dividendCash，不再投资）
-    const payEvents = dividendsByPaymentDate.get(row.date);
-    if (payEvents) {
-      const totalPerShare = payEvents.reduce((sum, e) => sum + e.perShare, 0);
-      const dividendAmount = roundMoney(cumulativeShares * totalPerShare);
-      const openingCash = roundMoney(dcaCash + dividendCash);
-      dividendCash = roundMoney(dividendCash + dividendAmount);
-      totalDividendAmount = roundMoney(totalDividendAmount + dividendAmount);
-      const endingCash = roundMoney(dcaCash + dividendCash);
-      rows.push(
-        buildRow(row.date, "dividend", openingCash, price, 0, dividendAmount, endingCash, {
-          dividendPerShare: totalPerShare,
-        }),
+      cumulativeContribution = roundMoney(
+        cumulativeContribution + transaction.amount,
       );
+      continue;
     }
 
-    // 定投买入日：buy 行（contribution + buy 合并）
-    // 期初现金 = dcaCash + 本期投入（不含分红池），避免分红重复计入。
-    if (scheduled.has(row.date)) {
-      const amount = input.monthlyAmount;
-      const openingCash = roundMoney(dcaCash + amount);
-      const shares = amount / price;
-      cumulativeShares = roundShares(cumulativeShares + shares);
-      cumulativeCost = roundMoney(cumulativeCost + amount);
-      // 定投全额买入零碎股，dcaCash 始终为 0；dividendCash 不参与买入。
-      dcaCash = 0;
-      const endingCash = roundMoney(dcaCash + dividendCash);
-      rows.push(buildRow(row.date, "buy", openingCash, price, shares, amount, endingCash));
+    if (transaction.type === "share_adjustment") {
+      cumulativeShares = roundShares(
+        cumulativeShares + transaction.quantity,
+      );
+      addRow(transaction, "share_adjustment", transaction.cashAfter, {
+        shareRatio: transaction.shareRatio,
+      });
+      continue;
     }
 
-    prevClose = price;
+    if (transaction.type === "dividend") {
+      totalDividendAmount = roundMoney(
+        totalDividendAmount + transaction.amount,
+      );
+      addRow(
+        transaction,
+        "dividend",
+        transaction.cashAfter - transaction.amount,
+        {
+          dividendPerShare: transaction.price,
+          dividendAmount: transaction.amount,
+        },
+      );
+      continue;
+    }
+
+    if (
+      transaction.type === "buy" ||
+      transaction.type === "dividend_reinvest"
+    ) {
+      cumulativeShares = roundShares(
+        cumulativeShares + transaction.quantity,
+      );
+      cumulativeInvestment = roundMoney(
+        cumulativeInvestment + transaction.amount,
+      );
+      const contribution =
+        transaction.type === "buy" ? pendingContribution : 0;
+      addRow(
+        transaction,
+        transaction.type,
+        transaction.cashAfter + transaction.amount + transaction.fee,
+        {
+          externalContribution: contribution,
+          tradeAmount: transaction.amount,
+        },
+      );
+      if (transaction.type === "buy") pendingContribution = 0;
+    }
   }
 
   const last = prices.at(-1)!;
   const endingShares = cumulativeShares;
-  const endingCost = cumulativeCost;
+  const endingCost = cumulativeContribution;
+  const endingInvestment = cumulativeInvestment;
   const endingMarketValue = roundMoney(endingShares * last.close);
-  const endingCash = roundMoney(dcaCash + dividendCash);
-  const returnRate = endingCost > 0 ? (endingMarketValue + endingCash) / endingCost - 1 : 0;
+  const endingCash = backtest.metrics.endingCash;
+  const returnRate =
+    endingCost > 0
+      ? (endingMarketValue + endingCash) / endingCost - 1
+      : 0;
 
   return {
     symbol,
@@ -689,10 +619,11 @@ export function simulateBacktestSimple(
     rows,
     endingShares,
     endingCost,
+    endingInvestment,
     endingMarketValue,
     endingCash,
     totalDividendAmount,
     returnRate,
-    warnings,
+    warnings: backtest.warnings,
   };
 }

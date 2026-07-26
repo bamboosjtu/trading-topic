@@ -13,9 +13,9 @@ const SCHEMA_VERSION = 1;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent",
   dividendSource: "eastmoney",
-  commissionRate: 0.00025,
-  minimumCommission: 5,
-  caliberVersion: "bank-dca-r1-node-v1",
+  commissionRate: 0,
+  minimumCommission: 0,
+  caliberVersion: "bank-dca-r1-node-v3",
 };
 
 interface BackupPayload {
@@ -151,7 +151,16 @@ export class LocalDatabase {
       this.database,
       "SELECT value_json FROM settings WHERE key = 'app'",
     )[0];
-    return result ? (JSON.parse(result.value_json) as AppSettings) : DEFAULT_SETTINGS;
+    const stored = result
+      ? (JSON.parse(result.value_json) as AppSettings)
+      : DEFAULT_SETTINGS;
+    return {
+      ...stored,
+      // 计算口径属于版本事实，不允许旧备份把当前 R1 恢复成整数手/佣金模型。
+      commissionRate: 0,
+      minimumCommission: 0,
+      caliberVersion: DEFAULT_SETTINGS.caliberVersion,
+    };
   }
 
   addLedger(entry: LedgerEntry): void {

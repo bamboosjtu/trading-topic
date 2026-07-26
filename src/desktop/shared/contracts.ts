@@ -24,8 +24,11 @@ export interface DividendEvent {
   date: string;
   recordDate: string;
   paymentDate: string | null;
+  /** 税前每股现金分红（元/股） */
   perShare: number;
+  /** 每 10 股转增股数 */
   transferRatio: number;
+  /** 每 10 股送股股数 */
   bonusRatio: number;
   status: string;
 }
@@ -38,18 +41,10 @@ export interface BacktestRequest {
   buyDay: number;
   /**
    * 分红到账处理口径。
-   * - `ex_date`（默认，研究兼容模式）：除权日立即派息并再投资，对齐 research/bank-dca v1。
-   * - `payment_date`（真实交易模式，R2 完整支持）：实际到账日后才能使用现金。
+   * - `ex_date`（默认）：除权日记入现金并立即回购；
+   * - `payment_date`：实际到账日记入现金并立即回购。
    */
   dividendTiming?: "ex_date" | "payment_date";
-  /**
-   * 国债逆回购年化利率（小数，如 0.015 表示 1.5%）。
-   * 默认 0 表示不计息。大于 0 时，闲置现金（定投待用 + 分红待再投资）按
-   * 实际日历天数计息，对齐 research verification 的 repo_assumption
-   * "前一交易日 204001 定盘利率按实际日历天数计息至下一交易日"。
-   * R1 用固定保守值；R2 接入历史 204001 定盘利率。
-   */
-  repoRate?: number;
 }
 
 export interface BacktestTransaction {
@@ -59,12 +54,14 @@ export interface BacktestTransaction {
     | "buy"
     | "dividend"
     | "dividend_reinvest"
-    | "repo_interest";
+    | "share_adjustment";
   quantity: number;
   price: number;
   amount: number;
   fee: number;
   cashAfter: number;
+  /** 每 10 股送转比例，仅 share_adjustment 事件使用 */
+  shareRatio?: number;
 }
 
 export interface EquityPoint {
@@ -72,7 +69,7 @@ export interface EquityPoint {
   asset: number;
   contribution: number;
   /**
-   * 标的总收益净值（剔除外部投入），对齐 research build_total_return_history。
+   * 标的总收益净值（剔除外部投入），用于计算可比最大回撤。
    * 用于计算策略最大回撤，避免外部每月投入抬高净值掩盖真实跌幅。
    */
   nav?: number;
@@ -86,8 +83,6 @@ export interface BacktestMetrics {
   maxDrawdown: number;
   totalDividend: number;
   endingCash: number;
-  /** 闲置现金参与国债逆回购产生的累计利息（repoRate=0 时为 0） */
-  totalRepoInterest: number;
 }
 
 export interface BacktestResult {
@@ -110,16 +105,13 @@ export interface BacktestResult {
 /**
  * 回测明细列表行（同条件比较视图）。
  *
- * 采用零碎股（2 位小数）+ 分红再投资模型，消除 100 股整数倍离散误差，
- * 便于与研究端同条件对比。不复权价格 + 显式分红再投资在数学上等价于
- * 后复权总收益口径：持仓市值变化已包含分红再投资产生的股数增长，
- * 收益率 = 期末市值 / 累计投入 - 1。
+ * 采用零碎股 + 分红再投资模型；送股/转增在除权日增加持股。
  */
 export interface BacktestDetailRow {
   date: string;
-  /** 事件类型：monthly_buy=月度定投买入，dividend_reinvest=分红再投资买入 */
-  event: "monthly_buy" | "dividend_reinvest";
-  /** 当次买入股数（零碎股，保留 2 位小数） */
+  /** 事件类型 */
+  event: "monthly_buy" | "dividend_reinvest" | "share_adjustment";
+  /** 当次新增股数 */
   shares: number;
   /** 累计股数（含定投买入与分红再投资） */
   cumulativeShares: number;
@@ -139,6 +131,8 @@ export interface BacktestDetailRow {
   dividendPerShare?: number;
   /** 当次分红金额（仅 dividend_reinvest 行） */
   dividendAmount?: number;
+  /** 每 10 股送转比例（仅 share_adjustment 行） */
+  shareRatio?: number;
 }
 
 /** 回测明细列表结果（同条件比较） */
@@ -169,40 +163,47 @@ export interface BacktestDetailResult {
 }
 
 /**
- * 简化交易成本回测明细行（drawer 展示视图）。
+ * R1 回测审计明细行（drawer 展示视图）。
  *
- * 交易费用统一按 0 计算；contribution（资金投入）与 buy（股票买入）合并为一行；
- * 分红到账与除权调整各自独立行。零碎股（2 位小数），分红以现金到账不再投资。
+ * 主结果与明细共用同一套计算口径：费用为 0、允许零碎股、现金分红自动回购，
+ * 送股/转增按每 10 股比例增加持股。
  */
 export interface SimpleBacktestRow {
   date: string;
   /**
    * 事件类型：
-   * - `buy`：定投买入（contribution + buy 合并）
-   * - `dividend`：分红到账（增加现金，不再投资）
-   * - `ex_right`：除权调整（信息行，记录价格变化，不改股数/现金）
+   * - `buy`：定投买入；
+   * - `dividend`：现金分红到账；
+   * - `dividend_reinvest`：分红回购原标的；
+   * - `share_adjustment`：送股/转增入账。
    */
-  event: "buy" | "dividend" | "ex_right";
-  /** 期初现金 = 上期期末现金 + 本期投入（仅 buy 行有投入） */
+  event: "buy" | "dividend" | "dividend_reinvest" | "share_adjustment";
+  /** 本事件发生前的现金 */
   openingCash: number;
   /** 当日不复权收盘价 */
   price: number;
-  /** 本期买入股数（buy 行，零碎股 2 位小数） */
+  /** 本事件新增股数 */
   shares: number;
   /** 累计总股票数量 */
   cumulativeShares: number;
-  /** 累计总投入金额 */
-  cumulativeCost: number;
+  /** 本期外部投入，仅定投买入行大于 0 */
+  externalContribution: number;
+  /** 累计外部投入 */
+  cumulativeContribution: number;
+  /** 本事件成交金额，仅买入和分红回购行大于 0 */
+  tradeAmount: number;
+  /** 从回测开始到当前事件的全部买入成交金额 */
+  cumulativeInvestment: number;
   /** 期末现金余额 */
   endingCash: number;
-  /** 当前盈亏率 = (价格 × 累计股数 + 期末现金) / 累计投入 - 1 */
+  /** 当前盈亏率 = (价格 × 累计股数 + 期末现金) / 累计外部投入 - 1 */
   returnRate: number;
-  /** 当次投入金额（buy 行）或分红金额（dividend 行） */
-  amount: number;
   /** 每股分红（仅 dividend 行） */
   dividendPerShare?: number;
-  /** 除权前价格（仅 ex_right 行） */
-  prevClose?: number;
+  /** 当次分红金额（仅 dividend 行） */
+  dividendAmount?: number;
+  /** 每 10 股送转比例（仅 share_adjustment 行） */
+  shareRatio?: number;
 }
 
 /** 简化回测结果 */
@@ -217,15 +218,17 @@ export interface SimpleBacktestResult {
   rows: SimpleBacktestRow[];
   /** 期末累计股数 */
   endingShares: number;
-  /** 期末累计投入 */
+  /** 期末累计外部投入 */
   endingCost: number;
+  /** 期末累计买入成交金额（含分红回购） */
+  endingInvestment: number;
   /** 期末持仓市值 */
   endingMarketValue: number;
   /** 期末现金 */
   endingCash: number;
   /** 累计分红金额 */
   totalDividendAmount: number;
-  /** 当前盈亏率 = (期末市值 + 期末现金) / 累计投入 - 1 */
+  /** 当前盈亏率 = (期末市值 + 期末现金) / 累计外部投入 - 1 */
   returnRate: number;
   warnings: string[];
 }

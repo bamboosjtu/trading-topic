@@ -7,7 +7,11 @@ import type {
   LedgerEntryInput,
   SimpleBacktestResult,
 } from "../../shared/contracts";
-import { fetchCashDividends, fetchUnadjustedPrices, stockName } from "../data/tencent";
+import {
+  fetchCorporateActions,
+  fetchUnadjustedPrices,
+  stockName,
+} from "../data/tencent";
 import { simulateBacktest, simulateBacktestSimple } from "../domain/analysis";
 import { rebuildAccount } from "../domain/ledger";
 import { LocalDatabase } from "../storage/database";
@@ -55,7 +59,7 @@ export class AppService {
       if (results.length) {
         await new Promise((resolve) => setTimeout(resolve, 1_200));
       }
-      const dividends = await fetchCashDividends(
+      const dividends = await fetchCorporateActions(
         symbol,
         request.startDate,
         request.endDate,
@@ -87,15 +91,22 @@ export class AppService {
   }
 
   listBacktests(): BacktestResult[] {
-    return this.database.listBacktests();
+    // v3 改为零碎股、费用 0、分红回购和送转入账。旧口径结果仍保留在
+    // SQLite/备份中，但不与当前结果混排，避免用户把不可比数字当成同口径比较。
+    return this.database
+      .listBacktests()
+      .filter((result) =>
+        result.provenance.some(
+          (item) => item.caliberVersion === "bank-dca-r1-node-v3",
+        ),
+      );
   }
 
   /**
-   * 简化交易成本回测（drawer 展示视图）。
+   * R1 回测审计明细（drawer 展示视图）。
    *
-   * 复用 runBacktest 的行情/分红拉取与落库逻辑，但调用 simulateBacktestSimple
-   * 生成简化明细：费用0、contribution+buy 合并行、分红/除权独立行、零碎股、
-   * 分红到账不再投资。结果不落库，仅用于同条件对比展示。
+   * 复用 runBacktest 的行情/公司行动拉取逻辑；simulateBacktestSimple 内部
+   * 直接复用主回测结果，仅转换为审计友好的行结构，不维护第二套计算口径。
    */
   async runSimpleBacktest(request: BacktestRequest): Promise<SimpleBacktestResult[]> {
     const results: SimpleBacktestResult[] = [];
@@ -108,12 +119,12 @@ export class AppService {
       if (results.length) {
         await new Promise((resolve) => setTimeout(resolve, 1_200));
       }
-      const dividends = await fetchCashDividends(
+      const dividends = await fetchCorporateActions(
         symbol,
         request.startDate,
         request.endDate,
       );
-      // 简化视图同样刷新行情落库，保证 drawer 与列表口径一致
+      // 明细视图同样刷新行情落库，保证 drawer 与列表数据快照一致。
       this.database.replaceMarketData(
         symbol,
         prices.rows,
@@ -133,7 +144,7 @@ export class AppService {
     }
     this.database.log(
       "info",
-      `简化回测：${request.symbols.join(",")} ${request.startDate}..${request.endDate}`,
+      `生成回测明细：${request.symbols.join(",")} ${request.startDate}..${request.endDate}`,
     );
     return results;
   }
