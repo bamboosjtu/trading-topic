@@ -104,9 +104,9 @@ R1 领域逻辑集中在 `electron/domain/`，界面集中在 `renderer/src/page
 | 模块 | 领域代码 | 界面代码 | 需求 | 设计简述 |
 | --- | --- | --- | --- | --- |
 | 历史回测 | `domain/analysis.ts` | `pages/BacktestPage.tsx` | [PRD §3.1](PRD_R1.md) | [历史回测_ui_brief.md](desktop_ui/历史回测_ui_brief.md) |
-| 实际账本 | `domain/ledger.ts` | `pages/AccountPage.tsx` | [PRD §3.2](PRD_R1.md) | [资产账户_ui_brief.md](desktop_ui/资产账户_ui_brief.md) |
-| 资金流水 | `domain/ledger.ts` | `pages/LedgerPage.tsx` | [PRD §3.2](PRD_R1.md) | [资金流水_ui_brief.md](desktop_ui/资金流水_ui_brief.md) |
-| 本地设置 | — | `pages/SettingsPage.tsx` | [PRD §3.3](PRD_R1.md) | [本地设置_ui_brief.md](desktop_ui/本地设置_ui_brief.md) |
+| 实际账本 | `domain/ledger.ts` | `pages/SkeletonPage.tsx`（占位） | [PRD §3.2](PRD_R1.md) | [资产账户_ui_brief.md](desktop_ui/资产账户_ui_brief.md) |
+| 资金流水 | `domain/ledger.ts` | `pages/SkeletonPage.tsx`（占位） | [PRD §3.2](PRD_R1.md) | [资金流水_ui_brief.md](desktop_ui/资金流水_ui_brief.md) |
+| 本地设置 | — | `pages/SkeletonPage.tsx`（占位） | [PRD §3.3](PRD_R1.md) | [本地设置_ui_brief.md](desktop_ui/本地设置_ui_brief.md) |
 
 金额在业务边界统一保留两位小数；回测股数允许零碎股，内部保留 6 位精度，
 界面默认显示 2 位。主结果与明细必须复用同一计算流水，不允许维护口径不同的
@@ -144,13 +144,18 @@ R1 使用 `sql.js` 在 Electron 主进程维护 SQLite，并把导出的数据�
 
 ## 8. 界面风格
 
-R1 只有四个一级入口：历史回测、资产账户、资金流水、本地设置。视觉使用墨蓝导航、雾白工作区与暖金单一强调色；信息层级依赖排版、留白和分隔线，避免卡片拼贴；动效仅用于页面进入、数据行反馈和图表更新。每个 Tab 的详细设计见 [desktop_ui/](desktop_ui/)。
+R1 使用冷白画布、深墨蓝信息层级与亮蓝单一动作色。Tailwind、Ant Design
+和手写 CSS 共用同一套冷蓝语义 token，不保留暖金、瓷色或第二套品牌主题。
+Electron 窗口与页面最小宽度均为 1920px；侧栏固定 256px，顶栏 56px。
+历史回测是当前唯一完成态页面，其余导航入口统一渲染 `SkeletonPage`，避免把
+未接入的草稿页面误认为可用功能。每个 Tab 的详细设计见
+[desktop_ui/](desktop_ui/)。
 
 ## 9. 测试与验收
 
 | 范围 | 验证 |
 | --- | --- |
-| 领域单测 | 日期顺延、整数手、费用、分红、XIRR、回撤、账本冲正与逆回购 |
+| 领域单测 | 日期顺延、零碎股、费用 0、分红、送转、XIRR、回撤、账本冲正与逆回购 |
 | 类型检查 | `npm run typecheck`，直接运行 TypeScript 编译器 |
 | 构建 | `npm run build`，验证 main、preload、renderer 三个入口 |
 | 隔离扫描 | `src/desktop/` 不含 Python，不引用 Labs 或 Research |

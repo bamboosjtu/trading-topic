@@ -1,6 +1,6 @@
 import type { Config } from "tailwindcss";
 
-// Tailwind 与 AntD 共存：色板对齐 theme.ts 中的 token，避免视觉冲突
+// Tailwind 与 AntD 共用同一套冷蓝 / 墨蓝语义色。
 export default {
   content: {
     relative: true,
@@ -13,50 +13,26 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 权威墨蓝：主按钮、链接、图表辅线、信息态
-        navy: {
-          50: "#f1f6fa",
-          100: "#e2edf4",
-          200: "#c2dae7",
-          300: "#94bdd3",
-          400: "#5e97b7",
-          500: "#37799c",
-          600: "#226186",
-          700: "#174b6b",
-          800: "#123a54",
-          900: "#0d2c40",
-          950: "#081e2e",
+        brand: {
+          50: "#edf5ff",
+          100: "#dbeafe",
+          500: "#1677ff",
+          600: "#0d5dc3",
+          700: "#0953ad",
         },
-        // 香槟金：导航选中、眉题、关键高亮（克制使用，不做大面积填充）
-        gold: {
-          50: "#fbf6eb",
-          100: "#f6ebd2",
-          200: "#edd7a9",
-          300: "#e2c07e",
-          400: "#d4a857",
-          500: "#c79345",
-          600: "#a97634",
-          700: "#875c28",
-          800: "#6b4820",
-          900: "#543819",
+        surface: {
+          canvas: "#f6f8fb",
+          panel: "#ffffff",
+          muted: "#f8fafc",
         },
-        // 暖瓷中性色：工作区底色、文本、描边（与金色系同温）
-        ink: {
-          50: "#faf8f4",
-          100: "#f5f2eb",
-          200: "#ece7db",
-          300: "#dcd5c3",
-          400: "#a39e8d",
-          500: "#7b7668",
-          600: "#5b574c",
-          700: "#403d36",
-          800: "#2b2925",
-          900: "#1e1c18",
+        text: {
+          strong: "#112543",
+          DEFAULT: "#1e3554",
+          muted: "#5d6f87",
         },
-        // 面板描边 / 细分隔线
-        line: {
-          DEFAULT: "#e6e0d2",
-          soft: "#f0ebdf",
+        stroke: {
+          DEFAULT: "#dfe6ef",
+          soft: "#edf1f6",
         },
       },
       fontFamily: {
@@ -71,10 +47,9 @@ export default {
         mono: ["'JetBrains Mono'", "'SF Mono'", "Menlo", "Consolas", "monospace"],
       },
       boxShadow: {
-        // 暖调轻阴影：面板浮于瓷白工作区之上
-        card: "0 1px 2px 0 rgba(69, 58, 33, 0.04), 0 8px 24px -16px rgba(69, 58, 33, 0.12)",
+        card: "0 1px 2px rgba(20, 42, 76, 0.03), 0 8px 24px -18px rgba(20, 42, 76, 0.18)",
         "card-hover":
-          "0 2px 4px -1px rgba(69, 58, 33, 0.05), 0 12px 32px -16px rgba(69, 58, 33, 0.18)",
+          "0 2px 4px -1px rgba(20, 42, 76, 0.05), 0 12px 32px -16px rgba(20, 42, 76, 0.24)",
       },
       borderRadius: {
         xl: "12px",

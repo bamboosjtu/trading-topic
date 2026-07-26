@@ -293,6 +293,7 @@ export function simulateBacktest(
     },
     transactions,
     equityCurve,
+    priceSeries: prices,
     warnings,
     provenance,
     createdAt: new Date().toISOString(),

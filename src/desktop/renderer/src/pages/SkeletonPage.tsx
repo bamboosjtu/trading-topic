@@ -11,7 +11,7 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
     description: "从收益、回撤与分红维度并排观察候选标的。",
   },
   "/projection": {
-    title: "10年测算",
+    title: "10年视图",
     description: "基于投入与分红假设测算长期资产积累路径。",
   },
   "/overview": {
@@ -34,9 +34,9 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
     title: "资金流水",
     description: "追踪资金转入、转出与现金变动。",
   },
-  "/repo": {
-    title: "国债逆回购",
-    description: "管理闲置资金的逆回购记录与到期情况。",
+  "/drawdown-monitor": {
+    title: "回撤监控",
+    description: "跟踪持仓回撤区间、持续时间与风险状态。",
   },
   "/data-sources": {
     title: "数据源管理",

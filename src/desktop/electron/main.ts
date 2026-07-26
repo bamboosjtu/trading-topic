@@ -25,11 +25,11 @@ function timestamp(): string {
 function createWindow(): void {
   const preloadPath = join(__dirname, "..", "preload", "preload.js");
   const win = new BrowserWindow({
-    width: 1480,
-    height: 920,
-    minWidth: 1100,
-    minHeight: 720,
-    backgroundColor: "#f3f5f7",
+    width: 1920,
+    height: 1080,
+    minWidth: 1920,
+    minHeight: 900,
+    backgroundColor: "#f6f8fb",
     title: "攒股收息",
     autoHideMenuBar: true,
     webPreferences: {

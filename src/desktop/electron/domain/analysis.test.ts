@@ -57,6 +57,13 @@ describe("simulateBacktest", () => {
     expect(result.metrics.totalDividend).toBeCloseTo(111.11, 2);
     expect(result.metrics.endingCash).toBe(0);
     expect(result.metrics.endingAsset).toBeCloseTo(2_777.78, 2);
+    expect(result.priceSeries).toEqual([
+      { date: "2024-01-02", close: 9 },
+      { date: "2024-01-03", close: 9.2 },
+      { date: "2024-02-01", close: 10 },
+      { date: "2024-02-02", close: 10 },
+      { date: "2024-03-01", close: 8 },
+    ]);
   });
 
   it("送股和转增按每 10 股比例在除权日增加持股", () => {

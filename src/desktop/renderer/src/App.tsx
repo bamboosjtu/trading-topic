@@ -23,7 +23,7 @@ export function App() {
               "/trades",
               "/dividend-calendar",
               "/cashflow",
-              "/repo",
+              "/drawdown-monitor",
               "/data-sources",
               "/fees",
               "/backup",

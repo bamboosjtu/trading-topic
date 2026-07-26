@@ -37,6 +37,7 @@ export type {
   HealthResponse,
   LedgerEntry,
   LedgerEntryInput,
+  PricePoint,
   SimpleBacktestResult,
   SimpleBacktestRow,
 } from "../../../shared/contracts";

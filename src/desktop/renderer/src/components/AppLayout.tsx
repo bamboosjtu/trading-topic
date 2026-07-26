@@ -1,23 +1,18 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button, Layout, Tooltip } from "antd";
 import {
   AimOutlined,
   ApartmentOutlined,
-  BankOutlined,
   CalendarOutlined,
   CloudUploadOutlined,
   DatabaseOutlined,
-  DoubleLeftOutlined,
-  DoubleRightOutlined,
   DollarCircleOutlined,
-  DownOutlined,
   FundProjectionScreenOutlined,
   LineChartOutlined,
   PieChartOutlined,
   SettingOutlined,
   StockOutlined,
   SwapOutlined,
-  UserOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
@@ -44,18 +39,22 @@ export const NAV_GROUPS: NavigationGroup[] = [
       { key: "/backtest", icon: <FundProjectionScreenOutlined />, label: "历史回测" },
       { key: "/portfolio-backtest", icon: <ApartmentOutlined />, label: "组合回测" },
       { key: "/symbol-compare", icon: <AimOutlined />, label: "标的对比" },
-      { key: "/projection", icon: <LineChartOutlined />, label: "10年测算" },
+      { key: "/projection", icon: <LineChartOutlined />, label: "10年视图" },
     ],
   },
   {
-    label: "账户",
+    label: "资产",
     items: [
       { key: "/overview", icon: <WalletOutlined />, label: "资产总览" },
       { key: "/positions", icon: <PieChartOutlined />, label: "持仓明细" },
       { key: "/trades", icon: <SwapOutlined />, label: "交易流水" },
       { key: "/dividend-calendar", icon: <CalendarOutlined />, label: "分红日历" },
       { key: "/cashflow", icon: <StockOutlined />, label: "资金流水" },
-      { key: "/repo", icon: <BankOutlined />, label: "国债逆回购" },
+      {
+        key: "/drawdown-monitor",
+        icon: <FundProjectionScreenOutlined />,
+        label: "回撤监控",
+      },
     ],
   },
   {
@@ -72,7 +71,6 @@ export const NAV_GROUPS: NavigationGroup[] = [
 export function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: api.health,
@@ -87,32 +85,20 @@ export function AppLayout() {
   );
 
   return (
-    <Layout className={`app-shell${collapsed ? " sidebar-collapsed" : ""}`}>
+    <Layout className="app-shell">
       <Sider
         width={256}
-        collapsedWidth={72}
-        collapsed={collapsed}
         trigger={null}
         theme="light"
         className="app-sidebar"
       >
         <div className="flex h-full flex-col">
           <div className="app-brand">
-            <div className="brand-mark">股</div>
+            <div className="brand-mark">攒</div>
             <div className="brand-copy">
               <div className="brand-name">攒股收息</div>
               <div className="brand-en">DIVIDEND DESK</div>
             </div>
-            <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
-              <button
-                type="button"
-                className="sidebar-toggle"
-                aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
-                onClick={() => setCollapsed((value) => !value)}
-              >
-                {collapsed ? <DoubleRightOutlined /> : <DoubleLeftOutlined />}
-              </button>
-            </Tooltip>
           </div>
 
           <nav className="app-navigation" aria-label="主导航">
@@ -156,24 +142,13 @@ export function AppLayout() {
             </div>
             <Tooltip title="设置">
               <Button
-                type="text"
+                type="default"
                 aria-label="打开设置"
                 className="header-icon-button"
                 icon={<SettingOutlined />}
                 onClick={() => navigate("/settings")}
               />
             </Tooltip>
-            <button
-              type="button"
-              className="research-mode"
-              onClick={() => navigate("/settings")}
-            >
-              <span className="research-avatar">
-                <UserOutlined />
-              </span>
-              <span>本地研究模式</span>
-              <DownOutlined className="text-[9px]" />
-            </button>
           </div>
         </Header>
 

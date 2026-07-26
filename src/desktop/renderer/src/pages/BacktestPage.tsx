@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -20,9 +21,8 @@ import {
   DownloadOutlined,
   GiftOutlined,
   InfoCircleOutlined,
-  LineChartOutlined,
+  FallOutlined,
   PlusOutlined,
-  ReloadOutlined,
   RiseOutlined,
   SettingOutlined,
   TrophyFilled,
@@ -33,6 +33,7 @@ import {
   api,
   type BacktestRequest,
   type BacktestResult,
+  type PricePoint,
   type SimpleBacktestResult,
   type SimpleBacktestRow,
 } from "../api/client";
@@ -68,8 +69,22 @@ const EVENT_COLORS: Record<SimpleBacktestRow["event"], string> = {
 
 const CHART_COLORS = ["#1677ff", "#ff9f1a", "#12a594", "#7c6cf2"];
 
-type ChartMetric = "asset" | "return" | "drawdown";
-type ChartRange = "all" | 1 | 3 | 5 | "max";
+type ChartMetric = "kline" | "return" | "drawdown";
+type CandlePeriod = "day" | "week" | "month";
+
+interface CandlePoint {
+  date: string;
+  open: number;
+  close: number;
+  low: number;
+  high: number;
+}
+
+interface DrawdownPeriod {
+  months: number;
+  start: string;
+  end: string;
+}
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -99,34 +114,101 @@ function totalReturn(result: BacktestResult): number {
     : 0;
 }
 
-function longestDrawdownMonths(result: BacktestResult): number {
+function longestDrawdownPeriod(result: BacktestResult): DrawdownPeriod {
   let peak = Number.NEGATIVE_INFINITY;
-  let drawdownStart: string | null = null;
+  let peakDate = result.actualStartDate;
+  let drawdownStart = "";
   let longestDays = 0;
+  let longestStart = "";
+  let longestEnd = "";
 
   for (const point of result.equityCurve) {
     const value = point.nav ?? point.asset;
     if (value >= peak) {
       if (drawdownStart) {
-        longestDays = Math.max(
-          longestDays,
-          (Date.parse(point.date) - Date.parse(drawdownStart)) / 86_400_000,
-        );
+        const duration =
+          (Date.parse(point.date) - Date.parse(drawdownStart)) / 86_400_000;
+        if (duration > longestDays) {
+          longestDays = duration;
+          longestStart = drawdownStart;
+          longestEnd = point.date;
+        }
       }
       peak = value;
-      drawdownStart = null;
+      peakDate = point.date;
+      drawdownStart = "";
     } else if (!drawdownStart) {
-      drawdownStart = point.date;
+      drawdownStart = peakDate;
     }
   }
 
   if (drawdownStart && result.actualEndDate) {
-    longestDays = Math.max(
-      longestDays,
-      (Date.parse(result.actualEndDate) - Date.parse(drawdownStart)) / 86_400_000,
-    );
+    const duration =
+      (Date.parse(result.actualEndDate) - Date.parse(drawdownStart)) / 86_400_000;
+    if (duration > longestDays) {
+      longestDays = duration;
+      longestStart = drawdownStart;
+      longestEnd = result.actualEndDate;
+    }
   }
-  return Math.max(0, Math.round(longestDays / 30.4375));
+  return {
+    months: Math.max(0, Math.round(longestDays / 30.4375)),
+    start: longestStart,
+    end: longestEnd,
+  };
+}
+
+function longestDrawdownMonths(result: BacktestResult): number {
+  return longestDrawdownPeriod(result).months;
+}
+
+function resultPrices(result: BacktestResult): PricePoint[] {
+  if (result.priceSeries?.length) return result.priceSeries;
+  const prices = new Map<string, number>();
+  for (const row of result.transactions) {
+    if (row.price > 0) prices.set(row.date, row.price);
+  }
+  return [...prices]
+    .map(([date, close]) => ({ date, close }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function periodKey(date: string, period: CandlePeriod): string {
+  if (period === "month") return date.slice(0, 7);
+  if (period === "day") return date;
+  const value = new Date(`${date}T00:00:00Z`);
+  const day = value.getUTCDay() || 7;
+  value.setUTCDate(value.getUTCDate() - day + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+function toCandles(prices: PricePoint[], period: CandlePeriod): CandlePoint[] {
+  const groups = new Map<string, PricePoint[]>();
+  for (const point of prices) {
+    const key = periodKey(point.date, period);
+    const group = groups.get(key) ?? [];
+    group.push(point);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => {
+    const ordered = [...group].sort((a, b) => a.date.localeCompare(b.date));
+    const closes = ordered.map((point) => point.close);
+    return {
+      date: ordered.at(-1)!.date,
+      open: ordered[0].close,
+      close: ordered.at(-1)!.close,
+      low: Math.min(...closes),
+      high: Math.max(...closes),
+    };
+  });
+}
+
+function movingAverage(values: number[], window: number): Array<number | "-"> {
+  return values.map((_, index) => {
+    if (index < window - 1) return "-";
+    const slice = values.slice(index - window + 1, index + 1);
+    return Number((slice.reduce((sum, value) => sum + value, 0) / window).toFixed(3));
+  });
 }
 
 function deriveSimpleRequest(record: BacktestResult): BacktestRequest {
@@ -193,8 +275,8 @@ export function BacktestPage() {
   const [detail, setDetail] = useState<BacktestResult | null>(null);
   const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | "custom">("custom");
   const [rulesExpanded, setRulesExpanded] = useState(false);
-  const [chartMetric, setChartMetric] = useState<ChartMetric>("asset");
-  const [chartRange, setChartRange] = useState<ChartRange>("all");
+  const [chartMetric, setChartMetric] = useState<ChartMetric>("kline");
+  const [candlePeriod, setCandlePeriod] = useState<CandlePeriod>("week");
   const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const [detailPage, setDetailPage] = useState(1);
   const [detailEventFilters, setDetailEventFilters] = useState<
@@ -252,10 +334,17 @@ export function BacktestPage() {
     setDetailEventFilters([]);
   }, [detail?.id]);
 
-  const results = useMemo(
-    () => currentResults.length ? currentResults : history.data?.slice(0, 4) ?? [],
-    [currentResults, history.data],
-  );
+  const results = useMemo(() => {
+    const source = currentResults.length
+      ? currentResults
+      : (history.data ?? []).filter((result) => selectedSymbols.includes(result.symbol));
+    const symbols = new Set<string>();
+    return source.filter((result) => {
+      if (symbols.has(result.symbol)) return false;
+      symbols.add(result.symbol);
+      return true;
+    }).slice(0, 4);
+  }, [currentResults, history.data, selectedSymbols]);
 
   const rankedResults = useMemo(
     () => [...results].sort((a, b) => b.metrics.endingAsset - a.metrics.endingAsset),
@@ -277,10 +366,13 @@ export function BacktestPage() {
     const dividendWinner = [...results].sort(
       (a, b) => b.metrics.totalDividend - a.metrics.totalDividend,
     )[0];
+    const longestPeriod = longestDrawdown
+      ? longestDrawdownPeriod(longestDrawdown)
+      : null;
 
     return [
       {
-        label: "每个标的累计投入",
+        label: "累计投入",
         value: results[0] ? money(results[0].metrics.totalContribution) : "—",
         helper: "",
         icon: <DollarOutlined />,
@@ -301,52 +393,127 @@ export function BacktestPage() {
         tone: "coral",
       },
       {
-        label: "最大回撤（最低）",
-        value: deepestDrawdown ? percent(deepestDrawdown.metrics.maxDrawdown) : "—",
-        helper: deepestDrawdown?.name ?? "",
-        icon: <LineChartOutlined />,
-        tone: "teal",
-      },
-      {
-        label: "最长亏损时间（最短）",
-        value: longestDrawdown ? `${longestDrawdownMonths(longestDrawdown)} 个月` : "—",
-        helper: longestDrawdown?.name ?? "",
-        icon: <ClockCircleOutlined />,
-        tone: "indigo",
-      },
-      {
         label: "累计分红（最高）",
         value: dividendWinner ? money(dividendWinner.metrics.totalDividend) : "—",
         helper: dividendWinner?.name ?? "",
         icon: <GiftOutlined />,
         tone: "amber",
       },
+      {
+        label: "最大回撤",
+        value: deepestDrawdown ? percent(deepestDrawdown.metrics.maxDrawdown) : "—",
+        helper: deepestDrawdown?.name ?? "",
+        icon: <FallOutlined />,
+        tone: "teal",
+      },
+      {
+        label: "最长连续回撤",
+        value: longestPeriod ? `${longestPeriod.months} 个月` : "—",
+        helper:
+          longestPeriod?.start && longestPeriod.end
+            ? `${longestPeriod.start.slice(0, 7)} → ${longestPeriod.end.slice(0, 7)}`
+            : longestDrawdown?.name ?? "",
+        icon: <ClockCircleOutlined />,
+        tone: "indigo",
+      },
     ];
   }, [rankedResults, results]);
 
   const chartOption = useMemo(() => {
-    const latestDate = results[0]?.equityCurve.at(-1)?.date;
-    const cutoff =
-      latestDate && typeof chartRange === "number"
-        ? new Date(
-            new Date(latestDate).setFullYear(new Date(latestDate).getFullYear() - chartRange),
-          )
-            .toISOString()
-            .slice(0, 10)
-        : null;
-    const visibleCurve = (result: BacktestResult) =>
-      result.equityCurve.filter((point) => !cutoff || point.date >= cutoff);
-    const baseCurve = results[0] ? visibleCurve(results[0]) : [];
+    if (chartMetric === "kline") {
+      const focus = rankedResults[0];
+      const candles = focus
+        ? toCandles(resultPrices(focus), candlePeriod)
+        : [];
+      const closes = candles.map((point) => point.close);
+      return {
+        animationDuration: 320,
+        tooltip: {
+          trigger: "axis",
+          axisPointer: { type: "cross" },
+          backgroundColor: "#ffffff",
+          borderColor: "#dfe6ef",
+          borderWidth: 1,
+          textStyle: { color: "#183251", fontSize: 12 },
+          extraCssText:
+            "box-shadow: 0 10px 28px -10px rgba(20,42,76,.28);border-radius:6px;",
+        },
+        legend: {
+          top: 3,
+          left: 20,
+          itemWidth: 17,
+          itemHeight: 2,
+          itemGap: 24,
+          data: ["收盘价（不复权）", "MA5", "MA20", "MA40"],
+          textStyle: { color: "#64758c", fontSize: 11 },
+        },
+        grid: { left: 14, right: 14, top: 40, bottom: 17, containLabel: true },
+        xAxis: {
+          type: "category",
+          boundaryGap: true,
+          data: candles.map((point) => point.date),
+          axisLabel: {
+            hideOverlap: true,
+            color: "#5d6f87",
+            fontSize: 10,
+            formatter: (value: string) => value.slice(0, 7),
+          },
+          axisLine: { lineStyle: { color: "#dce4ed" } },
+          axisTick: { show: false },
+        },
+        yAxis: {
+          type: "value",
+          scale: true,
+          axisLabel: {
+            color: "#5d6f87",
+            fontSize: 10,
+            formatter: (value: number) => value.toFixed(2),
+          },
+          splitLine: { lineStyle: { color: "#e9eef4", type: "dashed" } },
+        },
+        series: [
+          {
+            name: "收盘价（不复权）",
+            type: "candlestick",
+            data: candles.map((point) => [
+              point.open,
+              point.close,
+              point.low,
+              point.high,
+            ]),
+            itemStyle: {
+              color: "#f04438",
+              color0: "#13a68f",
+              borderColor: "#f04438",
+              borderColor0: "#13a68f",
+            },
+          },
+          ...[
+            [5, "#f59b17"],
+            [20, "#1677ff"],
+            [40, "#13a68f"],
+          ].map(([window, color]) => ({
+            name: `MA${window}`,
+            type: "line",
+            showSymbol: false,
+            smooth: 0.1,
+            data: movingAverage(closes, Number(window)),
+            lineStyle: { width: 1.3, color },
+            itemStyle: { color },
+          })),
+        ],
+      };
+    }
 
+    const baseCurve = results[0]?.equityCurve ?? [];
     const series = results.map((result, index) => {
-      let peak = 0;
+      let peak = Number.NEGATIVE_INFINITY;
       return {
         name: result.name,
         type: "line",
         showSymbol: false,
         smooth: 0.08,
-        data: visibleCurve(result).map((point) => {
-          if (chartMetric === "asset") return point.asset;
+        data: result.equityCurve.map((point) => {
           if (chartMetric === "return") {
             return point.contribution ? point.asset / point.contribution - 1 : 0;
           }
@@ -364,19 +531,6 @@ export function BacktestPage() {
       };
     });
 
-    if (chartMetric === "asset" && baseCurve.length) {
-      series.push({
-        name: "累计投入（每个标的）",
-        type: "line",
-        showSymbol: false,
-        smooth: 0,
-        data: baseCurve.map((point) => point.contribution),
-        lineStyle: { width: 1.3, color: "#8799b3", type: "dashed" },
-        itemStyle: { color: "#8799b3" },
-        emphasis: { focus: "series" },
-      });
-    }
-
     return {
       animationDuration: 420,
       tooltip: {
@@ -388,8 +542,7 @@ export function BacktestPage() {
         textStyle: { color: "#183251", fontSize: 11 },
         extraCssText:
           "box-shadow: 0 10px 28px -10px rgba(20,42,76,.28);border-radius:6px;",
-        valueFormatter: (value: number) =>
-          chartMetric === "asset" ? money(value) : percent(value),
+        valueFormatter: (value: number) => percent(value),
       },
       grid: { left: 14, right: 12, top: 38, bottom: 18, containLabel: true },
       legend: {
@@ -407,7 +560,7 @@ export function BacktestPage() {
         data: baseCurve.map((point) => point.date),
         axisLabel: {
           hideOverlap: true,
-          color: "#71839b",
+          color: "#5d6f87",
           fontSize: 10,
           formatter: (value: string) => value.slice(0, 7),
         },
@@ -416,21 +569,18 @@ export function BacktestPage() {
       },
       yAxis: {
         type: "value",
-        scale: chartRange === "max",
+        scale: false,
         axisLabel: {
-          color: "#71839b",
+          color: "#5d6f87",
           fontSize: 10,
-          formatter: (value: number) =>
-            chartMetric === "asset"
-              ? value === 0 ? "0" : `${Math.round(value / 10_000)}万`
-              : `${Math.round(value * 100)}%`,
+          formatter: (value: number) => `${Math.round(value * 100)}%`,
         },
         splitLine: { lineStyle: { color: "#e9eef4" } },
       },
       series,
       color: CHART_COLORS,
     };
-  }, [chartMetric, chartRange, results]);
+  }, [candlePeriod, chartMetric, rankedResults, results]);
 
   const setDatePreset = (years: 3 | 5 | 10 | "custom") => {
     setRangePreset(years);
@@ -440,16 +590,14 @@ export function BacktestPage() {
   };
 
   const metricTabs: Array<[ChartMetric, string]> = [
-    ["asset", "资产曲线"],
+    ["kline", "行情K线"],
     ["return", "收益率曲线"],
-    ["drawdown", "回撤曲线"],
+    ["drawdown", "最大回撤曲线"],
   ];
-  const chartRanges: Array<[ChartRange, string]> = [
-    ["all", "全部"],
-    [1, "1年"],
-    [3, "3年"],
-    [5, "5年"],
-    ["max", "最大"],
+  const candlePeriods: Array<[CandlePeriod, string]> = [
+    ["day", "日K"],
+    ["week", "周K"],
+    ["month", "月K"],
   ];
 
   return (
@@ -487,66 +635,73 @@ export function BacktestPage() {
           </Form.Item>
           <div className="backtest-config-grid">
             <div className="symbol-field">
-              <Form.Item
-                name="symbols"
-                label="标的选择"
-                rules={[{ required: true, message: "至少选择一个标的" }]}
-                className="!mb-0 min-w-0"
-              >
-                <Select
-                  mode="multiple"
-                  maxCount={4}
-                  options={BANK_OPTIONS}
-                  placeholder="添加标的"
-                  className="backtest-symbol-select"
-                  suffixIcon={<PlusOutlined />}
-                  open={symbolPickerOpen}
-                  onOpenChange={setSymbolPickerOpen}
-                  allowClear
-                />
-              </Form.Item>
-              <Button
-                type="default"
-                size="small"
-                icon={<PlusOutlined />}
-                className="add-symbol-button"
-                disabled={selectedSymbols.length >= 4}
-                onClick={() => setSymbolPickerOpen(true)}
-              >
-                添加标的
-              </Button>
+              <div className="field-label required-label">标的选择</div>
+              <div className="symbol-control-row">
+                <Form.Item
+                  name="symbols"
+                  rules={[{ required: true, message: "至少选择一个标的" }]}
+                  className="!mb-0 min-w-0 flex-1"
+                >
+                  <Select
+                    mode="multiple"
+                    maxCount={4}
+                    options={BANK_OPTIONS}
+                    placeholder="添加标的"
+                    className="backtest-symbol-select"
+                    open={symbolPickerOpen}
+                    onOpenChange={setSymbolPickerOpen}
+                    allowClear
+                  />
+                </Form.Item>
+                <Button
+                  type="default"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  className="add-symbol-button"
+                  disabled={selectedSymbols.length >= 4}
+                  onClick={() => setSymbolPickerOpen(true)}
+                >
+                  添加标的
+                </Button>
+              </div>
             </div>
 
             <div className="backtest-range">
               <div className="field-label">回测区间</div>
-              <div className="range-shortcuts" aria-label="快捷回测区间">
-                {([3, 5, 10, "custom"] as const).map((range) => (
-                  <button
-                    key={range}
-                    type="button"
-                    className={rangePreset === range ? "active" : ""}
-                    onClick={() => setDatePreset(range)}
-                  >
-                    {range === "custom" ? "自定义" : `近${range}年`}
-                  </button>
-                ))}
-              </div>
-              <div className="date-range-inputs">
-                <Form.Item name="startDate" className="!mb-0">
-                  <Input
-                    type="date"
-                    aria-label="开始日期"
-                    onChange={() => setRangePreset("custom")}
-                  />
-                </Form.Item>
-                <span>至</span>
-                <Form.Item name="endDate" className="!mb-0">
-                  <Input
-                    type="date"
-                    aria-label="结束日期"
-                    onChange={() => setRangePreset("custom")}
-                  />
-                </Form.Item>
+              <div className="range-control-row">
+                <div className="range-shortcuts" aria-label="快捷回测区间">
+                  {([3, 5, 10, "custom"] as const).map((range) => (
+                    <button
+                      key={range}
+                      type="button"
+                      className={rangePreset === range ? "active" : ""}
+                      onClick={() => setDatePreset(range)}
+                    >
+                      {range === "custom" ? "自定义" : `近${range}年`}
+                    </button>
+                  ))}
+                </div>
+                <div className="date-field">
+                  <span>开始日期</span>
+                  <Form.Item name="startDate" className="!mb-0">
+                    <Input
+                      type="date"
+                      aria-label="开始日期"
+                      onChange={() => setRangePreset("custom")}
+                    />
+                  </Form.Item>
+                </div>
+                <span className="date-separator">→</span>
+                <div className="date-field">
+                  <span>结束日期</span>
+                  <Form.Item name="endDate" className="!mb-0">
+                    <Input
+                      type="date"
+                      aria-label="结束日期"
+                      onChange={() => setRangePreset("custom")}
+                    />
+                  </Form.Item>
+                </div>
               </div>
             </div>
 
@@ -595,12 +750,9 @@ export function BacktestPage() {
                   </button>
                 </Popover>
               </div>
-              <Select
-                value="zero"
-                aria-label="费用模式"
-                options={[{ value: "zero", label: "R1 简化费用（0 元）" }]}
-                className="w-full"
-              />
+              <div className="fee-mode-display" aria-label="费用模式：R1 简化费用 0 元">
+                R1 简化费用（0 元）
+              </div>
             </div>
 
             <Button
@@ -659,7 +811,6 @@ export function BacktestPage() {
 
       <section className="workspace-panel backtest-chart-panel">
         <div className="chart-toolbar">
-          <div className="chart-title">资产曲线对比</div>
           <div className="chart-metric-tabs" role="tablist" aria-label="图表指标">
             {metricTabs.map(([key, label]) => (
               <button
@@ -675,36 +826,29 @@ export function BacktestPage() {
             ))}
           </div>
           <div className="chart-actions">
-            <div className="chart-range-tabs" aria-label="图表区间">
-              {chartRanges.map(([key, label]) => (
-                <button
-                  key={String(key)}
-                  type="button"
-                  className={chartRange === key ? "active" : ""}
-                  onClick={() => setChartRange(key)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <span className="toolbar-divider" />
-            <Tooltip title="曲线视图">
-              <Button aria-label="曲线视图" icon={<LineChartOutlined />} />
-            </Tooltip>
-            <Tooltip title="恢复全部区间">
-              <Button
-                aria-label="恢复全部区间"
-                icon={<ReloadOutlined />}
-                onClick={() => setChartRange("all")}
-              />
-            </Tooltip>
+            {chartMetric === "kline" && (
+              <div className="chart-range-tabs" aria-label="K线周期">
+                {candlePeriods.map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={candlePeriod === key ? "active" : ""}
+                    onClick={() => setCandlePeriod(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <Tooltip title="导出对比结果">
               <Button
                 aria-label="导出对比结果"
                 icon={<DownloadOutlined />}
                 disabled={!results.length}
                 onClick={() => downloadComparison(rankedResults)}
-              />
+              >
+                导出
+              </Button>
             </Tooltip>
           </div>
         </div>
@@ -712,12 +856,18 @@ export function BacktestPage() {
           <div className="chart-loading">
             <Skeleton active paragraph={{ rows: 5 }} title={false} />
           </div>
+        ) : !results.length ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="设置参数并开始回测后，将在这里展示行情与收益曲线"
+            className="chart-empty"
+          />
         ) : (
           <ReactECharts
             notMerge
             option={chartOption}
             className="backtest-chart"
-            style={{ height: 250 }}
+            style={{ height: 226 }}
           />
         )}
       </section>
@@ -795,9 +945,21 @@ export function BacktestPage() {
             },
             {
               title: "最长亏损时间",
-              width: 105,
+              width: 128,
               className: "tabular-nums",
-              render: (_, row) => `${longestDrawdownMonths(row)} 个月`,
+              render: (_, row) => {
+                const period = longestDrawdownPeriod(row);
+                return (
+                  <div className="drawdown-period">
+                    <span>{period.months} 个月</span>
+                    {period.start && period.end && (
+                      <small>
+                        {period.start.slice(0, 7)} → {period.end.slice(0, 7)}
+                      </small>
+                    )}
+                  </div>
+                );
+              },
             },
             {
               title: "累计分红",
@@ -854,10 +1016,10 @@ export function BacktestPage() {
             "回测明细"
           )
         }
-        width={990}
+        width={1400}
         open={Boolean(detail)}
         footer={null}
-        style={{ top: "22vh", left: "3vw" }}
+        style={{ top: 82 }}
         destroyOnHidden
         className="backtest-detail-modal"
         rootClassName="backtest-detail-root"
@@ -920,13 +1082,13 @@ export function BacktestPage() {
                   {
                     title: "日期",
                     dataIndex: "date",
-                    width: 90,
+                    width: 110,
                     className: "tabular-nums",
                   },
                   {
                     title: "事件",
                     dataIndex: "event",
-                    width: 72,
+                    width: 100,
                     render: (event: SimpleBacktestRow["event"]) => (
                       <Tag color={EVENT_COLORS[event]} bordered={false}>
                         {EVENT_LABELS[event]}
@@ -943,7 +1105,7 @@ export function BacktestPage() {
                   {
                     title: "期初现金",
                     dataIndex: "openingCash",
-                    width: 88,
+                    width: 120,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -951,7 +1113,7 @@ export function BacktestPage() {
                   {
                     title: "外部投入",
                     dataIndex: "externalContribution",
-                    width: 82,
+                    width: 110,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value > 0 ? money(value) : "—",
@@ -959,7 +1121,7 @@ export function BacktestPage() {
                   {
                     title: "收盘价",
                     dataIndex: "price",
-                    width: 58,
+                    width: 90,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value.toFixed(2),
@@ -967,7 +1129,7 @@ export function BacktestPage() {
                   {
                     title: "新增股数",
                     dataIndex: "shares",
-                    width: 76,
+                    width: 105,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number, row) =>
@@ -975,7 +1137,7 @@ export function BacktestPage() {
                   },
                   {
                     title: "发生金额",
-                    width: 88,
+                    width: 120,
                     align: "right",
                     className: "tabular-nums",
                     render: (_, row) => {
@@ -991,7 +1153,7 @@ export function BacktestPage() {
                   {
                     title: "累计股数",
                     dataIndex: "cumulativeShares",
-                    width: 82,
+                    width: 115,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => value.toFixed(2),
@@ -999,7 +1161,7 @@ export function BacktestPage() {
                   {
                     title: "累计投入",
                     dataIndex: "cumulativeContribution",
-                    width: 88,
+                    width: 120,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1007,7 +1169,7 @@ export function BacktestPage() {
                   {
                     title: "累计分红",
                     dataIndex: "cumulativeDividend",
-                    width: 82,
+                    width: 120,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1015,7 +1177,7 @@ export function BacktestPage() {
                   {
                     title: "期末现金",
                     dataIndex: "endingCash",
-                    width: 82,
+                    width: 110,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => money(value),
@@ -1023,7 +1185,7 @@ export function BacktestPage() {
                   {
                     title: "盈亏率",
                     dataIndex: "returnRate",
-                    width: 64,
+                    width: 90,
                     align: "right",
                     className: "tabular-nums",
                     render: (value: number) => (

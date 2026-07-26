@@ -4,7 +4,11 @@
 >
 > 架构约束：[ARCHITECTURE.md](../ARCHITECTURE.md)
 >
-> 实现代码：`src/desktop/electron/domain/ledger.ts`、`src/desktop/renderer/src/pages/AccountPage.tsx`
+> 实现状态：领域代码位于 `src/desktop/electron/domain/ledger.ts`；R1 当前界面
+> 统一由 `src/desktop/renderer/src/pages/SkeletonPage.tsx` 占位，以下内容为
+> 后续实现规范，不代表页面已经接入。
+
+> 视觉系统：只使用冷白 / 墨蓝 / 亮蓝设计 token，禁止暖金与瓷色主题。
 
 ## 1. 页面结构
 

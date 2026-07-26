@@ -2,13 +2,13 @@ import type { ThemeConfig } from "antd";
 
 /**
  * 新版投研工作台基线：冷白画布、深海军蓝文字、亮蓝单一动作色。
- * 页面密度与组件尺寸以 1536 × 1024 的设计稿为基准。
+ * 页面密度与组件尺寸以 1920 × 1080 的设计稿为基准。
  */
 export const theme: ThemeConfig = {
   token: {
     colorPrimary: "#1677ff",
     colorInfo: "#1677ff",
-    colorLink: "#1677ff",
+    colorLink: "#0d5dc3",
     colorSuccess: "#13a68f",
     colorWarning: "#f5a623",
     colorError: "#f04438",
@@ -38,7 +38,7 @@ export const theme: ThemeConfig = {
   components: {
     Layout: {
       headerBg: "#ffffff",
-      headerHeight: 58,
+      headerHeight: 56,
       bodyBg: "#f6f8fb",
       siderBg: "#ffffff",
     },

@@ -97,6 +97,8 @@ export interface BacktestResult {
   metrics: BacktestMetrics;
   transactions: BacktestTransaction[];
   equityCurve: EquityPoint[];
+  /** 回测区间的不复权收盘价，用于产品端独立绘制行情 K 线。 */
+  priceSeries?: PricePoint[];
   warnings: string[];
   provenance: DataProvenance[];
   createdAt: string;

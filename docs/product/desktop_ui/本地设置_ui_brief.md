@@ -4,7 +4,10 @@
 >
 > 架构约束：[ARCHITECTURE.md](../ARCHITECTURE.md)
 >
-> 实现代码：`src/desktop/renderer/src/pages/SettingsPage.tsx`
+> 实现状态：R1 当前界面统一由
+> `src/desktop/renderer/src/pages/SkeletonPage.tsx` 占位，以下内容为后续实现规范。
+
+> 视觉系统：只使用冷白 / 墨蓝 / 亮蓝设计 token，禁止引入第二套品牌主题。
 
 ## 1. 页面结构
 
@@ -31,13 +34,12 @@
 | 行情截止 | `health.dataCutoff` | 无快照显示"尚无快照" |
 | 行情主源 | 腾讯财经 · 不复权日线 | 固定 |
 | 分红补充源 | 东方财富 · 已实施税前现金分红 | 固定 |
-| 佣金 | R1 回测费用为 0 | 来自 settings |
-| 口径版本 | `caliberVersion` | 默认 `bank-dca-r1-node-v3` |
+| 佣金 | 万分之 2.5，最低 5 元 | 来自 settings |
+| 口径版本 | `caliberVersion` | 默认 `bank-dca-r1-node-v1` |
 
 健康状态标签：本地服务正常（success）/ 检查中（default）。
 
-R1 费用说明：允许零碎股，回测买入费用为 0；不计印花税、分红税、过户费与滑点；
-期末资产按市值估算，不假设卖出。
+R1 费用说明：不计卖出印花税、分红税、过户费与滑点；期末资产按市值估算，不扣期末卖出费用。
 
 ## 3. 操作面板
 
