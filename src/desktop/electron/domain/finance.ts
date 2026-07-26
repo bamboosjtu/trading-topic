@@ -26,7 +26,7 @@ export function xirr(
       (sum, item) =>
         sum +
         item.amount /
-          (1 + rate) ** (daysBetween(start, item.date) / 365),
+          (1 + rate) ** (daysBetween(start, item.date) / 365.25),
       0,
     );
 
@@ -65,4 +65,3 @@ export function maximumDrawdown(values: number[]): number {
   }
   return maximum;
 }
-

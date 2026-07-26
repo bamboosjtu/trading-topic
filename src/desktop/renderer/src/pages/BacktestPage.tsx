@@ -29,6 +29,7 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactECharts from "echarts-for-react";
+import { SUPPORTED_BANKS } from "../../../shared/constants";
 import {
   api,
   type BacktestRequest,
@@ -38,19 +39,9 @@ import {
   type SimpleBacktestRow,
 } from "../api/client";
 
-const BANKS = [
-  ["601398", "工商银行"],
-  ["601939", "建设银行"],
-  ["601288", "农业银行"],
-  ["601988", "中国银行"],
-  ["600036", "招商银行"],
-  ["601166", "兴业银行"],
-  ["600016", "民生银行"],
-] as const;
-
-const BANK_OPTIONS = BANKS.map(([value, name]) => ({
-  value,
-  label: `${name}　${value}`,
+const BANK_OPTIONS = SUPPORTED_BANKS.map(({ symbol, name }) => ({
+  value: symbol,
+  label: name,
 }));
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
@@ -273,16 +264,19 @@ export function BacktestPage() {
   const [currentResults, setCurrentResults] = useState<BacktestResult[]>([]);
   const [currentRequest, setCurrentRequest] = useState<BacktestRequest | null>(null);
   const [detail, setDetail] = useState<BacktestResult | null>(null);
-  const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | "custom">("custom");
+  const [rangePreset, setRangePreset] = useState<3 | 5 | 10 | 15 | "custom">(3);
   const [rulesExpanded, setRulesExpanded] = useState(false);
   const [chartMetric, setChartMetric] = useState<ChartMetric>("kline");
-  const [candlePeriod, setCandlePeriod] = useState<CandlePeriod>("week");
+  const [candlePeriod, setCandlePeriod] = useState<CandlePeriod>("day");
+  const [chartSymbol, setChartSymbol] = useState("601398");
   const [symbolPickerOpen, setSymbolPickerOpen] = useState(false);
   const [detailPage, setDetailPage] = useState(1);
   const [detailEventFilters, setDetailEventFilters] = useState<
     SimpleBacktestRow["event"][]
   >([]);
   const buyDay = Form.useWatch("buyDay", form) ?? 1;
+  const startDate = Form.useWatch("startDate", form) ?? dateYearsAgo(3);
+  const endDate = Form.useWatch("endDate", form) ?? today();
   const selectedSymbols = Form.useWatch("symbols", form) ?? [];
 
   const history = useQuery({
@@ -347,12 +341,25 @@ export function BacktestPage() {
   }, [currentResults, history.data, selectedSymbols]);
 
   const rankedResults = useMemo(
-    () => [...results].sort((a, b) => b.metrics.endingAsset - a.metrics.endingAsset),
+    () =>
+      [...results].sort(
+        (a, b) =>
+          (b.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
+          (a.metrics.xirr ?? Number.NEGATIVE_INFINITY),
+      ),
     [results],
   );
 
+  useEffect(() => {
+    if (results.length && !results.some((result) => result.symbol === chartSymbol)) {
+      setChartSymbol(results[0].symbol);
+    }
+  }, [chartSymbol, results]);
+
   const metrics = useMemo(() => {
-    const endingAsset = rankedResults[0];
+    const endingAsset = [...results].sort(
+      (a, b) => b.metrics.endingAsset - a.metrics.endingAsset,
+    )[0];
     const xirrWinner = [...results].sort(
       (a, b) => (b.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
         (a.metrics.xirr ?? Number.NEGATIVE_INFINITY),
@@ -407,7 +414,7 @@ export function BacktestPage() {
         tone: "teal",
       },
       {
-        label: "最长连续回撤",
+        label: "最长亏损时间",
         value: longestPeriod ? `${longestPeriod.months} 个月` : "—",
         helper:
           longestPeriod?.start && longestPeriod.end
@@ -421,7 +428,8 @@ export function BacktestPage() {
 
   const chartOption = useMemo(() => {
     if (chartMetric === "kline") {
-      const focus = rankedResults[0];
+      const focus =
+        results.find((result) => result.symbol === chartSymbol) ?? rankedResults[0];
       const candles = focus
         ? toCandles(resultPrices(focus), candlePeriod)
         : [];
@@ -444,7 +452,7 @@ export function BacktestPage() {
           itemWidth: 17,
           itemHeight: 2,
           itemGap: 24,
-          data: ["收盘价（不复权）", "MA5", "MA20", "MA40"],
+          data: ["收盘价（不复权）", "MA5", "MA10", "MA20", "MA60"],
           textStyle: { color: "#64758c", fontSize: 11 },
         },
         grid: { left: 14, right: 14, top: 40, bottom: 17, containLabel: true },
@@ -490,8 +498,9 @@ export function BacktestPage() {
           },
           ...[
             [5, "#f59b17"],
+            [10, "#377dff"],
             [20, "#1677ff"],
-            [40, "#13a68f"],
+            [60, "#13a68f"],
           ].map(([window, color]) => ({
             name: `MA${window}`,
             type: "line",
@@ -580,13 +589,11 @@ export function BacktestPage() {
       series,
       color: CHART_COLORS,
     };
-  }, [candlePeriod, chartMetric, rankedResults, results]);
+  }, [candlePeriod, chartMetric, chartSymbol, rankedResults, results]);
 
-  const setDatePreset = (years: 3 | 5 | 10 | "custom") => {
+  const setDatePreset = (years: 3 | 5 | 10 | 15) => {
     setRangePreset(years);
-    if (years !== "custom") {
-      form.setFieldsValue({ startDate: dateYearsAgo(years), endDate: today() });
-    }
+    form.setFieldsValue({ startDate: dateYearsAgo(years), endDate: today() });
   };
 
   const metricTabs: Array<[ChartMetric, string]> = [
@@ -623,7 +630,7 @@ export function BacktestPage() {
           layout="vertical"
           initialValues={{
             symbols: ["601398", "601288", "601166"],
-            startDate: dateYearsAgo(5),
+            startDate: dateYearsAgo(3),
             endDate: today(),
             monthlyAmount: 3000,
             buyDay: 1,
@@ -632,6 +639,12 @@ export function BacktestPage() {
         >
           <Form.Item name="buyDay" hidden>
             <InputNumber />
+          </Form.Item>
+          <Form.Item name="startDate" hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name="endDate" hidden>
+            <Input />
           </Form.Item>
           <div className="backtest-config-grid">
             <div className="symbol-field">
@@ -650,7 +663,7 @@ export function BacktestPage() {
                     className="backtest-symbol-select"
                     open={symbolPickerOpen}
                     onOpenChange={setSymbolPickerOpen}
-                    allowClear
+                    optionFilterProp="label"
                   />
                 </Form.Item>
                 <Button
@@ -670,37 +683,16 @@ export function BacktestPage() {
               <div className="field-label">回测区间</div>
               <div className="range-control-row">
                 <div className="range-shortcuts" aria-label="快捷回测区间">
-                  {([3, 5, 10, "custom"] as const).map((range) => (
+                  {([3, 5, 10, 15] as const).map((range) => (
                     <button
                       key={range}
                       type="button"
                       className={rangePreset === range ? "active" : ""}
                       onClick={() => setDatePreset(range)}
                     >
-                      {range === "custom" ? "自定义" : `近${range}年`}
+                      {range}年
                     </button>
                   ))}
-                </div>
-                <div className="date-field">
-                  <span>开始日期</span>
-                  <Form.Item name="startDate" className="!mb-0">
-                    <Input
-                      type="date"
-                      aria-label="开始日期"
-                      onChange={() => setRangePreset("custom")}
-                    />
-                  </Form.Item>
-                </div>
-                <span className="date-separator">→</span>
-                <div className="date-field">
-                  <span>结束日期</span>
-                  <Form.Item name="endDate" className="!mb-0">
-                    <Input
-                      type="date"
-                      aria-label="结束日期"
-                      onChange={() => setRangePreset("custom")}
-                    />
-                  </Form.Item>
                 </div>
               </div>
             </div>
@@ -731,6 +723,26 @@ export function BacktestPage() {
                   trigger="click"
                   content={
                     <div className="advanced-settings">
+                      <label htmlFor="advanced-start-date">开始日期</label>
+                      <Input
+                        id="advanced-start-date"
+                        type="date"
+                        value={startDate}
+                        onChange={(event) => {
+                          form.setFieldValue("startDate", event.target.value);
+                          setRangePreset("custom");
+                        }}
+                      />
+                      <label htmlFor="advanced-end-date">结束日期</label>
+                      <Input
+                        id="advanced-end-date"
+                        type="date"
+                        value={endDate}
+                        onChange={(event) => {
+                          form.setFieldValue("endDate", event.target.value);
+                          setRangePreset("custom");
+                        }}
+                      />
                       <label htmlFor="advanced-buy-day">指定买入日</label>
                       <InputNumber
                         id="advanced-buy-day"
@@ -764,33 +776,10 @@ export function BacktestPage() {
               开始回测
             </Button>
           </div>
-
-          <div className="backtest-rules">
-            <div className="backtest-rule-list">
-              <span>回测规则：</span>
-              <span>不复权收盘价</span>
-              <i />
-              <span>允许零碎股</span>
-              <i />
-              <span>分红再投资（回购原标的）</span>
-              <i />
-              <span>剩余资金参与后续回购</span>
-              <i />
-              <span>费用 0 元，不计印花税和过户费</span>
-            </div>
-            <button
-              type="button"
-              className="rules-toggle"
-              onClick={() => setRulesExpanded((value) => !value)}
-            >
-              {rulesExpanded ? "收起" : "展开"}
-              <span className={rulesExpanded ? "rotate-180" : ""}>⌄</span>
-            </button>
-          </div>
           {rulesExpanded && (
             <div className="backtest-rules-expanded">
-              指定买入日遇非交易日顺延；送股与转增按除权日增加股数；现金分红按登记日持股计算，
-              到账后立即全额回购原标的。
+              不复权收盘价；允许零碎股；指定买入日遇非交易日顺延；送股与转增按除权日增加股数；
+              现金分红到账后立即全额回购原标的；费用 0 元，不计印花税和过户费。
             </div>
           )}
         </Form>
@@ -852,6 +841,23 @@ export function BacktestPage() {
             </Tooltip>
           </div>
         </div>
+        {chartMetric === "kline" && results.length > 0 && (
+          <div className="chart-symbol-switcher" aria-label="行情标的切换">
+            <span>标的切换：</span>
+            {results.map((result) => (
+              <label key={result.symbol}>
+                <input
+                  type="radio"
+                  name="chart-symbol"
+                  value={result.symbol}
+                  checked={chartSymbol === result.symbol}
+                  onChange={() => setChartSymbol(result.symbol)}
+                />
+                <span>{result.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
         {history.isLoading && !results.length ? (
           <div className="chart-loading">
             <Skeleton active paragraph={{ rows: 5 }} title={false} />
@@ -867,27 +873,27 @@ export function BacktestPage() {
             notMerge
             option={chartOption}
             className="backtest-chart"
-            style={{ height: 226 }}
+            style={{ height: chartMetric === "kline" ? 270 : 300 }}
           />
         )}
       </section>
 
       <section className="workspace-panel comparison-panel">
-        <div className="comparison-title">标的对比</div>
+        <div className="comparison-title">回测结果对比（按 XIRR 排序）</div>
         <Table
           rowKey="id"
           pagination={false}
           loading={history.isLoading && !results.length}
           dataSource={rankedResults}
           locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
-          scroll={{ x: 1120 }}
+          scroll={{ x: 1060 }}
           onRow={(record) => ({
             onDoubleClick: () => setDetail(record),
             className: "data-row",
           })}
           columns={[
             {
-              title: "排序",
+              title: "排名",
               width: 58,
               align: "center",
               render: (_, _row, index) => (
@@ -899,7 +905,7 @@ export function BacktestPage() {
             },
             {
               title: "标的",
-              width: 132,
+              width: 144,
               render: (_, row) => (
                 <div className="symbol-cell">
                   <strong>{row.name}</strong>
@@ -920,28 +926,36 @@ export function BacktestPage() {
               render: (_, row) => money(row.metrics.endingAsset),
             },
             {
-              title: "累计收益",
-              width: 106,
-              className: "tabular-nums",
-              render: (_, row) => money(row.metrics.totalPnl),
-            },
-            {
-              title: "累计收益率",
-              width: 90,
-              className: "tabular-nums",
-              render: (_, row) => percent(totalReturn(row)),
-            },
-            {
               title: "XIRR",
-              width: 82,
+              width: 92,
               className: "tabular-nums",
-              render: (_, row) => percent(row.metrics.xirr),
+              render: (_, row) => (
+                <span
+                  className={
+                    row.metrics.xirr === null || row.metrics.xirr === 0
+                      ? "stock-flat"
+                      : row.metrics.xirr > 0
+                        ? "stock-profit"
+                        : "stock-loss"
+                  }
+                >
+                  {percent(row.metrics.xirr)}
+                </span>
+              ),
+            },
+            {
+              title: "累计分红",
+              width: 104,
+              className: "tabular-nums",
+              render: (_, row) => money(row.metrics.totalDividend),
             },
             {
               title: "最大回撤",
-              width: 90,
+              width: 96,
               className: "tabular-nums",
-              render: (_, row) => percent(row.metrics.maxDrawdown),
+              render: (_, row) => (
+                <span className="stock-loss">{percent(row.metrics.maxDrawdown)}</span>
+              ),
             },
             {
               title: "最长亏损时间",
@@ -960,12 +974,6 @@ export function BacktestPage() {
                   </div>
                 );
               },
-            },
-            {
-              title: "累计分红",
-              width: 104,
-              className: "tabular-nums",
-              render: (_, row) => money(row.metrics.totalDividend),
             },
             {
               title: "期末现金",
@@ -993,13 +1001,6 @@ export function BacktestPage() {
         />
         <div className="comparison-footer">
           <span>共 {rankedResults.length} 个标的</span>
-          <Button
-            icon={<DownloadOutlined />}
-            disabled={!rankedResults.length}
-            onClick={() => downloadComparison(rankedResults)}
-          >
-            导出对比结果
-          </Button>
         </div>
       </section>
 
@@ -1019,7 +1020,7 @@ export function BacktestPage() {
         width={1400}
         open={Boolean(detail)}
         footer={null}
-        style={{ top: 82 }}
+        style={{ top: 38 }}
         destroyOnHidden
         className="backtest-detail-modal"
         rootClassName="backtest-detail-root"

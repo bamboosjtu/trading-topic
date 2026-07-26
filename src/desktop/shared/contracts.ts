@@ -105,66 +105,6 @@ export interface BacktestResult {
 }
 
 /**
- * 回测明细列表行（同条件比较视图）。
- *
- * 采用零碎股 + 分红再投资模型；送股/转增在除权日增加持股。
- */
-export interface BacktestDetailRow {
-  date: string;
-  /** 事件类型 */
-  event: "monthly_buy" | "dividend_reinvest" | "share_adjustment";
-  /** 当次新增股数 */
-  shares: number;
-  /** 累计股数（含定投买入与分红再投资） */
-  cumulativeShares: number;
-  /** 当日不复权收盘价 */
-  price: number;
-  /** 当次投入金额（monthly_buy 为月度金额，dividend_reinvest 为 0） */
-  amount: number;
-  /** 累计投入：回测开始至该日期的外部成本（仅月度定投累加，分红再投资不计入） */
-  cumulativeCost: number;
-  /** 累计分红再投资股数 */
-  cumulativeDividendShares: number;
-  /** 当日持仓市值 = 累计股数 * 价格 */
-  marketValue: number;
-  /** 累计盈亏 = 持仓市值 - 累计投入 */
-  cumulativePnl: number;
-  /** 当次每股分红（仅 dividend_reinvest 行，税前） */
-  dividendPerShare?: number;
-  /** 当次分红金额（仅 dividend_reinvest 行） */
-  dividendAmount?: number;
-  /** 每 10 股送转比例（仅 share_adjustment 行） */
-  shareRatio?: number;
-}
-
-/** 回测明细列表结果（同条件比较） */
-export interface BacktestDetailResult {
-  symbol: string;
-  name: string;
-  requestedStartDate: string;
-  actualStartDate: string;
-  actualEndDate: string;
-  monthlyAmount: number;
-  buyDay: number;
-  rows: BacktestDetailRow[];
-  /** 期末累计股数 */
-  endingShares: number;
-  /** 期末累计投入 */
-  endingCost: number;
-  /** 期末持仓市值 */
-  endingMarketValue: number;
-  /** 期末累计盈亏 */
-  endingPnl: number;
-  /** 累计分红再投资股数 */
-  totalDividendShares: number;
-  /** 累计分红金额 */
-  totalDividendAmount: number;
-  /** 累计收益率 = endingMarketValue / endingCost - 1 */
-  totalReturn: number;
-  warnings: string[];
-}
-
-/**
  * R1 回测审计明细行（modal 展示视图）。
  *
  * 主结果与明细共用同一套计算口径：费用为 0、允许零碎股、现金分红自动回购，

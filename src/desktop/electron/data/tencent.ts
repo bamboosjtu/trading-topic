@@ -3,21 +3,15 @@ import type {
   DividendEvent,
   PricePoint,
 } from "../../shared/contracts";
+import {
+  BACKTEST_CALIBER_VERSION,
+  SUPPORTED_BANK_NAME_BY_SYMBOL,
+} from "../../shared/constants";
 
 const TENCENT_URL =
   "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
 const EASTMONEY_URL =
   "https://datacenter-web.eastmoney.com/api/data/v1/get";
-
-const STOCK_NAMES: Record<string, string> = {
-  "600016": "民生银行",
-  "600036": "招商银行",
-  "601166": "兴业银行",
-  "601288": "农业银行",
-  "601398": "工商银行",
-  "601939": "建设银行",
-  "601988": "中国银行",
-};
 
 function marketSymbol(symbol: string): string {
   if (symbol.startsWith("6")) return `sh${symbol}`;
@@ -66,7 +60,7 @@ export async function fetchUnadjustedPrices(
       "param",
       `${code},day,${year}-01-01,${year + 1}-12-31,640,`,
     );
-    url.searchParams.set("r", "0.8205512681390605");
+    url.searchParams.set("r", String(Date.now()));
     const response = await fetch(url, {
       headers: {
         "User-Agent":
@@ -100,7 +94,7 @@ export async function fetchUnadjustedPrices(
       fetchedAt,
       dataCutoff: sorted.at(-1)!.date,
       adjustment: "none",
-      caliberVersion: "bank-dca-r1-node-v3",
+      caliberVersion: BACKTEST_CALIBER_VERSION,
     },
   };
 }
@@ -188,11 +182,11 @@ export async function fetchCorporateActions(
       fetchedAt: new Date().toISOString(),
       dataCutoff: rows.at(-1)?.date ?? endDate,
       adjustment: "none",
-      caliberVersion: "bank-dca-r1-node-v3",
+      caliberVersion: BACKTEST_CALIBER_VERSION,
     },
   };
 }
 
 export function stockName(symbol: string): string {
-  return STOCK_NAMES[symbol] ?? symbol;
+  return SUPPORTED_BANK_NAME_BY_SYMBOL[symbol] ?? symbol;
 }

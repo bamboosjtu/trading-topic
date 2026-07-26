@@ -389,16 +389,16 @@ a:focus-visible,
 
 .backtest-config-grid {
   display: grid;
-  min-height: 82px;
+  min-height: 94px;
   grid-template-columns:
-    minmax(400px, 1fr)
-    520px
-    155px
-    215px
-    112px;
+    minmax(430px, 1fr)
+    244px
+    190px
+    250px
+    124px;
   align-items: start;
-  gap: 14px;
-  padding: 12px 16px 10px;
+  gap: 22px;
+  padding: 14px 18px 13px;
 }
 
 .backtest-config .ant-form-item-label > label,
@@ -430,7 +430,7 @@ a:focus-visible,
 .backtest-symbol-select .ant-select-selection-item {
   height: 24px;
   margin: 3px 0 !important;
-  padding-inline: 8px 4px !important;
+  padding-inline: 11px !important;
   border-color: #dce5ef !important;
   border-radius: 5px !important;
   color: #314967;
@@ -440,8 +440,7 @@ a:focus-visible,
 }
 
 .backtest-symbol-select .ant-select-selection-item-remove {
-  color: #5d6f87;
-  font-size: 9px;
+  display: none;
 }
 
 .symbol-field {
@@ -487,12 +486,13 @@ a:focus-visible,
   align-items: center;
   gap: 4px;
   flex: none;
-  margin-top: 15px;
+  margin-top: 3px;
 }
 
 .range-shortcuts button {
-  height: 29px;
-  padding: 0 10px;
+  min-width: 52px;
+  height: 32px;
+  padding: 0 11px;
   border: 1px solid #dce5ef;
   border-radius: 5px;
   color: #445c7a;
@@ -553,8 +553,8 @@ a:focus-visible,
 }
 
 .start-backtest-button {
-  width: 112px;
-  height: 34px !important;
+  width: 124px;
+  height: 36px !important;
   margin-top: 21px;
   box-shadow: 0 6px 14px -7px rgba(22, 119, 255, 0.8) !important;
 }
@@ -577,7 +577,7 @@ a:focus-visible,
 
 .advanced-settings {
   display: grid;
-  width: 210px;
+  width: 240px;
   gap: 7px;
 }
 
@@ -640,7 +640,7 @@ a:focus-visible,
 }
 
 .backtest-rules-expanded {
-  padding: 9px 20px 11px;
+  padding: 9px 18px 11px;
   border-top: 1px solid #edf1f6;
   color: #64758c;
   background: #fbfcfe;
@@ -650,7 +650,7 @@ a:focus-visible,
 
 .backtest-metrics {
   display: grid;
-  min-height: 86px;
+  min-height: 104px;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: center;
   padding: 9px 8px;
@@ -660,8 +660,8 @@ a:focus-visible,
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 11px;
-  padding: 0 13px;
+  gap: 14px;
+  padding: 0 18px;
   border-right: 1px solid #e8edf3;
 }
 
@@ -671,13 +671,13 @@ a:focus-visible,
 
 .metric-icon {
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   flex: none;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 17px;
+  font-size: 19px;
 }
 
 .metric-icon.blue {
@@ -713,7 +713,7 @@ a:focus-visible,
 .metric-caption {
   overflow: hidden;
   color: #5d6f87;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,7 +723,7 @@ a:focus-visible,
   overflow: hidden;
   margin-top: 3px;
   color: #112543;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 21px;
   letter-spacing: -0.015em;
@@ -743,7 +743,7 @@ a:focus-visible,
 }
 
 .backtest-chart-panel {
-  min-height: 278px;
+  min-height: 358px;
   overflow: hidden;
   padding: 0 14px 5px;
 }
@@ -844,8 +844,36 @@ a:focus-visible,
   font-size: 11px;
 }
 
+.chart-symbol-switcher {
+  display: flex;
+  height: 38px;
+  align-items: center;
+  gap: 22px;
+  padding: 0 4px;
+  color: #536985;
+  font-size: 11px;
+}
+
+.chart-symbol-switcher > span {
+  font-weight: 500;
+}
+
+.chart-symbol-switcher label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
+.chart-symbol-switcher input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #1677ff;
+}
+
 .backtest-chart {
-  margin-top: 1px;
+  margin-top: 0;
 }
 
 .chart-loading {
@@ -862,7 +890,7 @@ a:focus-visible,
 }
 
 .comparison-panel {
-  min-height: 252px;
+  min-height: 246px;
   overflow: hidden;
 }
 
@@ -872,7 +900,7 @@ a:focus-visible,
   align-items: center;
   padding: 0 17px;
   color: #10233f;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -962,13 +990,6 @@ a:focus-visible,
   padding: 7px 16px;
   border-top: 1px solid #edf1f6;
   color: #5d6f87;
-  font-size: 10px;
-}
-
-.comparison-footer .ant-btn {
-  position: absolute;
-  right: 16px;
-  color: #1677ff;
   font-size: 10px;
 }
 
@@ -1272,7 +1293,7 @@ a:focus-visible,
 
 .backtest-detail-modal .ant-modal-content {
   display: flex;
-  height: min(820px, calc(100vh - 120px));
+  height: min(820px, calc(100vh - 76px));
   flex-direction: column;
   overflow: hidden;
   padding: 0;

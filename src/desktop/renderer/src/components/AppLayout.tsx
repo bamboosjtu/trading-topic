@@ -1,19 +1,11 @@
 import { useMemo } from "react";
-import { Button, Layout, Tooltip } from "antd";
+import { Layout } from "antd";
 import {
-  AimOutlined,
-  ApartmentOutlined,
   CalendarOutlined,
-  CloudUploadOutlined,
-  DatabaseOutlined,
-  DollarCircleOutlined,
   FundProjectionScreenOutlined,
-  LineChartOutlined,
   PieChartOutlined,
   SettingOutlined,
-  StockOutlined,
   SwapOutlined,
-  WalletOutlined,
 } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, Outlet, useNavigate } from "react-router-dom";
@@ -37,32 +29,19 @@ export const NAV_GROUPS: NavigationGroup[] = [
     label: "研究",
     items: [
       { key: "/backtest", icon: <FundProjectionScreenOutlined />, label: "历史回测" },
-      { key: "/portfolio-backtest", icon: <ApartmentOutlined />, label: "组合回测" },
-      { key: "/symbol-compare", icon: <AimOutlined />, label: "标的对比" },
-      { key: "/projection", icon: <LineChartOutlined />, label: "10年视图" },
     ],
   },
   {
-    label: "资产",
+    label: "实盘",
     items: [
-      { key: "/overview", icon: <WalletOutlined />, label: "资产总览" },
       { key: "/positions", icon: <PieChartOutlined />, label: "持仓明细" },
       { key: "/trades", icon: <SwapOutlined />, label: "交易流水" },
       { key: "/dividend-calendar", icon: <CalendarOutlined />, label: "分红日历" },
-      { key: "/cashflow", icon: <StockOutlined />, label: "资金流水" },
-      {
-        key: "/drawdown-monitor",
-        icon: <FundProjectionScreenOutlined />,
-        label: "回撤监控",
-      },
     ],
   },
   {
     label: "系统",
     items: [
-      { key: "/data-sources", icon: <DatabaseOutlined />, label: "数据源管理" },
-      { key: "/fees", icon: <DollarCircleOutlined />, label: "费用与规则" },
-      { key: "/backup", icon: <CloudUploadOutlined />, label: "备份与恢复" },
       { key: "/settings", icon: <SettingOutlined />, label: "设置" },
     ],
   },
@@ -135,20 +114,11 @@ export function AppLayout() {
 
       <Layout className="min-w-0">
         <Header className="app-header">
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center">
             <div className="data-cutoff">
               数据截止：
               <span className="tabular-nums">{health?.dataCutoff ?? "暂无快照"}</span>
             </div>
-            <Tooltip title="设置">
-              <Button
-                type="default"
-                aria-label="打开设置"
-                className="header-icon-button"
-                icon={<SettingOutlined />}
-                onClick={() => navigate("/settings")}
-              />
-            </Tooltip>
           </div>
         </Header>
 

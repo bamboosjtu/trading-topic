@@ -2,22 +2,6 @@ import { Skeleton } from "antd";
 import { useLocation } from "react-router-dom";
 
 const PAGE_META: Record<string, { title: string; description: string }> = {
-  "/portfolio-backtest": {
-    title: "组合回测",
-    description: "用组合权重与再平衡规则验证长期收益和风险。",
-  },
-  "/symbol-compare": {
-    title: "标的对比",
-    description: "从收益、回撤与分红维度并排观察候选标的。",
-  },
-  "/projection": {
-    title: "10年视图",
-    description: "基于投入与分红假设测算长期资产积累路径。",
-  },
-  "/overview": {
-    title: "资产总览",
-    description: "汇总持仓、现金、收益与资产变化。",
-  },
   "/positions": {
     title: "持仓明细",
     description: "查看当前持仓数量、成本与估值状态。",
@@ -29,26 +13,6 @@ const PAGE_META: Record<string, { title: string; description: string }> = {
   "/dividend-calendar": {
     title: "分红日历",
     description: "集中查看登记日、除权日与分红到账安排。",
-  },
-  "/cashflow": {
-    title: "资金流水",
-    description: "追踪资金转入、转出与现金变动。",
-  },
-  "/drawdown-monitor": {
-    title: "回撤监控",
-    description: "跟踪持仓回撤区间、持续时间与风险状态。",
-  },
-  "/data-sources": {
-    title: "数据源管理",
-    description: "查看行情来源、更新时间和本地快照状态。",
-  },
-  "/fees": {
-    title: "费用与规则",
-    description: "管理研究口径、费用模型与计算规则。",
-  },
-  "/backup": {
-    title: "备份与恢复",
-    description: "导出或恢复本地研究数据。",
   },
   "/settings": {
     title: "设置",

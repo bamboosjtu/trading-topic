@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import type {
   AppSettings,
   BacktestResult,
@@ -15,7 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   dividendSource: "eastmoney",
   commissionRate: 0,
   minimumCommission: 0,
-  caliberVersion: "bank-dca-r1-node-v3",
+  caliberVersion: BACKTEST_CALIBER_VERSION,
 };
 
 interface BackupPayload {

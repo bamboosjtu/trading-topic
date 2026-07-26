@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { fetchCorporateActions } from "./tencent";
 
 afterEach(() => {
@@ -93,8 +94,6 @@ describe("fetchCorporateActions", () => {
     expect(result.rows[0].perShare).toBeCloseTo(0.3, 6);
     expect(result.rows[0].transferRatio).toBe(0);
     expect(result.provenance.dataCutoff).toBe("2024-09-01");
-    expect(result.provenance.caliberVersion).toBe(
-      "bank-dca-r1-node-v3",
-    );
+    expect(result.provenance.caliberVersion).toBe(BACKTEST_CALIBER_VERSION);
   });
 });

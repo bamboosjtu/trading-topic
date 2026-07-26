@@ -15,24 +15,13 @@ export function App() {
             <Route path="/" element={<Navigate to="/backtest" replace />} />
             <Route path="/backtest" element={<BacktestPage />} />
             {[
-              "/portfolio-backtest",
-              "/symbol-compare",
-              "/projection",
-              "/overview",
               "/positions",
               "/trades",
               "/dividend-calendar",
-              "/cashflow",
-              "/drawdown-monitor",
-              "/data-sources",
-              "/fees",
-              "/backup",
               "/settings",
             ].map((path) => (
               <Route key={path} path={path} element={<SkeletonPage />} />
             ))}
-            <Route path="/account" element={<Navigate to="/overview" replace />} />
-            <Route path="/ledger" element={<Navigate to="/cashflow" replace />} />
             <Route path="*" element={<Navigate to="/backtest" replace />} />
           </Route>
         </Routes>

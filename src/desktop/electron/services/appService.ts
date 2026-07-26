@@ -7,6 +7,7 @@ import type {
   LedgerEntryInput,
   SimpleBacktestResult,
 } from "../../shared/contracts";
+import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import {
   fetchCorporateActions,
   fetchUnadjustedPrices,
@@ -97,13 +98,13 @@ export class AppService {
       .listBacktests()
       .filter((result) =>
         result.provenance.some(
-          (item) => item.caliberVersion === "bank-dca-r1-node-v3",
+          (item) => item.caliberVersion === BACKTEST_CALIBER_VERSION,
         ),
       );
   }
 
   /**
-   * R1 回测审计明细（drawer 展示视图）。
+   * R1 回测审计明细（模态框展示视图）。
    *
    * 复用 runBacktest 的行情/公司行动拉取逻辑；simulateBacktestSimple 内部
    * 直接复用主回测结果，仅转换为审计友好的行结构，不维护第二套计算口径。
@@ -124,7 +125,7 @@ export class AppService {
         request.startDate,
         request.endDate,
       );
-      // 明细视图同样刷新行情落库，保证 drawer 与列表数据快照一致。
+      // 明细视图同样刷新行情落库，保证模态框与列表数据快照一致。
       this.database.replaceMarketData(
         symbol,
         prices.rows,

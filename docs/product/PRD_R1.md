@@ -182,8 +182,9 @@ R1 只保留四个一级入口，每个页面的设计细节见 [desktop_ui/](de
 | 页面 | 责任 | 设计简述 |
 | --- | --- | --- |
 | 回测 | 创建单标的回测、发起同条件并排、查看结果与口径 | [历史回测_ui_brief.md](desktop_ui/历史回测_ui_brief.md) |
-| 账户 | 查看持仓、现金、总资产、累计盈亏和 XIRR | [资产账户_ui_brief.md](desktop_ui/资产账户_ui_brief.md) |
-| 流水 | 新增、查看、冲正和修正实际记录 | [资金流水_ui_brief.md](desktop_ui/资金流水_ui_brief.md) |
+| 持仓明细 | 查看持仓、现金、总资产、累计盈亏和 XIRR | [持仓明细_ui_brief.md](desktop_ui/持仓明细_ui_brief.md) |
+| 交易流水 | 新增、查看、冲正和修正实际记录 | [交易流水_ui_brief.md](desktop_ui/交易流水_ui_brief.md) |
+| 分红日历 | 核对登记日、除权日、到账日和实际分红 | [分红日历_ui_brief.md](desktop_ui/分红日历_ui_brief.md) |
 | 设置 | 数据来源、截止时间、费用口径、JSON 备份恢复和日志导出 | [本地设置_ui_brief.md](desktop_ui/本地设置_ui_brief.md) |
 
 首要流程：
