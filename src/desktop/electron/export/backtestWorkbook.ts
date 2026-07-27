@@ -75,8 +75,10 @@ function addSummarySheet(
     { header: "标的代码", key: "symbol", width: 12 },
     { header: "标的名称", key: "name", width: 16 },
     { header: "回测参数", key: "range", width: 14 },
-    { header: "开始日期", key: "startDate", width: 14 },
-    { header: "结束日期", key: "endDate", width: 14 },
+    { header: "请求开始日期", key: "startDate", width: 14 },
+    { header: "请求结束日期", key: "endDate", width: 14 },
+    { header: "实际开始日期", key: "actualStartDate", width: 14 },
+    { header: "实际结束日期", key: "actualEndDate", width: 14 },
     { header: "每月投入", key: "monthlyAmount", width: 14 },
     { header: "指定买入日", key: "buyDay", width: 12 },
     { header: "累计投入", key: "totalContribution", width: 16 },
@@ -86,6 +88,7 @@ function addSummarySheet(
     { header: "最大回撤", key: "maxDrawdown", width: 12 },
     { header: "累计分红", key: "totalDividend", width: 16 },
     { header: "期末现金", key: "endingCash", width: 14 },
+    { header: "告警与口径说明", key: "warnings", width: 48 },
   ];
   for (const result of results) {
     worksheet.addRow({
@@ -94,6 +97,8 @@ function addSummarySheet(
       range: rangeLabel(result),
       startDate: result.requestedStartDate,
       endDate: result.requestedEndDate ?? result.actualEndDate,
+      actualStartDate: result.actualStartDate,
+      actualEndDate: result.actualEndDate,
       monthlyAmount: result.monthlyAmount,
       buyDay: result.buyDay,
       totalContribution: result.metrics.totalContribution,
@@ -103,6 +108,7 @@ function addSummarySheet(
       maxDrawdown: result.metrics.maxDrawdown,
       totalDividend: result.metrics.totalDividend,
       endingCash: result.metrics.endingCash,
+      warnings: result.warnings.join("\n"),
     });
   }
   for (const key of [

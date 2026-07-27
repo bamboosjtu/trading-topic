@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Form } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import type { FormInstance } from "antd";
@@ -31,6 +31,8 @@ export function useBacktestWorkspace({
   onRestore,
 }: UseBacktestWorkspaceOptions) {
   const [restored, setRestored] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveSequence = useRef(0);
   const formValues = Form.useWatch([], form) as BacktestRequest | undefined;
   const workspace = useQuery({
     queryKey: ["backtest:workspace"],
@@ -50,18 +52,31 @@ export function useBacktestWorkspace({
     if (!restored || !formValues?.symbols?.length) return;
     const timer = window.setTimeout(() => {
       const request = form.getFieldsValue(true);
-      void api.saveBacktestWorkspace({
-        request: {
-          ...request,
-          rangeYears:
-            rangePreset === "custom" ? undefined : rangePreset,
-        },
-        chartMetric,
-        candlePeriod,
-        chartSymbol,
-        activeExperimentId,
-        updatedAt: new Date().toISOString(),
-      });
+      const sequence = ++saveSequence.current;
+      void api
+        .saveBacktestWorkspace({
+          request: {
+            ...request,
+            rangeYears:
+              rangePreset === "custom" ? undefined : rangePreset,
+          },
+          chartMetric,
+          candlePeriod,
+          chartSymbol,
+          activeExperimentId,
+          updatedAt: new Date().toISOString(),
+        })
+        .then(() => {
+          if (sequence === saveSequence.current) setSaveError(null);
+        })
+        .catch((error: unknown) => {
+          const reason =
+            error instanceof Error ? error.message : String(error);
+          console.error("保存回测工作区失败", error);
+          if (sequence === saveSequence.current) {
+            setSaveError(`工作区未能保存：${reason}`);
+          }
+        });
     }, 300);
     return () => window.clearTimeout(timer);
   }, [
@@ -79,5 +94,7 @@ export function useBacktestWorkspace({
     restored,
     loading: workspace.isLoading,
     error: workspace.error,
+    saveError,
+    clearSaveError: () => setSaveError(null),
   };
 }

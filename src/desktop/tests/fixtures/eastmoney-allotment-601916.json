@@ -1,0 +1,36 @@
+{
+  "version": "7869f136a70a4ff8e9accb2e0099e10d",
+  "result": {
+    "pages": 197,
+    "data": [
+      {
+        "FINANCE_CODE": "42784",
+        "SECUCODE": "601916.SH",
+        "SECURITY_CODE": "601916",
+        "ORG_CODE": "10053837",
+        "SECURITY_NAME_ABBR": "浙商银行",
+        "CORRECODE": "760916",
+        "CORRECODE_NAME_ABBR": "浙银配股",
+        "PLACING_RATIO": 3,
+        "ISSUE_PRICE": 2.02,
+        "TOTAL_SHARES_BEFORE": 21268696778,
+        "ISSUE_NUM": 4829739185,
+        "TOTAL_SHARES_AFTER": 26098435963,
+        "EQUITY_RECORD_DATE": "2023-06-14 00:00:00",
+        "PAY_START_DATE": "2023-06-15 00:00:00",
+        "PAY_END_DATE": "2023-06-21 00:00:00",
+        "LISTING_DATE": "2023-07-06 00:00:00",
+        "EX_DIVIDEND_DATE": "2023-06-27 00:00:00",
+        "TOTAL_RAISE_FUNDS": 9756073153.7,
+        "NET_RAISE_FUNDS": 9721848147.87,
+        "UNDERWRITE_WAY": null,
+        "FIRST_NOTICE_DATE": "2023-06-12 00:00:00",
+        "CHANGE_RATE": 0.6073
+      }
+    ],
+    "count": 983
+  },
+  "success": true,
+  "message": "ok",
+  "code": 0
+}

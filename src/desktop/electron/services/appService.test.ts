@@ -199,6 +199,7 @@ describe("AppService 回测试验", () => {
     });
     vi.mocked(fetchCorporateActions).mockResolvedValue({
       rows: [],
+      reportedActions: [],
       provenance: {
         source: "test-action",
         fetchedAt: "2026-07-26T00:00:00Z",
@@ -251,5 +252,190 @@ describe("AppService 回测试验", () => {
       }),
     );
     expect(database.listBacktestExperiments()).toHaveLength(2);
+  });
+
+  it("在任何数据请求前拒绝重复标的", async () => {
+    const { service } = await serviceWithDatabase();
+
+    await expect(
+      service.runBacktest({
+        symbols: ["601398", "601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+        monthlyAmount: 3000,
+        buyDay: 1,
+      }),
+    ).rejects.toThrow("回测标的不能重复");
+    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+  });
+
+  it("展示各自实际区间，并报告配股和非严格同区间比较", async () => {
+    const { service, database } = await serviceWithDatabase();
+    database.replaceStockUniverse(
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行" },
+        { symbol: "601916", name: "浙商银行" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    vi.mocked(fetchUnadjustedPrices).mockImplementation(async (symbol) => ({
+      rows:
+        symbol === "601398"
+          ? [
+              { date: "2024-01-02", close: 5 },
+              { date: "2024-02-01", close: 5.2 },
+            ]
+          : [
+              { date: "2024-01-15", close: 2.5 },
+              { date: "2024-02-01", close: 2.6 },
+            ],
+      provenance: {
+        source: "test-price",
+        fetchedAt: "2026-07-26T00:00:00Z",
+        dataCutoff: "2024-02-01",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    }));
+    vi.mocked(fetchAdjustedBars).mockImplementation(async (symbol) => {
+      const close = symbol === "601398" ? 5 : 2.5;
+      return {
+        rows: [
+          {
+            date: symbol === "601398" ? "2024-01-02" : "2024-01-15",
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1000,
+            adjustment: "qfq",
+          },
+        ],
+        provenance: {
+          source: "test-qfq",
+          fetchedAt: "2026-07-26T00:00:00Z",
+          dataCutoff: "2024-02-01",
+          adjustment: "qfq",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      };
+    });
+    vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => ({
+      rows: [],
+      reportedActions:
+        symbol === "601916"
+          ? [
+              {
+                type: "rights_issue",
+                sourceId: "42784",
+                exDate: "2024-01-20",
+                recordDate: "2024-01-19",
+                paymentStartDate: "2024-01-21",
+                paymentEndDate: "2024-01-25",
+                listingDate: "2024-02-05",
+                ratioPer10: 3,
+                subscriptionPrice: 2.02,
+              },
+            ]
+          : [],
+      provenance: {
+        source: "test-action",
+        fetchedAt: "2026-07-26T00:00:00Z",
+        dataCutoff: "2024-02-01",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    }));
+
+    const experiment = await service.runBacktest({
+      symbols: ["601398", "601916"],
+      startDate: "2024-01-01",
+      endDate: "2024-02-01",
+      monthlyAmount: 3000,
+      buyDay: 1,
+    });
+
+    expect(experiment.results.map((result) => result.actualStartDate)).toEqual([
+      "2024-01-02",
+      "2024-01-15",
+    ]);
+    expect(experiment.results[0].warnings).toContainEqual(
+      expect.stringContaining("非严格同区间比较"),
+    );
+    expect(experiment.results[1].warnings).toContainEqual(
+      expect.stringContaining("R1 假设不参与"),
+    );
+  });
+
+  it("任一标的数据获取失败时不写入共享行情缓存", async () => {
+    const { service, database } = await serviceWithDatabase();
+    database.replaceStockUniverse(
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行" },
+        { symbol: "601916", name: "浙商银行" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    vi.mocked(fetchUnadjustedPrices)
+      .mockResolvedValueOnce({
+        rows: [{ date: "2024-01-02", close: 5 }],
+        provenance: {
+          source: "test-price",
+          fetchedAt: "2026-07-26T00:00:00Z",
+          dataCutoff: "2024-01-02",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      })
+      .mockRejectedValueOnce(new Error("第二个标的响应结构损坏"));
+    vi.mocked(fetchAdjustedBars).mockResolvedValue({
+      rows: [
+        {
+          date: "2024-01-02",
+          open: 5,
+          high: 5,
+          low: 5,
+          close: 5,
+          volume: 1000,
+          adjustment: "qfq",
+        },
+      ],
+      provenance: {
+        source: "test-qfq",
+        fetchedAt: "2026-07-26T00:00:00Z",
+        dataCutoff: "2024-01-02",
+        adjustment: "qfq",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+    vi.mocked(fetchCorporateActions).mockResolvedValue({
+      rows: [],
+      reportedActions: [],
+      provenance: {
+        source: "test-action",
+        fetchedAt: "2026-07-26T00:00:00Z",
+        dataCutoff: "2024-01-02",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    await expect(
+      service.runBacktest({
+        symbols: ["601398", "601916"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+        monthlyAmount: 3000,
+        buyDay: 1,
+      }),
+    ).rejects.toThrow("第二个标的响应结构损坏");
+    expect(database.latestPrices()).toEqual({
+      prices: {},
+      dataCutoff: null,
+    });
+    expect(database.listBacktestExperiments()).toEqual([]);
   });
 });

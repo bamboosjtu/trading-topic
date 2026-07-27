@@ -1,4 +1,4 @@
-import { Button, Table } from "antd";
+import { Alert, Button, Table } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
 import { money, percent } from "./formatters";
@@ -21,6 +21,18 @@ export function CurrentExperimentTable({
       (right.metrics.xirr ?? Number.NEGATIVE_INFINITY) -
       (left.metrics.xirr ?? Number.NEGATIVE_INFINITY),
   );
+  const comparisonWarning = results
+    .flatMap((result) => result.warnings)
+    .find((warning) => warning.includes("非严格同区间比较"));
+  const corporateActionWarnings = [
+    ...new Set(
+      results.flatMap((result) =>
+        result.warnings
+          .filter((warning) => warning.startsWith("配股事件"))
+          .map((warning) => `${result.name}（${result.symbol}）：${warning}`),
+      ),
+    ),
+  ];
 
   return (
     <section className="workspace-panel comparison-panel">
@@ -37,6 +49,30 @@ export function CurrentExperimentTable({
           </small>
         ) : null}
       </div>
+      {comparisonWarning ? (
+        <Alert
+          className="comparison-warning"
+          showIcon
+          type="warning"
+          message="实际起始日期不一致"
+          description={comparisonWarning}
+        />
+      ) : null}
+      {corporateActionWarnings.length ? (
+        <Alert
+          className="comparison-warning"
+          showIcon
+          type="warning"
+          message="已报告但不参与的公司行动"
+          description={
+            <ul>
+              {corporateActionWarnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          }
+        />
+      ) : null}
       <Table
         className="comparison-table"
         rowKey="id"
@@ -44,7 +80,7 @@ export function CurrentExperimentTable({
         loading={loading}
         dataSource={rankedResults}
         locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
-        scroll={{ x: 1320 }}
+        scroll={{ x: 1490 }}
         onRow={(record) => ({
           onDoubleClick: () => onDetail(record),
           className: "data-row",
@@ -69,6 +105,16 @@ export function CurrentExperimentTable({
                 <strong>{row.name}</strong>
                 <span className="tabular-nums">{row.symbol}</span>
               </div>
+            ),
+          },
+          {
+            title: "实际区间",
+            width: 176,
+            className: "tabular-nums",
+            render: (_, row) => (
+              <span>
+                {row.actualStartDate} → {row.actualEndDate}
+              </span>
             ),
           },
           {

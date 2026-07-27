@@ -137,6 +137,7 @@ describe("AppService 冷启动恢复", () => {
           status: "实施分配",
         },
       ],
+      reportedActions: [],
       provenance: {
         source: `cold-start-action-${symbol}`,
         fetchedAt: "2026-07-27T00:00:00Z",

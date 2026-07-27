@@ -54,6 +54,14 @@ interface BackupPayload {
 
 type SqlParameter = string | number | bigint | Buffer | null;
 
+export interface MarketDataCacheEntry {
+  symbol: string;
+  prices: PricePoint[];
+  dividends: DividendEvent[];
+  source: string;
+  fetchedAt: string;
+}
+
 function rows<T>(
   database: BetterSqlite3.Database,
   sql: string,
@@ -263,6 +271,16 @@ export class LocalDatabase {
     this.database.transaction(() => this.insertExperiment(experiment))();
   }
 
+  saveBacktestExperimentWithMarketData(
+    experiment: BacktestExperiment,
+    marketData: MarketDataCacheEntry[],
+  ): void {
+    this.database.transaction(() => {
+      for (const entry of marketData) this.insertMarketData(entry);
+      this.insertExperiment(experiment);
+    })();
+  }
+
   private listExperimentResults(experimentId: string): BacktestResult[] {
     return rows<{ result_json: string }>(
       this.database,
@@ -434,27 +452,25 @@ export class LocalDatabase {
       .run(JSON.stringify(state));
   }
 
-  replaceMarketData(
-    symbol: string,
-    prices: PricePoint[],
-    dividends: DividendEvent[],
-    source: string,
-    fetchedAt: string,
-  ): void {
+  private insertMarketData(entry: MarketDataCacheEntry): void {
     const insertPrice = this.database.prepare(
       "INSERT OR REPLACE INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
     );
     const insertAction = this.database.prepare(
       "INSERT OR REPLACE INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
     );
-    this.database.transaction(() => {
-      for (const row of prices) {
-        insertPrice.run(symbol, row.date, row.close, source, fetchedAt);
-      }
-      for (const event of dividends) {
-        insertAction.run(symbol, event.date, JSON.stringify(event));
-      }
-    })();
+    for (const row of entry.prices) {
+      insertPrice.run(
+        entry.symbol,
+        row.date,
+        row.close,
+        entry.source,
+        entry.fetchedAt,
+      );
+    }
+    for (const event of entry.dividends) {
+      insertAction.run(entry.symbol, event.date, JSON.stringify(event));
+    }
   }
 
   latestPrices(): { prices: Record<string, number>; dataCutoff: string | null } {

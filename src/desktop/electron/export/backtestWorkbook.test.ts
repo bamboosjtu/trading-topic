@@ -108,6 +108,9 @@ describe("回测 XLSX 导出", () => {
     expect(workbook.getWorksheet("回测结果对比")?.getCell("C2").value).toBe(
       "三年",
     );
+    expect(workbook.getWorksheet("回测结果对比")?.getCell("F2").value).toBe(
+      "2023-08-01",
+    );
     expect(workbook.getWorksheet("建设银行_三年")?.getCell("B2").value).toBe(
       "定投买入",
     );

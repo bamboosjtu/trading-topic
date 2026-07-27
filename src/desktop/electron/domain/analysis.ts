@@ -24,7 +24,7 @@ function shareIncreaseRatio(event: DividendEvent): number {
   return (event.transferRatio + event.bonusRatio) / 10;
 }
 
-function assertInput(input: BacktestRequest): void {
+export function assertBacktestRequest(input: BacktestRequest): void {
   if (
     input.symbols.length < 1 ||
     input.symbols.length > BACKTEST_MAX_SYMBOLS
@@ -33,6 +33,9 @@ function assertInput(input: BacktestRequest): void {
   }
   if (input.symbols.some((symbol) => !/^\d{6}$/.test(symbol))) {
     throw new Error("仅支持 6 位 A 股股票代码");
+  }
+  if (new Set(input.symbols).size !== input.symbols.length) {
+    throw new Error("回测标的不能重复");
   }
   if (!(input.monthlyAmount > 0)) throw new Error("每月金额必须大于 0");
   if (!Number.isInteger(input.buyDay) || input.buyDay < 1 || input.buyDay > 28) {
@@ -66,7 +69,7 @@ export function simulateBacktest(
     createdAt: new Date().toISOString(),
   },
 ): BacktestResult {
-  assertInput(input);
+  assertBacktestRequest(input);
   const prices = priceRows
     .filter((row) => row.date >= input.startDate && row.date <= input.endDate)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -104,30 +107,25 @@ export function simulateBacktest(
 
   // P1-1：起始月份处理。当月计划买入日早于回测开始日期时，跳过本月，下月再投入。
   // 例如 startDate=2021-07-25, buyDay=1 → 2021-07-01 已过去 → 第一次投入在 2021-08。
-  // P1-2：非交易日跨月顺延。去掉"只在同一自然月内查找"的限制，改为找 >= target
-  // 的下一个交易日（允许跨月）。用 lastSelectedDate 防止同一交易日被多月重复选中，
-  // 并在被上月顺延占用的月份跳过本月计划投入，避免双倍投入。
+  // 非交易日跨月顺延：每一个自然月的投入计划都独立寻找 >= target 的
+  // 首个交易日。上月计划即使顺延到本月，也不能占用或取消本月计划；
+  // 两个月的计划允许落在同一交易日，并合并为一次外部投入和买入流水。
   const scheduled = new Map<string, number>();
   const warnings: string[] = [];
-  let lastSelectedDate = "";
   for (const month of monthsBetween(input.startDate, input.endDate)) {
     const target = `${month}-${String(input.buyDay).padStart(2, "0")}`;
     if (target < input.startDate) {
       // P1-1：当月计划买入日早于回测开始日期，跳过本月
       continue;
     }
-    if (lastSelectedDate && lastSelectedDate.slice(0, 7) === month) {
-      warnings.push(`${month} 已被上月顺延占用，本月不再投入`);
-      continue;
-    }
-    const execution = prices.find(
-      (row) => row.date >= target && row.date > lastSelectedDate,
-    );
+    const execution = prices.find((row) => row.date >= target);
     if (execution) {
-      scheduled.set(execution.date, 1);
-      lastSelectedDate = execution.date;
+      scheduled.set(
+        execution.date,
+        (scheduled.get(execution.date) ?? 0) + 1,
+      );
     } else {
-      warnings.push(`${month} 指定日后至回测结束无交易日，本月未投入`);
+      warnings.push(`${month} 指定日后至回测结束无交易日，该月未投入`);
     }
   }
 

@@ -25,6 +25,7 @@ import {
   fetchUnadjustedPrices,
 } from "../data/tencent";
 import {
+  assertBacktestRequest,
   backtestResultToSimpleResult,
   simulateBacktest,
 } from "../domain/analysis";
@@ -119,6 +120,9 @@ export class AppService {
     if (canonicalRequest.caliberVersion !== BACKTEST_CALIBER_VERSION) {
       throw new Error("回测请求的计算口径版本与当前应用不一致");
     }
+    // 在任何外部请求或缓存写入之前完成领域校验，避免重复标的等无效请求
+    // 消耗数据源配额，或最终才由数据库唯一约束报错。
+    assertBacktestRequest(canonicalRequest);
     const stocks = await this.listStocks();
     const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
     const marketData: Array<{
@@ -126,7 +130,7 @@ export class AppService {
       prices: Awaited<ReturnType<typeof fetchUnadjustedPrices>>;
       dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
       chartData: BacktestResult["chartData"];
-      chartProvenance?: Awaited<
+      chartProvenance: Awaited<
         ReturnType<typeof fetchAdjustedBars>
       >["provenance"];
     }> = [];
@@ -141,12 +145,6 @@ export class AppService {
           symbol,
           canonicalRequest.startDate,
           canonicalRequest.endDate,
-        ).then(
-          (response) => ({ ok: true as const, response }),
-          (error: unknown) => ({
-            ok: false as const,
-            message: error instanceof Error ? error.message : String(error),
-          }),
         ),
       ]);
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
@@ -160,26 +158,12 @@ export class AppService {
         canonicalRequest.startDate,
         canonicalRequest.endDate,
       );
-      this.database.replaceMarketData(
-        symbol,
-        prices.rows,
-        dividends.rows,
-        prices.provenance.source,
-        prices.provenance.fetchedAt,
-      );
       marketData.push({
         symbol,
         prices,
         dividends,
-        chartData: adjustedBars.ok
-          ? { status: "ready", data: adjustedBars.response.rows }
-          : {
-              status: "error",
-              message: `前复权 K 线不可用：${adjustedBars.message}`,
-            },
-        chartProvenance: adjustedBars.ok
-          ? adjustedBars.response.provenance
-          : undefined,
+        chartData: { status: "ready", data: adjustedBars.rows },
+        chartProvenance: adjustedBars.provenance,
       });
     }
 
@@ -219,6 +203,11 @@ export class AppService {
           canonicalRequest,
           symbol,
         );
+        for (const action of dividends.reportedActions) {
+          result.warnings.push(
+            `配股事件（除权日 ${action.exDate}，每 10 股可配 ${action.ratioPer10} 股，认购价 ${action.subscriptionPrice.toFixed(2)} 元）：R1 假设不参与且不追加资金；不复权行情中的除权后市场价格变化仍计入收益与回撤。`,
+          );
+        }
         result.chartData =
           chartData.status === "ready"
             ? {
@@ -231,6 +220,16 @@ export class AppService {
         return result;
       },
     );
+    const actualStartDates = new Set(
+      results.map((result) => result.actualStartDate),
+    );
+    if (results.length > 1 && actualStartDates.size > 1) {
+      const starts = results
+        .map((result) => `${result.symbol} ${result.actualStartDate}`)
+        .join("、");
+      const warning = `多标的实际起始日期不一致（${starts}），本次结果属于非严格同区间比较。`;
+      for (const result of results) result.warnings.push(warning);
+    }
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,
@@ -240,7 +239,18 @@ export class AppService {
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
     };
-    this.database.saveBacktestExperiment(experiment);
+    // 回测试验与本次获取的共享行情缓存一次性提交。任一标的数据、计算或
+    // 实验写入失败时，事务回滚，避免失败实验污染账户估值所使用的缓存。
+    this.database.saveBacktestExperimentWithMarketData(
+      experiment,
+      marketData.map(({ symbol, prices, dividends }) => ({
+        symbol,
+        prices: prices.rows,
+        dividends: dividends.rows,
+        source: prices.provenance.source,
+        fetchedAt: prices.provenance.fetchedAt,
+      })),
+    );
     this.database.log(
       "info",
       `完成回测试验 ${experimentId}：${canonicalRequest.symbols.join(",")} ${canonicalRequest.startDate}..${canonicalRequest.endDate}`,

@@ -72,7 +72,7 @@ export function BacktestPage() {
     },
     [],
   );
-  useBacktestWorkspace({
+  const workspacePersistence = useBacktestWorkspace({
     form,
     activeExperimentId,
     chartMetric,
@@ -305,6 +305,15 @@ export function BacktestPage() {
                 message="无法恢复当前实验"
                 description={activeExperimentError}
                 onClose={() => setActiveExperimentError(null)}
+              />
+            ) : workspacePersistence.saveError ? (
+              <Alert
+                showIcon
+                closable
+                type="error"
+                message="工作区保存失败"
+                description={workspacePersistence.saveError}
+                onClose={workspacePersistence.clearSaveError}
               />
             ) : undefined
           }

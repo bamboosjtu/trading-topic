@@ -49,6 +49,26 @@ export interface DividendEvent {
   status: string;
 }
 
+/**
+ * R1 不自动参与、但必须在回测结果中披露的公司行动。
+ *
+ * 不复权行情会保留事件发生后的市场除权影响；这里只记录用户选择和额外
+ * 资金要求，避免把“不参与”误解为“事件不存在”。
+ */
+export interface ReportedCorporateAction {
+  type: "rights_issue";
+  sourceId: string;
+  exDate: string;
+  recordDate: string;
+  paymentStartDate: string | null;
+  paymentEndDate: string | null;
+  listingDate: string | null;
+  /** 每 10 股可配股数。 */
+  ratioPer10: number;
+  /** 配股认购价（元/股）。 */
+  subscriptionPrice: number;
+}
+
 export interface BacktestRequest {
   symbols: string[];
   startDate: string;

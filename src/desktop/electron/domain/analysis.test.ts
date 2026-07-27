@@ -359,11 +359,11 @@ describe("P1-1 起始月份处理", () => {
 
 // P1-2：非交易日跨月顺延到下一个交易日，而非跳过本月。
 describe("P1-2 非交易日跨月顺延", () => {
-  it("月末无交易日时顺延到下月第一个交易日", () => {
+  it("月末无交易日时顺延到下月且不占用下月投入", () => {
     // buyDay=28，1 月 28 日无交易日（提供 1/15、2/5、3/1）
     // 1 月计划日 2024-01-28 无匹配 → 顺延到 2024-02-05
-    // 2 月已被 1 月顺延占用 → 跳过（避免双倍）
-    // 3 月计划日 2024-03-28 无匹配 → 无后续交易日 → warning
+    // 2 月计划日 2024-02-28 无匹配 → 独立顺延到 2024-03-01
+    // 3 月计划日 2024-03-28 无后续交易日 → warning
     const result = simulateBacktest(
       {
         symbols: ["601398"],
@@ -382,13 +382,60 @@ describe("P1-2 非交易日跨月顺延", () => {
       [],
       [],
     );
-    // 仅 2024-02-05 投入一次（1 月顺延占用，2 月跳过，3 月无后续）
-    expect(result.metrics.totalContribution).toBe(2_000);
+    expect(result.metrics.totalContribution).toBe(4_000);
     const buyDates = result.transactions
       .filter((row) => row.type === "buy")
       .map((row) => row.date);
-    expect(buyDates).toEqual(["2024-02-05"]);
+    expect(buyDates).toEqual(["2024-02-05", "2024-03-01"]);
     expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("两个月计划落在同一交易日时合并投入但不丢失月份", () => {
+    const result = simulateBacktest(
+      {
+        symbols: ["601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-20",
+        monthlyAmount: 2_000,
+        buyDay: 10,
+      },
+      "601398",
+      "工商银行",
+      [
+        { date: "2024-01-05", close: 10 },
+        { date: "2024-02-15", close: 10 },
+      ],
+      [],
+      [],
+    );
+
+    expect(result.metrics.totalContribution).toBe(4_000);
+    expect(
+      result.transactions.find(
+        (row) => row.type === "contribution" && row.date === "2024-02-15",
+      )?.amount,
+    ).toBe(4_000);
+  });
+});
+
+describe("回测请求领域校验", () => {
+  it("在领域入口拒绝重复标的", () => {
+    expect(() =>
+      simulateBacktest(
+        {
+          symbols: ["601398", "601398"],
+          startDate: "2024-01-01",
+          endDate: "2024-02-01",
+          monthlyAmount: 1_000,
+          buyDay: 1,
+        },
+        "601398",
+        "工商银行",
+        [{ date: "2024-01-02", close: 10 }],
+        [],
+        [],
+      ),
+    ).toThrow("回测标的不能重复");
   });
 });
 

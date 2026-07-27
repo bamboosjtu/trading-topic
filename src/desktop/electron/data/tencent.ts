@@ -3,6 +3,7 @@ import type {
   DataProvenance,
   DividendEvent,
   PricePoint,
+  ReportedCorporateAction,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 
@@ -10,6 +11,7 @@ const TENCENT_URL =
   "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
 const EASTMONEY_URL =
   "https://datacenter-web.eastmoney.com/api/data/v1/get";
+const EASTMONEY_EMPTY_RESULT_CODE = 9201;
 
 export function marketSymbol(symbol: string): string {
   if (symbol.startsWith("6")) return `sh${symbol}`;
@@ -20,6 +22,25 @@ export function marketSymbol(symbol: string): string {
 function nonnegativeNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function firstNonnegativeNumber(
+  row: Record<string, unknown>,
+  fields: readonly string[],
+): number | undefined {
+  for (const field of fields) {
+    const value = row[field];
+    if (
+      value === null ||
+      value === undefined ||
+      (typeof value === "string" && !value.trim())
+    ) {
+      continue;
+    }
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return undefined;
 }
 
 function dateValue(value: unknown): string {
@@ -43,7 +64,7 @@ function firstValue(
 ): string {
   for (const field of fields) {
     const value = textValue(row[field]);
-    if (value) return value;
+    if (value && value !== "-") return value;
   }
   return "";
 }
@@ -84,15 +105,19 @@ function sourceVersionDate(row: Record<string, unknown>): string {
 }
 
 function transferRatio(row: Record<string, unknown>): number {
-  const direct = firstValue(row, ["IT_RATIO", "TRANSFER_RATIO"]);
-  if (direct) return nonnegativeNumber(direct);
+  const direct = firstNonnegativeNumber(row, [
+    "IT_RATIO",
+    "TRANSFER_RATIO",
+  ]);
+  if (direct !== undefined) return direct;
 
   // 部分历史响应只给 BONUS_IT_RATIO（送转合计），此时扣除送股比例得到
   // 转增比例。真实新响应通常同时给 IT_RATIO。
+  const combined = firstNonnegativeNumber(row, ["BONUS_IT_RATIO"]) ?? 0;
+  const bonus = firstNonnegativeNumber(row, ["BONUS_RATIO"]) ?? 0;
   return Math.max(
     0,
-    nonnegativeNumber(row["BONUS_IT_RATIO"]) -
-      nonnegativeNumber(row["BONUS_RATIO"]),
+    combined - bonus,
   );
 }
 
@@ -231,6 +256,43 @@ export function parseCorporateActions(
   );
 }
 
+export function parseReportedCorporateActions(
+  sourceRows: Array<Record<string, unknown>>,
+  startDate: string,
+  endDate: string,
+): ReportedCorporateAction[] {
+  const actions = new Map<string, ReportedCorporateAction>();
+  for (const row of sourceRows) {
+    const exDate = dateValue(row["EX_DIVIDEND_DATE"]);
+    if (!exDate) {
+      throw new Error("东方财富配股响应缺少有效的除权日");
+    }
+    if (exDate < startDate || exDate > endDate) continue;
+    const ratioPer10 = firstNonnegativeNumber(row, ["PLACING_RATIO"]);
+    const subscriptionPrice = firstNonnegativeNumber(row, ["ISSUE_PRICE"]);
+    if (ratioPer10 === undefined || subscriptionPrice === undefined) {
+      throw new Error(`东方财富配股响应 ${exDate} 含无效数值字段`);
+    }
+    const sourceId =
+      firstValue(row, ["FINANCE_CODE", "CORRECODE"]) ||
+      stableRowFingerprint(row);
+    actions.set(sourceId, {
+      type: "rights_issue",
+      sourceId,
+      exDate,
+      recordDate: dateValue(row["EQUITY_RECORD_DATE"]) || exDate,
+      paymentStartDate: dateValue(row["PAY_START_DATE"]) || null,
+      paymentEndDate: dateValue(row["PAY_END_DATE"]) || null,
+      listingDate: dateValue(row["LISTING_DATE"]) || null,
+      ratioPer10,
+      subscriptionPrice,
+    });
+  }
+  return [...actions.values()].sort((left, right) =>
+    left.exDate.localeCompare(right.exDate),
+  );
+}
+
 async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -240,7 +302,7 @@ async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: "https://gu.qq.com/",
+        Referer: "https://data.eastmoney.com/",
       },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -248,6 +310,121 @@ async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseEastmoneyRows(
+  payload: unknown,
+  reportName: string,
+): Array<Record<string, unknown>> {
+  if (!isRecord(payload)) {
+    throw new Error(`东方财富 ${reportName} 响应不是对象`);
+  }
+  const code = Number(payload["code"]);
+  const success = payload["success"];
+  const message = textValue(payload["message"]);
+  if (
+    success === false &&
+    code === EASTMONEY_EMPTY_RESULT_CODE &&
+    message.includes("数据为空")
+  ) {
+    return [];
+  }
+  if (success !== true || code !== 0) {
+    throw new Error(
+      `东方财富 ${reportName} 请求失败：${message || `code=${String(payload["code"])}`}`,
+    );
+  }
+  const result = payload["result"];
+  if (!isRecord(result) || !Array.isArray(result["data"])) {
+    throw new Error(`东方财富 ${reportName} 响应结构已变化：缺少 result.data`);
+  }
+  if (!result["data"].every(isRecord)) {
+    throw new Error(`东方财富 ${reportName} 响应结构已变化：data 行不是对象`);
+  }
+  return result["data"];
+}
+
+async function fetchEastmoneyReport(
+  reportName: string,
+  symbol: string,
+  sortColumn: string,
+): Promise<Array<Record<string, unknown>>> {
+  const url = new URL(EASTMONEY_URL);
+  const params: Record<string, string> = {
+    reportName,
+    columns: "ALL",
+    filter: `(SECURITY_CODE="${symbol}")`,
+    pageNumber: "1",
+    pageSize: "100",
+    sortColumns: sortColumn,
+    sortTypes: "-1",
+    source: "WEB",
+    client: "WEB",
+  };
+  Object.entries(params).forEach(([key, value]) =>
+    url.searchParams.set(key, value),
+  );
+  return parseEastmoneyRows(await fetchJson(url), reportName);
+}
+
+function parseTencentSeries(
+  text: string,
+  code: string,
+  adjustment: "none" | "qfq",
+  year: number,
+): Array<Array<string | number>> {
+  const separator = text.indexOf("=");
+  if (separator < 0) throw new Error(`腾讯行情 ${year} 年响应格式已变化`);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text.slice(separator + 1));
+  } catch {
+    throw new Error(`腾讯行情 ${year} 年响应不是有效 JSON`);
+  }
+  if (!isRecord(payload) || Number(payload["code"]) !== 0) {
+    const message = isRecord(payload) ? textValue(payload["msg"]) : "";
+    throw new Error(
+      `腾讯行情 ${year} 年请求失败${message ? `：${message}` : ""}`,
+    );
+  }
+  const data = payload["data"];
+  const security = isRecord(data) ? data[code] : undefined;
+  if (!isRecord(security)) {
+    throw new Error(`腾讯行情 ${year} 年响应结构已变化：缺少 ${code}`);
+  }
+  const field = adjustment === "qfq" ? "qfqday" : "day";
+  const series = security[field];
+  if (!Array.isArray(series)) {
+    throw new Error(`腾讯行情 ${year} 年响应结构已变化：缺少 ${field}`);
+  }
+  for (const item of series) {
+    if (
+      !Array.isArray(item) ||
+      item.length < 6 ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(String(item[0]))
+    ) {
+      throw new Error(`腾讯行情 ${year} 年包含无效日线行`);
+    }
+    const [open, close, high, low, volume] = item
+      .slice(1, 6)
+      .map(Number);
+    if (
+      ![open, close, high, low, volume].every(Number.isFinite) ||
+      open <= 0 ||
+      close <= 0 ||
+      high < Math.max(open, close) ||
+      low <= 0 ||
+      low > Math.min(open, close) ||
+      volume < 0
+    ) {
+      throw new Error(`腾讯行情 ${year} 年包含无效 OHLCV 数值`);
+    }
+  }
+  return series as Array<Array<string | number>>;
 }
 
 async function fetchTencentDailyRows(
@@ -258,6 +435,7 @@ async function fetchTencentDailyRows(
 ): Promise<Array<Array<string | number>>> {
   const code = marketSymbol(symbol);
   const rows = new Map<string, Array<string | number>>();
+  const rowCountsByYear = new Map<number, number>();
   const firstYear = Number(startDate.slice(0, 4));
   const lastYear = Number(endDate.slice(0, 4));
   for (let year = firstYear; year <= lastYear; year += 1) {
@@ -286,27 +464,28 @@ async function fetchTencentDailyRows(
         throw new Error(`腾讯行情请求失败：HTTP ${response.status}`);
       }
       const text = await response.text();
-      const jsonStart = text.indexOf("={");
-      if (jsonStart < 0) throw new Error("腾讯行情响应格式已变化");
-      const payload = JSON.parse(text.slice(jsonStart + 1)) as {
-        data?: Record<
-          string,
-          {
-            day?: Array<Array<string | number>>;
-            qfqday?: Array<Array<string | number>>;
-          }
-        >;
-      };
-      const series =
-        adjustment === "qfq"
-          ? payload.data?.[code]?.qfqday
-          : payload.data?.[code]?.day;
-      for (const item of series ?? []) {
+      const series = parseTencentSeries(text, code, adjustment, year);
+      let acceptedRows = 0;
+      for (const item of series) {
         const date = String(item[0]);
-        if (date >= startDate && date <= endDate) rows.set(date, item);
+        if (date >= startDate && date <= endDate) {
+          rows.set(date, item);
+          acceptedRows += 1;
+        }
       }
+      rowCountsByYear.set(year, acceptedRows);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+  if (rows.size) {
+    const dates = [...rows.keys()].sort();
+    const firstDataYear = Number(dates[0].slice(0, 4));
+    const lastDataYear = Number(dates.at(-1)!.slice(0, 4));
+    for (let year = firstDataYear + 1; year < lastDataYear; year += 1) {
+      if ((rowCountsByYear.get(year) ?? 0) === 0) {
+        throw new Error(`腾讯行情请求区间在 ${year} 年存在异常缺口`);
+      }
     }
   }
   return [...rows.values()].sort((left, right) =>
@@ -324,9 +503,7 @@ export async function fetchUnadjustedPrices(
     startDate,
     endDate,
     "none",
-  ))
-    .map((item) => ({ date: String(item[0]), close: Number(item[2]) }))
-    .filter((row) => Number.isFinite(row.close) && row.close > 0);
+  )).map((item) => ({ date: String(item[0]), close: Number(item[2]) }));
   if (!rows.length) throw new Error(`${symbol} 未取得腾讯不复权日线`);
   const fetchedAt = new Date().toISOString();
   return {
@@ -362,17 +539,6 @@ export async function fetchAdjustedBars(
         volume: Number(item[5]),
         adjustment: "qfq",
       }),
-    )
-    .filter(
-      (row) =>
-        [row.open, row.high, row.low, row.close, row.volume].every(
-          Number.isFinite,
-        ) &&
-        row.open > 0 &&
-        row.high >= Math.max(row.open, row.close) &&
-        row.low > 0 &&
-        row.low <= Math.min(row.open, row.close) &&
-        row.volume >= 0,
     );
   if (!rows.length) throw new Error(`${symbol} 未取得腾讯前复权 OHLCV 日线`);
   return {
@@ -391,36 +557,43 @@ export async function fetchCorporateActions(
   symbol: string,
   startDate: string,
   endDate: string,
-): Promise<{ rows: DividendEvent[]; provenance: DataProvenance }> {
-  const url = new URL(EASTMONEY_URL);
-  const params: Record<string, string> = {
-    reportName: "RPT_SHAREBONUS_DET",
-    columns: "ALL",
-    filter: `(SECURITY_CODE="${symbol}")`,
-    pageNumber: "1",
-    pageSize: "100",
-    sortColumns: "EX_DIVIDEND_DATE",
-    sortTypes: "-1",
-    source: "WEB",
-    client: "WEB",
-  };
-  Object.entries(params).forEach(([key, value]) =>
-    url.searchParams.set(key, value),
+): Promise<{
+  rows: DividendEvent[];
+  reportedActions: ReportedCorporateAction[];
+  provenance: DataProvenance;
+}> {
+  const dividendSourceRows = await fetchEastmoneyReport(
+    "RPT_SHAREBONUS_DET",
+    symbol,
+    "EX_DIVIDEND_DATE",
   );
-  const payload = (await fetchJson(url)) as {
-    result?: { data?: Array<Record<string, unknown>> };
-  };
+  const rightsSourceRows = await fetchEastmoneyReport(
+    "RPT_IPO_ALLOTMENT",
+    symbol,
+    "EQUITY_RECORD_DATE",
+  );
   const rows = parseCorporateActions(
-    payload.result?.data ?? [],
+    dividendSourceRows,
     startDate,
     endDate,
   );
+  const reportedActions = parseReportedCorporateActions(
+    rightsSourceRows,
+    startDate,
+    endDate,
+  );
+  const eventDates = [
+    ...rows.map((row) => row.date),
+    ...reportedActions.map((row) => row.exDate),
+  ].sort();
   return {
     rows,
+    reportedActions,
     provenance: {
-      source: "东方财富 RPT_SHAREBONUS_DET（产品域独立适配）",
+      source:
+        "东方财富 RPT_SHAREBONUS_DET + RPT_IPO_ALLOTMENT（产品域独立适配）",
       fetchedAt: new Date().toISOString(),
-      dataCutoff: rows.at(-1)?.date ?? endDate,
+      dataCutoff: eventDates.at(-1) ?? endDate,
       adjustment: "none",
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },

@@ -966,6 +966,21 @@ a:focus-visible,
   font-weight: 400;
 }
 
+.comparison-warning {
+  margin: 0 17px 10px;
+  padding-block: 6px;
+  font-size: 12px;
+}
+
+.comparison-warning .ant-alert-message {
+  font-size: 12px;
+}
+
+.comparison-warning ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
 .experiment-history-panel {
   min-height: 560px;
   overflow: hidden;

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import icbcFixture from "../../tests/fixtures/eastmoney-sharebonus-601398.json";
 import catlFixture from "../../tests/fixtures/eastmoney-sharebonus-300750.json";
+import allotmentFixture from "../../tests/fixtures/eastmoney-allotment-601916.json";
 import {
   fetchAdjustedBars,
   fetchCorporateActions,
+  fetchUnadjustedPrices,
   parseCorporateActions,
+  parseReportedCorporateActions,
 } from "./tencent";
 
 afterEach(() => {
@@ -14,25 +17,39 @@ afterEach(() => {
 
 describe("fetchCorporateActions", () => {
   it("把每 10 股派息换算为每股，并保留每 10 股送转比例", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        result: {
-          data: [
-            {
-              SECURITY_CODE: "601398",
-              EX_DIVIDEND_DATE: "2024-07-15",
-              EQUITY_RECORD_DATE: "2024-07-12",
-              DIVIDEND_ARRIVAL_DATE: "2024-07-15",
-              PRETAX_BONUS_RMB: 2.933,
-              TRANSFER_RATIO: 1,
-              BONUS_RATIO: 0.5,
-              ASSIGN_PROGRESS: "实施",
-            },
-          ],
-        },
-      }),
-    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          message: "ok",
+          result: {
+            data: [
+              {
+                SECURITY_CODE: "601398",
+                EX_DIVIDEND_DATE: "2024-07-15",
+                EQUITY_RECORD_DATE: "2024-07-12",
+                DIVIDEND_ARRIVAL_DATE: "2024-07-15",
+                PRETAX_BONUS_RMB: 2.933,
+                TRANSFER_RATIO: 1,
+                BONUS_RATIO: 0.5,
+                ASSIGN_PROGRESS: "实施",
+              },
+            ],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: false,
+          code: 9201,
+          message: "返回数据为空",
+          result: null,
+        }),
+      });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchCorporateActions(
@@ -67,11 +84,16 @@ describe("fetchCorporateActions", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          result: {
-            data: [
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            success: true,
+            code: 0,
+            message: "ok",
+            result: {
+              data: [
               repeatedVersion,
               { ...repeatedVersion },
               {
@@ -102,10 +124,19 @@ describe("fetchCorporateActions", () => {
                 BONUS_RATIO: 0,
                 ASSIGN_PROGRESS: "实施分配",
               },
-            ],
-          },
+              ],
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            success: false,
+            code: 9201,
+            message: "返回数据为空",
+            result: null,
+          }),
         }),
-      }),
     );
 
     const result = await fetchCorporateActions(
@@ -150,6 +181,115 @@ describe("fetchCorporateActions", () => {
       }),
     ]);
   });
+
+  it("跳过占位符并读取后续可解析的转增比例", () => {
+    const rows = parseCorporateActions(
+      [
+        {
+          SECURITY_CODE: "300750",
+          REPORT_DATE: "2023-12-31",
+          EX_DIVIDEND_DATE: "2024-06-01",
+          EQUITY_RECORD_DATE: "2024-05-31",
+          PRETAX_BONUS_RMB: 0,
+          IT_RATIO: "-",
+          TRANSFER_RATIO: "2.5",
+          BONUS_RATIO: 0,
+          ASSIGN_PROGRESS: "实施分配",
+        },
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect(rows[0].transferRatio).toBe(2.5);
+  });
+
+  it("解析真实东方财富配股响应并报告用户不参与的公司行动", () => {
+    expect(
+      parseReportedCorporateActions(
+        allotmentFixture.result.data,
+        "2023-01-01",
+        "2023-12-31",
+      ),
+    ).toEqual([
+      {
+        type: "rights_issue",
+        sourceId: "42784",
+        exDate: "2023-06-27",
+        recordDate: "2023-06-14",
+        paymentStartDate: "2023-06-15",
+        paymentEndDate: "2023-06-21",
+        listingDate: "2023-07-06",
+        ratioPer10: 3,
+        subscriptionPrice: 2.02,
+      },
+    ]);
+  });
+
+  it("把东方财富明确的空结果识别为合法无公司行动", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: false,
+          code: 9201,
+          message: "返回数据为空",
+          result: null,
+        }),
+      }),
+    );
+
+    const result = await fetchCorporateActions(
+      "601398",
+      "2024-01-01",
+      "2024-12-31",
+    );
+    expect(result.rows).toEqual([]);
+    expect(result.reportedActions).toEqual([]);
+  });
+
+  it("东方财富限流或响应结构损坏时终止而不是伪装成无数据", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            success: false,
+            code: 429,
+            message: "访问过于频繁",
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            success: true,
+            code: 0,
+            message: "ok",
+            result: {},
+          }),
+        }),
+    );
+
+    await expect(
+      fetchCorporateActions("601398", "2024-01-01", "2024-12-31"),
+    ).rejects.toThrow("访问过于频繁");
+
+    vi.mocked(fetch).mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        success: true,
+        code: 0,
+        message: "ok",
+        result: {},
+      }),
+    }) as Response);
+    await expect(
+      fetchCorporateActions("601398", "2024-01-01", "2024-12-31"),
+    ).rejects.toThrow("缺少 result.data");
+  });
 });
 
 describe("fetchAdjustedBars", () => {
@@ -158,7 +298,7 @@ describe("fetchAdjustedBars", () => {
       ok: true,
       status: 200,
       text: async () =>
-        'kline_qfq_day2024={"data":{"sh601398":{"qfqday":[["2024-01-02","4.31","4.38","4.42","4.27","123456.5"],["2024-01-03","4.39","4.35","4.41","4.32","98765"]]}}}',
+        'kline_qfq_day2024={"code":0,"msg":"","data":{"sh601398":{"qfqday":[["2024-01-02","4.31","4.38","4.42","4.27","123456.5"],["2024-01-03","4.39","4.35","4.41","4.32","98765"]]}}}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -193,5 +333,80 @@ describe("fetchAdjustedBars", () => {
       },
     ]);
     expect(result.provenance.adjustment).toBe("qfq");
+  });
+
+  it("缺少 qfqday 字段时明确失败", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () =>
+          'kline_qfq_day2024={"code":0,"msg":"","data":{"sh601398":{}}}',
+      }),
+    );
+
+    await expect(
+      fetchAdjustedBars("601398", "2024-01-01", "2024-12-31"),
+    ).rejects.toThrow("缺少 qfqday");
+  });
+});
+
+describe("fetchUnadjustedPrices", () => {
+  it("上市前年份的明确空数组是合法空数据", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            'kline_none_day2023={"code":0,"msg":"","data":{"sz300750":{"day":[]}}}',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            'kline_none_day2024={"code":0,"msg":"","data":{"sz300750":{"day":[["2024-01-02","10","10.2","10.3","9.9","1000"]]}}}',
+        }),
+    );
+
+    const result = await fetchUnadjustedPrices(
+      "300750",
+      "2023-01-01",
+      "2024-12-31",
+    );
+    expect(result.rows).toEqual([{ date: "2024-01-02", close: 10.2 }]);
+  });
+
+  it("已存在前后行情但中间整年为空时识别为异常缺口", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            'kline_none_day2022={"code":0,"msg":"","data":{"sh601398":{"day":[["2022-12-30","4","4.1","4.2","3.9","1000"]]}}}',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            'kline_none_day2023={"code":0,"msg":"","data":{"sh601398":{"day":[]}}}',
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            'kline_none_day2024={"code":0,"msg":"","data":{"sh601398":{"day":[["2024-01-02","4","4.1","4.2","3.9","1000"]]}}}',
+        }),
+    );
+
+    await expect(
+      fetchUnadjustedPrices("601398", "2022-01-01", "2024-12-31"),
+    ).rejects.toThrow("2023 年存在异常缺口");
   });
 });

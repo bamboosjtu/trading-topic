@@ -177,6 +177,41 @@ describe("LocalDatabase", () => {
       .toBe(160000);
   });
 
+  it("行情缓存与实验保存使用同一事务，实验失败时缓存回滚", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-atomic-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const invalidExperiment = experiment(
+      "experiment-invalid",
+      "2026-07-24T09:30:00Z",
+      150000,
+    );
+    invalidExperiment.results.push(
+      result(
+        "experiment-invalid",
+        "experiment-invalid-result-2",
+        160000,
+      ),
+    );
+
+    expect(() =>
+      database.saveBacktestExperimentWithMarketData(invalidExperiment, [
+        {
+          symbol: "601398",
+          prices: [{ date: "2026-07-24", close: 5 }],
+          dividends: [],
+          source: "test",
+          fetchedAt: "2026-07-24T00:00:00Z",
+        },
+      ]),
+    ).toThrow();
+    expect(database.latestPrices()).toEqual({
+      prices: {},
+      dataCutoff: null,
+    });
+    expect(database.getBacktestExperiment("experiment-invalid")).toBeNull();
+  });
+
   it("删除实验时级联删除结果，并清除工作区活动实验", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-delete-"));
     temporaryDirectories.push(directory);
