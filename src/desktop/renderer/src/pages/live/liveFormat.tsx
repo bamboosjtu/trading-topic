@@ -95,9 +95,11 @@ export function LiveLoading({ rows = 6 }: { rows?: number }) {
 export function LiveEmpty({
   title,
   description,
+  action,
 }: {
   title: string;
   description: string;
+  action?: ReactNode;
 }) {
   return (
     <div className="live-empty">
@@ -107,6 +109,7 @@ export function LiveEmpty({
           <div>
             <strong>{title}</strong>
             <span>{description}</span>
+            {action ? <div className="live-empty-action">{action}</div> : null}
           </div>
         }
       />

@@ -242,6 +242,8 @@ export interface SimpleBacktestResult {
 export interface LedgerEntryInput {
   type: EntryType;
   businessDate: string;
+  securityType?: SecurityType;
+  instrumentName?: string;
   amount?: number;
   symbol?: string;
   price?: number;
@@ -257,6 +259,7 @@ export interface LedgerEntryInput {
   maturityDate?: string;
   note?: string;
   reversesEntryId?: string;
+  correctsEntryId?: string;
 }
 
 export interface LedgerEntry extends LedgerEntryInput {
@@ -378,6 +381,24 @@ export interface LedgerRecordView {
   paymentDate: string | null;
   isReversed: boolean;
   reversesEntryId: string | null;
+  correctsEntryId: string | null;
+}
+
+export interface LedgerImpactState {
+  availableCash: number;
+  holdingQuantity: number;
+  holdingCost: number;
+  cumulativeDividend: number;
+  pendingReverseRepoAsset: number;
+}
+
+export interface LedgerImpactPreview {
+  normalizedInput: LedgerEntryInput;
+  symbol: string | null;
+  tradeAmount: number;
+  before: LedgerImpactState;
+  after: LedgerImpactState;
+  warnings: string[];
 }
 
 export interface LedgerQueryResult {
@@ -547,8 +568,15 @@ export interface DesktopApi {
   exportLedger(query: LedgerQuery): Promise<ExportResult>;
   getIncomeCalendar(query: IncomeCalendarQuery): Promise<IncomeCalendarView>;
   exportIncomeCalendar(query: IncomeCalendarQuery): Promise<ExportResult>;
-  listLedger(): Promise<LedgerEntry[]>;
+  previewLedger(
+    input: LedgerEntryInput,
+    replacingEntryId?: string,
+  ): Promise<LedgerImpactPreview>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
+  correctLedger(
+    entryId: string,
+    input: LedgerEntryInput,
+  ): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;
   accountSummary(): Promise<AccountSummary>;
   getSettings(): Promise<AppSettings>;

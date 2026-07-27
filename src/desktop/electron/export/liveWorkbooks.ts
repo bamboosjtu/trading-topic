@@ -149,6 +149,7 @@ export async function buildLedgerWorkbook(
     { header: "业务日期", key: "businessDate", width: 14 },
     { header: "证券代码", key: "symbol", width: 12 },
     { header: "证券名称", key: "name", width: 18 },
+    { header: "资产类型", key: "securityType", width: 12 },
     { header: "流水类型", key: "type", width: 14 },
     { header: "数量", key: "quantity", width: 14 },
     { header: "价格", key: "price", width: 12 },
@@ -156,17 +157,34 @@ export async function buildLedgerWorkbook(
     { header: "费用", key: "fee", width: 14 },
     { header: "备注", key: "note", width: 30 },
     { header: "是否已冲正", key: "isReversed", width: 14 },
+    { header: "修正后记录", key: "isCorrection", width: 14 },
+    { header: "每股分红", key: "perShare", width: 14 },
+    { header: "登记日", key: "recordDate", width: 14 },
+    { header: "到账日", key: "paymentDate", width: 14 },
+    { header: "逆回购品种", key: "repoCode", width: 16 },
+    { header: "成交年化收益率", key: "annualRate", width: 16 },
+    { header: "期限（天）", key: "termDays", width: 12 },
+    { header: "到期日", key: "maturityDate", width: 14 },
+    { header: "到期金额", key: "maturityAmount", width: 16 },
   ];
   for (const row of result.rows) {
     sheet.addRow({
       ...row,
+      securityType:
+        row.securityType === "stock"
+          ? "股票"
+          : row.securityType === "etf"
+            ? "ETF"
+            : null,
       isReversed: row.isReversed ? "是" : "否",
+      isCorrection: row.correctsEntryId ? "是" : "否",
     });
   }
-  for (const key of ["amount", "fee"]) {
+  for (const key of ["amount", "fee", "perShare", "maturityAmount"]) {
     sheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
   }
   sheet.getColumn("price").numFmt = "0.000";
+  sheet.getColumn("annualRate").numFmt = "0.0000%";
   sheet.getColumn("quantity").numFmt = "#,##0.00";
   styleWorksheet(sheet);
   return toBuffer(workbook);

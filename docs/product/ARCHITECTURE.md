@@ -77,7 +77,7 @@ src/desktop/
 │   ├── main.ts
 │   └── preload.ts
 ├── renderer/                 # React 工作台
-│   └── src/pages/            # 回测与三个实盘只读页面；live/ 为共享展示组件
+│   └── src/pages/            # 回测与三个实盘页面；live/ 为共享展示和录入组件
 ├── shared/                   # 产品进程间 TypeScript 契约
 ├── tests/fixtures/           # 产品自有验收向量
 ├── package.json
@@ -130,7 +130,8 @@ rebuild，避免同一版本再次下载或对同一 ABI 再次本地编译。
 - 历史摘要查询只返回最近 500 次实验，界面必须明确这一窗口；上限不代表数据库只保存 500 次。
 - 回测详情只从 `backtest_results` 的结果快照转换，不重新联网或二次模拟。
 - XLSX 在 Electron 主进程按实验生成：汇总 sheet 后跟该实验每个标的的明细 sheet，渲染层只通过受限 IPC 发起保存。
-- 实盘页面通过 `PositionsOverview`、`LedgerQueryResult` 和 `IncomeCalendarView` 三个只读契约消费领域结果。累计收益、区间表现、月度/累计/年内收益、价格与分红归因均在 `electron/domain/livePortfolio.ts` 计算；Renderer 只做筛选控件、格式化、布局和热度映射。
+- 持仓与收益日历通过 `PositionsOverview` 和 `IncomeCalendarView` 只读消费领域结果；交易流水页通过 `LedgerQueryResult` 查询事实，并通过 `previewLedger / addLedger / correctLedger / reverseLedger` 四类受限命令写入账本。累计收益、区间表现、月度/累计/年内收益、价格与分红归因均在 `electron/domain/livePortfolio.ts` 计算；录入校验、成交金额、现金/持仓/成本/分红/待到账资产影响摘要由 `electron/domain/ledgerCommands.ts` 返回，Renderer 只负责表单、筛选、格式化和布局。
+- 普通录入只接受资金转入/转出、买入、卖出、现金分红和国债逆回购；`adjustment` 不能从普通表单创建。追加修正以一个 SQLite 事务写入“撤销原影响”的 adjustment 和修正后事实；冲正只追加 adjustment。原记录不覆盖、不删除，重复冲正或会造成历史卖空的变更会在落库前拒绝。
 - 本地行情刷新只针对当前有效持仓；全部标的获取成功后通过一个 SQLite 事务提交，失败时保留旧快照。缺失行情不得回退到持仓成本冒充市值，相关金额和比率返回 `null` 并进入 `partial`。
 - 实盘查询统一返回 `ready / empty / stale / partial` 质量状态；IPC 或数据库异常通过 rejected Promise 进入页面 `error`。三个页面不以空数组同时表示加载、错误和无数据。
 - 持仓、流水和收益日历 XLSX 均在主进程生成；Renderer 不接触文件路径和文件系统。
@@ -154,5 +155,5 @@ rebuild，避免同一版本再次下载或对同一 ABI 再次本地编译。
 | 隔离扫描 | `src/desktop/` 不含 Python，不引用、执行或读取 Labs、Research                                                         |
 | 持久化   | 每次运行新增不可变实验、结果归属与删除、实验与共享行情缓存原子回滚、工作区活动实验和股票目录重开恢复、四标的完整冷启动链路、schema v5 备份恢复 |
 | 导出     | XLSX 汇总字段与每个“标的 + 参数”明细 sheet 名称、内容                                                                 |
-| 实盘领域 | 持仓成本/估值/缺行情、冲正后的流水汇总、价格与分红日度归因、月度和累计指标 |
-| 界面冒烟 | 1920×1080 下回测双 Tab，以及持仓筛选/详情、流水筛选/分页/详情、收益日历/标的贡献；3840×2160 下保持字号尺度并扩展内容 |
+| 实盘领域 | 流水字段与精度校验、影响预览、修正/冲正原子追加、持仓成本/估值/缺行情、冲正后的流水汇总、价格与分红日度归因、月度和累计指标 |
+| 界面冒烟 | 1920×1080 下回测双 Tab，以及持仓筛选/详情、流水录入/影响预览/筛选/分页/详情/修正/冲正、收益日历/标的贡献；3840×2160 下保持字号尺度并扩展内容 |

@@ -495,3 +495,76 @@ describe("AppService 回测试验", () => {
     expect(database.listBacktestExperiments()).toEqual([]);
   });
 });
+
+describe("AppService 实盘流水", () => {
+  it("追加修正原子保留原记录、冲正记录与修正后记录", async () => {
+    const { service, database } = await serviceWithDatabase();
+    service.addLedger({
+      type: "transfer_in",
+      businessDate: "2026-01-01",
+      amount: 10_000,
+    });
+    const original = service.addLedger({
+      type: "buy",
+      businessDate: "2026-01-02",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 1_000,
+      fee: 5,
+    });
+
+    const replacement = service.correctLedger(original.id, {
+      type: "buy",
+      businessDate: "2026-01-02",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 4,
+      quantity: 100,
+      fee: 1,
+    });
+    const rows = database.listLedger();
+
+    expect(rows).toHaveLength(4);
+    expect(rows.find((row) => row.id === original.id)).toBeDefined();
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        type: "adjustment",
+        reversesEntryId: original.id,
+      }),
+    );
+    expect(replacement).toMatchObject({
+      correctsEntryId: original.id,
+      quantity: 100,
+      price: 4,
+    });
+    expect(service.accountSummary().positions[0]).toMatchObject({
+      symbol: "601398",
+      quantity: 100,
+      cost: 401,
+    });
+  });
+
+  it("已冲正流水不能重复冲正或修正", async () => {
+    const { service } = await serviceWithDatabase();
+    const original = service.addLedger({
+      type: "transfer_in",
+      businessDate: "2026-01-01",
+      amount: 10_000,
+    });
+    service.reverseLedger(original.id, "测试冲正");
+
+    expect(() => service.reverseLedger(original.id, "再次冲正")).toThrow(
+      "已经被冲正或修正",
+    );
+    expect(() =>
+      service.correctLedger(original.id, {
+        type: "transfer_in",
+        businessDate: "2026-01-01",
+        amount: 9_000,
+      }),
+    ).toThrow("已经被冲正或修正");
+  });
+});

@@ -37,9 +37,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("income-calendar:get", query),
   exportIncomeCalendar: (query: IncomeCalendarQuery) =>
     ipcRenderer.invoke("income-calendar:export", query),
-  listLedger: () => ipcRenderer.invoke("ledger:list"),
+  previewLedger: (input: LedgerEntryInput, replacingEntryId?: string) =>
+    ipcRenderer.invoke("ledger:preview", input, replacingEntryId),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),
+  correctLedger: (entryId: string, input: LedgerEntryInput) =>
+    ipcRenderer.invoke("ledger:correct", entryId, input),
   reverseLedger: (entryId: string, reason: string) =>
     ipcRenderer.invoke("ledger:reverse", entryId, reason),
   accountSummary: () => ipcRenderer.invoke("account:summary"),

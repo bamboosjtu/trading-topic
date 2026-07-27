@@ -181,9 +181,18 @@ function registerIpc(): void {
       return { cancelled: false, path: result.filePath };
     },
   );
-  ipcMain.handle("ledger:list", () => service.listLedger());
+  ipcMain.handle(
+    "ledger:preview",
+    (_event, input: LedgerEntryInput, replacingEntryId?: string) =>
+      service.previewLedger(input, replacingEntryId),
+  );
   ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>
     service.addLedger(input),
+  );
+  ipcMain.handle(
+    "ledger:correct",
+    (_event, entryId: string, input: LedgerEntryInput) =>
+      service.correctLedger(entryId, input),
   );
   ipcMain.handle(
     "ledger:reverse",

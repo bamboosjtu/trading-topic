@@ -294,9 +294,21 @@ export function PositionsPage() {
               </div>
             </div>
             {!overview.data.hasLedgerEntries ? (
-              <LiveEmpty title="暂无实盘流水" description="本页面只展示本地已存在的实盘记录，不提供录入或导入入口。" />
+              <LiveEmpty
+                title="暂无实盘流水"
+                description="先在交易流水页录入资金或证券事实，持仓将在保存后自动重建。"
+                action={
+                  <Button type="primary" onClick={() => navigate("/trades")}>
+                    前往交易流水
+                  </Button>
+                }
+              />
             ) : !overview.data.positions.length ? (
-              <LiveEmpty title="当前无持仓" description="本地已有资金记录，但当前没有可展示的证券持仓。" />
+              <LiveEmpty
+                title="当前无持仓"
+                description="本地已有资金记录，但当前没有可展示的证券持仓。"
+                action={<Button onClick={() => navigate("/trades")}>查看交易流水</Button>}
+              />
             ) : rows.length ? (
               <Table
                 className="live-data-table"

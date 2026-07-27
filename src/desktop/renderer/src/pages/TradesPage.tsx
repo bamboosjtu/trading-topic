@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  Alert,
   App,
   Button,
   DatePicker,
@@ -15,12 +16,13 @@ import {
   DownloadOutlined,
   EyeOutlined,
   GiftOutlined,
+  PlusOutlined,
   SearchOutlined,
   SwapOutlined,
   TransactionOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { type Dayjs } from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -45,6 +47,7 @@ import {
   money,
   numberValue,
 } from "./live/liveFormat";
+import { LedgerEntryModal } from "./live/LedgerEntryModal";
 
 const { RangePicker } = DatePicker;
 type LedgerPageSize = 20 | 50 | 100;
@@ -64,7 +67,8 @@ function signedAmount(row: LedgerRecordView): string {
 }
 
 export function TradesPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const linkedDate = searchParams.get("date");
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(
@@ -77,6 +81,9 @@ export function TradesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<LedgerPageSize>(20);
   const [detail, setDetail] = useState<LedgerRecordView | null>(null);
+  const [entryModalOpen, setEntryModalOpen] = useState(false);
+  const [correctionTarget, setCorrectionTarget] =
+    useState<LedgerRecordView | null>(null);
   const query: LedgerQuery = useMemo(
     () => ({
       startDate: dateRange?.[0].format("YYYY-MM-DD"),
@@ -94,6 +101,11 @@ export function TradesPage() {
     queryKey: ["ledger:query", query],
     queryFn: () => api.queryLedger(query),
   });
+  const stocks = useQuery({
+    queryKey: ["stocks"],
+    queryFn: api.listStocks,
+    staleTime: 24 * 60 * 60 * 1000,
+  });
   const exportData = useMutation({
     mutationFn: () => api.exportLedger(query),
     onSuccess: (result) => {
@@ -102,6 +114,22 @@ export function TradesPage() {
     onError: (error) => message.error(error.message),
   });
   const resetPage = () => setPage(1);
+  const refreshLivePages = () => {
+    void queryClient.invalidateQueries({ queryKey: ["ledger:query"] });
+    void queryClient.invalidateQueries({ queryKey: ["positions:overview"] });
+    void queryClient.invalidateQueries({ queryKey: ["income-calendar"] });
+    void queryClient.invalidateQueries({ queryKey: ["health"] });
+  };
+  const reverseEntry = useMutation({
+    mutationFn: (row: LedgerRecordView) =>
+      api.reverseLedger(row.id, "用户从流水详情发起冲正"),
+    onSuccess: () => {
+      message.success("冲正记录已追加，原流水完整保留");
+      setDetail(null);
+      refreshLivePages();
+    },
+    onError: (error) => message.error(error.message),
+  });
   const columns: ColumnsType<LedgerRecordView> = [
     {
       title: "业务日期",
@@ -190,16 +218,33 @@ export function TradesPage() {
     <div className="live-page trades-page">
       <LivePageHeader
         title="交易流水"
-        description="按业务日期查看本地资金与证券事实记录；本页不提供录入、导入或修改入口。"
+        description="手工记录资金与证券事实；持仓、现金和收益均由追加式账本重建。"
         actions={
-          <Button
-            icon={<DownloadOutlined />}
-            loading={exportData.isPending}
-            disabled={!ledger.data?.total}
-            onClick={() => exportData.mutate()}
-          >
-            导出流水
-          </Button>
+          <>
+            <span className="live-cutoff">
+              数据截止：{ledger.data?.quality.updatedAt
+                ? dayjs(ledger.data.quality.updatedAt).format("YYYY-MM-DD")
+                : "暂无记录"}
+            </span>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exportData.isPending}
+              disabled={!ledger.data?.total}
+              onClick={() => exportData.mutate()}
+            >
+              导出流水
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setCorrectionTarget(null);
+                setEntryModalOpen(true);
+              }}
+            >
+              录入交易
+            </Button>
+          </>
         }
       />
       <section className="workspace-panel ledger-filter-panel">
@@ -276,6 +321,28 @@ export function TradesPage() {
             }}
           />
         </div>
+        <div className="ledger-filter-actions">
+          <Button
+            onClick={() => {
+              setDateRange(null);
+              setEntryTypes([]);
+              setSecurityType(undefined);
+              setSymbol(undefined);
+              setKeyword("");
+              setPage(1);
+            }}
+          >
+            重置
+          </Button>
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            loading={ledger.isFetching}
+            onClick={() => void ledger.refetch()}
+          >
+            查询
+          </Button>
+        </div>
       </section>
       {ledger.isLoading ? (
         <section className="workspace-panel"><LiveLoading rows={12} /></section>
@@ -283,6 +350,15 @@ export function TradesPage() {
         <PageError title="交易流水加载失败" error={ledger.error} onRetry={() => void ledger.refetch()} />
       ) : ledger.data ? (
         <>
+          {ledger.data.integrityError ? (
+            <Alert
+              showIcon
+              type="error"
+              className="live-quality-alert"
+              message="账户重建失败"
+              description={`${ledger.data.integrityError}。事实流水仍完整保留，请从原记录详情追加修正或冲正。`}
+            />
+          ) : null}
           <QualityNotice quality={ledger.data.quality} />
           <LiveMetricStrip
             items={[
@@ -322,13 +398,27 @@ export function TradesPage() {
             ) : (
               <LiveEmpty
                 title={ledger.data.quality.status === "empty" ? "暂无交易流水" : "没有匹配的流水"}
-                description={ledger.data.quality.status === "empty" ? "当前没有本地实盘记录；本页不提供录入或导入入口。" : "请调整筛选条件后重试。"}
+                description={ledger.data.quality.status === "empty" ? "从第一笔资金或证券事实开始建立本地账本。" : "请调整筛选条件后重试。"}
+                action={
+                  ledger.data.quality.status === "empty" ? (
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        setCorrectionTarget(null);
+                        setEntryModalOpen(true);
+                      }}
+                    >
+                      录入第一笔交易
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
           </section>
           <div className="live-source-note">
             <CalendarOutlined />
-            <span>业务日期是事实口径；冲正记录与被冲正原记录均保留并明确标识。</span>
+            <span>本地手工录入是唯一事实源；业务日期是事实口径，修正与冲正只追加记录、不覆盖原记录。</span>
           </div>
         </>
       ) : null}
@@ -337,6 +427,40 @@ export function TradesPage() {
         width={440}
         open={Boolean(detail)}
         onClose={() => setDetail(null)}
+        footer={
+          detail && detail.type !== "adjustment" ? (
+            <div className="ledger-detail-actions">
+              <Button
+                disabled={detail.isReversed}
+                onClick={() => {
+                  setCorrectionTarget(detail);
+                  setEntryModalOpen(true);
+                }}
+              >
+                追加修正
+              </Button>
+              <Button
+                danger
+                loading={reverseEntry.isPending}
+                disabled={detail.isReversed}
+                onClick={() => {
+                  modal.confirm({
+                    title: "确认冲正这条流水？",
+                    content: "系统会追加反向影响记录，原记录不会被删除；已冲正流水不能重复操作。",
+                    okText: "确认冲正",
+                    okButtonProps: { danger: true },
+                    cancelText: "取消",
+                    onOk: async () => {
+                      await reverseEntry.mutateAsync(detail);
+                    },
+                  });
+                }}
+              >
+                冲正
+              </Button>
+            </div>
+          ) : null
+        }
       >
         {detail ? (
           <div className="ledger-detail">
@@ -354,12 +478,29 @@ export function TradesPage() {
               <div><dt>登记日</dt><dd>{detail.recordDate ?? "—"}</dd></div>
               <div><dt>到账日</dt><dd>{detail.paymentDate ?? "—"}</dd></div>
               <div><dt>逆回购到期日</dt><dd>{detail.maturityDate ?? "—"}</dd></div>
+              <div><dt>逆回购代码</dt><dd>{detail.repoCode ?? "—"}</dd></div>
+              <div><dt>成交年化收益率</dt><dd>{detail.annualRate === null ? "—" : `${(detail.annualRate * 100).toFixed(4)}%`}</dd></div>
+              <div><dt>逆回购期限</dt><dd>{detail.termDays === null ? "—" : `${detail.termDays} 天`}</dd></div>
+              <div><dt>逆回购到期金额</dt><dd>{money(detail.maturityAmount)}</dd></div>
               <div><dt>备注</dt><dd>{detail.note ?? "—"}</dd></div>
-              <div><dt>记录状态</dt><dd>{detail.isReversed ? "已冲正" : detail.type === "adjustment" ? "冲正 / 修正记录" : "有效"}</dd></div>
+              <div><dt>记录状态</dt><dd>{detail.isReversed ? "已冲正" : detail.correctsEntryId ? "修正后的有效记录" : detail.type === "adjustment" ? "冲正 / 修正记录" : "有效"}</dd></div>
             </dl>
           </div>
         ) : null}
       </Drawer>
+      <LedgerEntryModal
+        open={entryModalOpen}
+        correctionTarget={correctionTarget}
+        stocks={stocks.data ?? []}
+        onClose={() => {
+          setEntryModalOpen(false);
+          setCorrectionTarget(null);
+        }}
+        onSaved={() => {
+          setDetail(null);
+          refreshLivePages();
+        }}
+      />
     </div>
   );
 }

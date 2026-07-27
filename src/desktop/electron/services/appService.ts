@@ -7,6 +7,7 @@ import type {
   BacktestResult,
   LedgerEntry,
   LedgerEntryInput,
+  LedgerImpactPreview,
   SimpleBacktestResult,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
@@ -37,40 +38,16 @@ import {
 } from "../domain/analysis";
 import { rebuildAccount } from "../domain/ledger";
 import {
+  assertLedgerReversal,
+  previewLedgerMutation,
+} from "../domain/ledgerCommands";
+import {
   activeLedgerEntries,
   buildIncomeCalendar,
   buildPositionsOverview,
   queryLedgerRecords,
 } from "../domain/livePortfolio";
 import { LocalDatabase } from "../storage/database";
-
-function validateLedger(input: LedgerEntryInput): void {
-  if (!input.businessDate) throw new Error("业务日期不能为空");
-  if (["transfer_in", "transfer_out", "dividend"].includes(input.type)) {
-    if (!(Number(input.amount) > 0)) throw new Error("金额必须大于 0");
-  }
-  if (["buy", "sell"].includes(input.type)) {
-    if (!input.symbol || !/^\d{6}$/.test(input.symbol)) {
-      throw new Error("请输入有效的 6 位 A 股代码");
-    }
-    if (!(Number(input.price) > 0)) throw new Error("成交价格必须大于 0");
-    if (
-      !(Number(input.quantity) > 0) ||
-      Number(input.quantity) % 100 !== 0
-    ) {
-      throw new Error("交易数量必须是 100 股的整数倍");
-    }
-  }
-  if (
-    input.type === "dividend" &&
-    (!input.symbol || !/^\d{6}$/.test(input.symbol))
-  ) {
-    throw new Error("现金分红必须关联有效的 A 股代码");
-  }
-  if (input.type === "reverse_repo" && !(Number(input.amount) > 0)) {
-    throw new Error("逆回购本金必须大于 0");
-  }
-}
 
 function isCompleteStockUniverse(stocks: readonly StockInfo[]): boolean {
   return stocks.length >= STOCK_UNIVERSE_MIN_SIZE;
@@ -308,10 +285,6 @@ export class AppService {
     this.database.saveBacktestWorkspace(state);
   }
 
-  listLedger(): LedgerEntry[] {
-    return this.database.listLedger();
-  }
-
   private localStockUniverse(): StockInfo[] {
     return this.database.listStockUniverse();
   }
@@ -400,9 +373,9 @@ export class AppService {
   }
 
   addLedger(input: LedgerEntryInput): LedgerEntry {
-    validateLedger(input);
+    const preview = this.previewLedger(input);
     const entry: LedgerEntry = {
-      ...input,
+      ...preview.normalizedInput,
       id: randomUUID(),
       recordedAt: new Date().toISOString(),
       currency: "CNY",
@@ -413,22 +386,62 @@ export class AppService {
     return entry;
   }
 
+  previewLedger(
+    input: LedgerEntryInput,
+    replacingEntryId?: string,
+  ): LedgerImpactPreview {
+    return previewLedgerMutation(
+      this.database.listLedger(),
+      input,
+      replacingEntryId,
+    );
+  }
+
+  correctLedger(entryId: string, input: LedgerEntryInput): LedgerEntry {
+    const preview = this.previewLedger(input, entryId);
+    const recordedAt = new Date().toISOString();
+    const reversal: LedgerEntry = {
+      id: randomUUID(),
+      type: "adjustment",
+      businessDate: recordedAt.slice(0, 10),
+      recordedAt,
+      currency: "CNY",
+      source: "system",
+      reversesEntryId: entryId,
+      note: "追加修正：撤销原记录影响",
+    };
+    const replacement: LedgerEntry = {
+      ...preview.normalizedInput,
+      id: randomUUID(),
+      recordedAt: new Date(Date.parse(recordedAt) + 1).toISOString(),
+      currency: "CNY",
+      source: "user",
+      correctsEntryId: entryId,
+    };
+    this.database.addLedgerEntries([reversal, replacement]);
+    this.database.log(
+      "info",
+      `追加修正流水：${replacement.type} ${replacement.businessDate}`,
+    );
+    return replacement;
+  }
+
   reverseLedger(entryId: string, reason: string): LedgerEntry {
-    const target = this.database.listLedger().find((entry) => entry.id === entryId);
-    if (!target) throw new Error("找不到需要冲正的原流水");
-    if (
-      this.database
-        .listLedger()
-        .some((entry) => entry.reversesEntryId === entryId)
-    ) {
-      throw new Error("该流水已经被冲正");
-    }
-    return this.addLedger({
+    const entries = this.database.listLedger();
+    assertLedgerReversal(entries, entryId);
+    const entry: LedgerEntry = {
+      id: randomUUID(),
       type: "adjustment",
       businessDate: new Date().toISOString().slice(0, 10),
-      note: reason || `冲正 ${entryId}`,
+      recordedAt: new Date().toISOString(),
+      currency: "CNY",
+      source: "system",
+      note: (reason ?? "").trim() || "用户发起冲正",
       reversesEntryId: entryId,
-    });
+    };
+    this.database.addLedger(entry);
+    this.database.log("info", `已冲正流水：${entryId}`);
+    return entry;
   }
 
   accountSummary(): AccountSummary {

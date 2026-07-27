@@ -14,6 +14,10 @@ export const ENTRY_TYPE_OPTIONS = Object.entries(ENTRY_TYPE_LABELS).map(
   ([value, label]) => ({ value: value as EntryType, label }),
 );
 
+export const DIRECT_ENTRY_TYPE_OPTIONS = ENTRY_TYPE_OPTIONS.filter(
+  (option) => option.value !== "adjustment",
+);
+
 export const ENTRY_TYPE_TONES: Record<
   EntryType,
   "blue" | "green" | "red" | "gold" | "purple" | "default"

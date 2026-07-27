@@ -221,17 +221,24 @@ export class LocalDatabase {
   }
 
   addLedger(entry: LedgerEntry): void {
-    this.database
-      .prepare(
-        "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run(
-        entry.id,
-        entry.businessDate,
-        entry.recordedAt,
-        entry.type,
-        JSON.stringify(entry),
-      );
+    this.addLedgerEntries([entry]);
+  }
+
+  addLedgerEntries(entries: readonly LedgerEntry[]): void {
+    const insert = this.database.prepare(
+      "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+    );
+    this.database.transaction((rowsToInsert: readonly LedgerEntry[]) => {
+      for (const entry of rowsToInsert) {
+        insert.run(
+          entry.id,
+          entry.businessDate,
+          entry.recordedAt,
+          entry.type,
+          JSON.stringify(entry),
+        );
+      }
+    })(entries);
   }
 
   listLedger(): LedgerEntry[] {

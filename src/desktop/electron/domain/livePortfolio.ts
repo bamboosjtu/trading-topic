@@ -126,8 +126,29 @@ export function activeLedgerEntries(entries: readonly LedgerEntry[]): {
   };
 }
 
-function namesMap(stocks: readonly StockInfo[]): Map<string, string> {
-  return new Map(stocks.map((stock) => [stock.symbol, stock.name]));
+function namesMap(
+  stocks: readonly StockInfo[],
+  entries: readonly LedgerEntry[] = [],
+): Map<string, string> {
+  const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
+  for (const entry of entries) {
+    if (entry.symbol && entry.instrumentName) {
+      names.set(entry.symbol, entry.instrumentName);
+    }
+  }
+  return names;
+}
+
+function securityTypesMap(
+  entries: readonly LedgerEntry[],
+): Map<string, SecurityType> {
+  const result = new Map<string, SecurityType>();
+  for (const entry of entries) {
+    if (entry.symbol && entry.securityType) {
+      result.set(entry.symbol, entry.securityType);
+    }
+  }
+  return result;
 }
 
 function entryAmount(entry: LedgerEntry): number {
@@ -582,7 +603,12 @@ function buildLiveModel(
     if (entry.type === "transfer_out") transferOut += entryAmount(entry);
     applyEntry(state, entry, valuationDate);
   }
-  const daily = buildDailyModel(effective, pricesBySymbol, cutoff, namesMap(stocks));
+  const daily = buildDailyModel(
+    effective,
+    pricesBySymbol,
+    cutoff,
+    namesMap(stocks, entries),
+  );
   return {
     cutoff,
     updatedAt,
@@ -676,7 +702,7 @@ function toLedgerRecord(
     symbol: entry.symbol ?? null,
     name: entry.symbol ? (names.get(entry.symbol) ?? entry.symbol) : null,
     securityType: entry.symbol
-      ? inferSecurityType(entry.symbol, names.get(entry.symbol))
+      ? entry.securityType ?? inferSecurityType(entry.symbol, names.get(entry.symbol))
       : null,
     quantity: entry.quantity ?? null,
     price: entry.price ?? null,
@@ -697,6 +723,7 @@ function toLedgerRecord(
     paymentDate: entry.paymentDate ?? null,
     isReversed: reversedIds.has(entry.id),
     reversesEntryId: entry.reversesEntryId ?? null,
+    correctsEntryId: entry.correctsEntryId ?? null,
   };
 }
 
@@ -706,7 +733,8 @@ export function buildPositionsOverview(
   stocks: readonly StockInfo[],
 ): PositionsOverview {
   const model = buildLiveModel(entries, prices, stocks, "positions");
-  const names = namesMap(stocks);
+  const names = namesMap(stocks, entries);
+  const securityTypes = securityTypesMap(entries);
   const currentPositions = [...model.positions.entries()].filter(
     ([, position]) => position.quantity > 1e-8,
   );
@@ -720,7 +748,8 @@ export function buildPositionsOverview(
     return {
       symbol,
       name: names.get(symbol) ?? symbol,
-      securityType: inferSecurityType(symbol, names.get(symbol)),
+      securityType:
+        securityTypes.get(symbol) ?? inferSecurityType(symbol, names.get(symbol)),
       quantity: position.quantity,
       cost: position.cost,
       averageCost: roundMoney(position.cost / position.quantity),
@@ -835,7 +864,8 @@ export function queryLedgerRecords(
   ) {
     throw new Error("流水开始日期不能晚于结束日期");
   }
-  const names = namesMap(stocks);
+  const names = namesMap(stocks, entries);
+  const securityTypes = securityTypesMap(entries);
   const { effective, reversedIds } = activeLedgerEntries(entries);
   const allRows = entries
     .map((entry) => toLedgerRecord(entry, names, reversedIds))
@@ -905,7 +935,8 @@ export function queryLedgerRecords(
       .map((symbol) => ({
         symbol,
         name: names.get(symbol) ?? symbol,
-        securityType: inferSecurityType(symbol, names.get(symbol)),
+        securityType:
+          securityTypes.get(symbol) ?? inferSecurityType(symbol, names.get(symbol)),
       })),
   };
 }
@@ -946,7 +977,7 @@ export function buildIncomeCalendar(
     throw new Error("收益月份必须使用 YYYY-MM 格式");
   }
   const model = buildLiveModel(entries, prices, stocks);
-  const names = namesMap(stocks);
+  const names = namesMap(stocks, entries);
   const activeSymbols = new Set(
     [...model.positions.entries()]
       .filter(([, position]) => position.quantity > 1e-8)

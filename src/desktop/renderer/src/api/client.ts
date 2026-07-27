@@ -39,8 +39,11 @@ export const api = {
     bridge().getIncomeCalendar(query),
   exportIncomeCalendar: (query: IncomeCalendarQuery) =>
     bridge().exportIncomeCalendar(query),
-  listLedger: () => bridge().listLedger(),
+  previewLedger: (input: LedgerEntryInput, replacingEntryId?: string) =>
+    bridge().previewLedger(input, replacingEntryId),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
+  correctLedger: (entryId: string, input: LedgerEntryInput) =>
+    bridge().correctLedger(entryId, input),
   reverseLedger: (entryId: string, reason: string) =>
     bridge().reverseLedger(entryId, reason),
   accountSummary: () => bridge().accountSummary(),
@@ -71,6 +74,7 @@ export type {
   IncomeCalendarView,
   LedgerEntry,
   LedgerEntryInput,
+  LedgerImpactPreview,
   LedgerQuery,
   LedgerQueryResult,
   LedgerRecordView,
