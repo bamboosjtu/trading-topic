@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { StockInfo } from "../../shared/contracts";
+import type { BacktestRequest, StockInfo } from "../../shared/contracts";
 import {
   BACKTEST_CALIBER_VERSION,
   STOCK_UNIVERSE_MIN_SIZE,
@@ -270,6 +270,48 @@ describe("AppService 回测试验", () => {
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 
+  const invalidRuntimeRequests: Array<
+    [label: string, patch: Record<string, unknown>, expected: string]
+  > = [
+    [
+      "非法日期",
+      { startDate: "2024-02-30" },
+      "回测日期必须是合法的 YYYY-MM-DD",
+    ],
+    [
+      "无限金额",
+      { monthlyAmount: Number.POSITIVE_INFINITY },
+      "每月金额必须是大于 0 的有限数字",
+    ],
+    ["非法快捷区间", { rangeYears: 7 }, "快捷区间仅支持 3、5、10、15 年"],
+    [
+      "非法分红口径",
+      { dividendTiming: "unknown" },
+      "分红处理方式仅支持除权日或到账日",
+    ],
+  ];
+
+  it.each(invalidRuntimeRequests)(
+    "在任何数据请求前拒绝%s",
+    async (_label, patch, expected) => {
+      const { service } = await serviceWithDatabase();
+      const invalidRequest = {
+        symbols: ["601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+        monthlyAmount: 3000,
+        buyDay: 1,
+        ...patch,
+      } as unknown as BacktestRequest;
+
+      await expect(service.runBacktest(invalidRequest)).rejects.toThrow(
+        expected,
+      );
+      expect(fetchAStockUniverse).not.toHaveBeenCalled();
+      expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+    },
+  );
+
   it("展示各自实际区间，并报告配股和非严格同区间比较", async () => {
     const { service, database } = await serviceWithDatabase();
     database.replaceStockUniverse(
@@ -338,6 +380,17 @@ describe("AppService 回测试验", () => {
                 ratioPer10: 3,
                 subscriptionPrice: 2.02,
               },
+              {
+                type: "rights_issue",
+                sourceId: "after-cutoff",
+                exDate: "2024-02-15",
+                recordDate: "2024-02-14",
+                paymentStartDate: "2024-02-16",
+                paymentEndDate: "2024-02-20",
+                listingDate: "2024-03-01",
+                ratioPer10: 2,
+                subscriptionPrice: 2.1,
+              },
             ]
           : [],
       provenance: {
@@ -364,9 +417,12 @@ describe("AppService 回测试验", () => {
     expect(experiment.results[0].warnings).toContainEqual(
       expect.stringContaining("非严格同区间比较"),
     );
-    expect(experiment.results[1].warnings).toContainEqual(
-      expect.stringContaining("R1 假设不参与"),
+    const rightsIssueWarnings = experiment.results[1].warnings.filter(
+      (warning) => warning.startsWith("配股事件"),
     );
+    expect(rightsIssueWarnings).toHaveLength(1);
+    expect(rightsIssueWarnings[0]).toContain("除权日 2024-01-20");
+    expect(rightsIssueWarnings[0]).toContain("R1 假设不参与");
   });
 
   it("任一标的数据获取失败时不写入共享行情缓存", async () => {

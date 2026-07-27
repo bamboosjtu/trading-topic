@@ -31,6 +31,7 @@ export function useBacktestWorkspace({
   onRestore,
 }: UseBacktestWorkspaceOptions) {
   const [restored, setRestored] = useState(false);
+  const [usingDefaultWorkspace, setUsingDefaultWorkspace] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveSequence = useRef(0);
   const formValues = Form.useWatch([], form) as BacktestRequest | undefined;
@@ -40,13 +41,13 @@ export function useBacktestWorkspace({
   });
 
   useEffect(() => {
-    if (!workspace.isFetched || restored) return;
+    if (!workspace.isSuccess || restored) return;
     if (workspace.data) {
       form.setFieldsValue(workspace.data.request);
       onRestore(workspace.data);
     }
     setRestored(true);
-  }, [form, onRestore, restored, workspace.data, workspace.isFetched]);
+  }, [form, onRestore, restored, workspace.data, workspace.isSuccess]);
 
   useEffect(() => {
     if (!restored || !formValues?.symbols?.length) return;
@@ -90,11 +91,28 @@ export function useBacktestWorkspace({
     restored,
   ]);
 
+  const loadError =
+    workspace.isError && !usingDefaultWorkspace
+      ? workspace.error instanceof Error
+        ? workspace.error.message
+        : String(workspace.error)
+      : null;
+
   return {
     restored,
     loading: workspace.isLoading,
-    error: workspace.error,
+    loadError,
+    retrying: workspace.isFetching,
     saveError,
+    retryLoad: () => {
+      setUsingDefaultWorkspace(false);
+      setRestored(false);
+      void workspace.refetch();
+    },
+    useDefaultWorkspace: () => {
+      setUsingDefaultWorkspace(true);
+      setRestored(true);
+    },
     clearSaveError: () => setSaveError(null),
   };
 }

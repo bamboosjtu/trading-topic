@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Form } from "antd";
+import { Alert, App, Button, Form, Space } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -305,6 +305,30 @@ export function BacktestPage() {
                 message="无法恢复当前实验"
                 description={activeExperimentError}
                 onClose={() => setActiveExperimentError(null)}
+              />
+            ) : workspacePersistence.loadError ? (
+              <Alert
+                showIcon
+                type="error"
+                message="工作区加载失败"
+                description={`无法读取上次保存的工作区，已暂停自动保存，避免默认参数覆盖原数据：${workspacePersistence.loadError}`}
+                action={
+                  <Space size={8}>
+                    <Button
+                      size="small"
+                      loading={workspacePersistence.retrying}
+                      onClick={workspacePersistence.retryLoad}
+                    >
+                      重试
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={workspacePersistence.useDefaultWorkspace}
+                    >
+                      使用默认工作区
+                    </Button>
+                  </Space>
+                }
               />
             ) : workspacePersistence.saveError ? (
               <Alert

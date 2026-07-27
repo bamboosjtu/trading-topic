@@ -204,6 +204,12 @@ export class AppService {
           symbol,
         );
         for (const action of dividends.reportedActions) {
+          if (
+            action.exDate < result.actualStartDate ||
+            action.exDate > dataCutoff
+          ) {
+            continue;
+          }
           result.warnings.push(
             `配股事件（除权日 ${action.exDate}，每 10 股可配 ${action.ratioPer10} 股，认购价 ${action.subscriptionPrice.toFixed(2)} 元）：R1 假设不参与且不追加资金；不复权行情中的除权后市场价格变化仍计入收益与回撤。`,
           );

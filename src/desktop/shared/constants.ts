@@ -2,6 +2,10 @@ export const BACKTEST_CALIBER_VERSION = "bank-dca-r1-node-v4";
 
 export const BACKTEST_MAX_SYMBOLS = 10;
 export const BACKTEST_RANGE_YEARS = [3, 5, 10, 15] as const;
+export const BACKTEST_DIVIDEND_TIMINGS = [
+  "ex_date",
+  "payment_date",
+] as const;
 export const BACKTEST_DETAIL_PAGE_SIZE = 20;
 /** 历史页只读取最近的实验摘要；数据库仍保留全部实验。 */
 export const RECENT_BACKTEST_EXPERIMENT_LIMIT = 500;

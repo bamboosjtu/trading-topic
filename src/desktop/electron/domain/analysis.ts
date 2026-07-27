@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
-import { BACKTEST_MAX_SYMBOLS } from "../../shared/constants";
+import {
+  BACKTEST_DIVIDEND_TIMINGS,
+  BACKTEST_MAX_SYMBOLS,
+  BACKTEST_RANGE_YEARS,
+} from "../../shared/constants";
 import type {
   BacktestRequest,
   BacktestResult,
@@ -24,24 +28,71 @@ function shareIncreaseRatio(event: DividendEvent): number {
   return (event.transferRatio + event.bonusRatio) / 10;
 }
 
+function isStrictIsoDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+}
+
 export function assertBacktestRequest(input: BacktestRequest): void {
+  if (!input || !Array.isArray(input.symbols)) {
+    throw new Error("回测标的必须是数组");
+  }
   if (
     input.symbols.length < 1 ||
     input.symbols.length > BACKTEST_MAX_SYMBOLS
   ) {
     throw new Error(`R1 支持 1 至 ${BACKTEST_MAX_SYMBOLS} 个标的同条件并排`);
   }
-  if (input.symbols.some((symbol) => !/^\d{6}$/.test(symbol))) {
+  if (
+    input.symbols.some(
+      (symbol) => typeof symbol !== "string" || !/^\d{6}$/.test(symbol),
+    )
+  ) {
     throw new Error("仅支持 6 位 A 股股票代码");
   }
   if (new Set(input.symbols).size !== input.symbols.length) {
     throw new Error("回测标的不能重复");
   }
-  if (!(input.monthlyAmount > 0)) throw new Error("每月金额必须大于 0");
+  if (
+    !Number.isFinite(input.monthlyAmount) ||
+    !(input.monthlyAmount > 0)
+  ) {
+    throw new Error("每月金额必须是大于 0 的有限数字");
+  }
   if (!Number.isInteger(input.buyDay) || input.buyDay < 1 || input.buyDay > 28) {
     throw new Error("指定买入日必须为 1 至 28");
   }
+  if (
+    !isStrictIsoDate(input.startDate) ||
+    !isStrictIsoDate(input.endDate)
+  ) {
+    throw new Error("回测日期必须是合法的 YYYY-MM-DD");
+  }
   if (input.startDate > input.endDate) throw new Error("开始日期不能晚于结束日期");
+  if (
+    input.rangeYears !== undefined &&
+    !(BACKTEST_RANGE_YEARS as readonly number[]).includes(input.rangeYears)
+  ) {
+    throw new Error(
+      `快捷区间仅支持 ${BACKTEST_RANGE_YEARS.join("、")} 年`,
+    );
+  }
+  if (
+    input.dividendTiming !== undefined &&
+    !(BACKTEST_DIVIDEND_TIMINGS as readonly string[]).includes(
+      input.dividendTiming,
+    )
+  ) {
+    throw new Error("分红处理方式仅支持除权日或到账日");
+  }
 }
 
 function monthsBetween(startDate: string, endDate: string): string[] {
@@ -105,20 +156,31 @@ export function simulateBacktest(
   const activeDividends =
     dividendTiming === "payment_date" ? dividendsByPaymentDate : dividendsByDate;
 
-  // P1-1：起始月份处理。当月计划买入日早于回测开始日期时，跳过本月，下月再投入。
+  // 起始月份处理。当月计划买入日早于回测开始日期时，跳过本月，下月再投入。
   // 例如 startDate=2021-07-25, buyDay=1 → 2021-07-01 已过去 → 第一次投入在 2021-08。
+  // 首个可用行情月份之前不生成计划，避免股票尚未上市时的历史月份全部
+  // 积压到上市首日。首个可用月份若指定日早于首个行情日，则当月只在
+  // 首个行情日投入一次。
   // 非交易日跨月顺延：每一个自然月的投入计划都独立寻找 >= target 的
   // 首个交易日。上月计划即使顺延到本月，也不能占用或取消本月计划；
   // 两个月的计划允许落在同一交易日，并合并为一次外部投入和买入流水。
   const scheduled = new Map<string, number>();
   const warnings: string[] = [];
+  const firstAvailableDate = prices[0].date;
+  const firstAvailableMonth = firstAvailableDate.slice(0, 7);
   for (const month of monthsBetween(input.startDate, input.endDate)) {
-    const target = `${month}-${String(input.buyDay).padStart(2, "0")}`;
-    if (target < input.startDate) {
-      // P1-1：当月计划买入日早于回测开始日期，跳过本月
+    if (month < firstAvailableMonth) {
       continue;
     }
-    const execution = prices.find((row) => row.date >= target);
+    const target = `${month}-${String(input.buyDay).padStart(2, "0")}`;
+    if (target < input.startDate) {
+      // 请求从月中开始时，不补投请求起点之前已经过去的计划。
+      continue;
+    }
+    const execution =
+      month === firstAvailableMonth && target < firstAvailableDate
+        ? prices[0]
+        : prices.find((row) => row.date >= target);
     if (execution) {
       scheduled.set(
         execution.date,

@@ -6,6 +6,7 @@ import type {
   PricePoint,
 } from "../../shared/contracts";
 import {
+  assertBacktestRequest,
   backtestResultToSimpleResult,
   simulateBacktest,
 } from "./analysis";
@@ -357,6 +358,36 @@ describe("P1-1 起始月份处理", () => {
   });
 });
 
+describe("P0 上市前月度计划处理", () => {
+  it("不累计首个可用行情月份之前的计划，并从首个可用月份投入一次", () => {
+    const result = simulateBacktest(
+      {
+        symbols: ["601398"],
+        startDate: "2021-01-01",
+        endDate: "2024-03-31",
+        monthlyAmount: 3_000,
+        buyDay: 10,
+      },
+      "601398",
+      "工商银行",
+      [
+        { date: "2024-01-20", close: 10 },
+        { date: "2024-02-15", close: 10 },
+        { date: "2024-03-11", close: 10 },
+      ],
+      [],
+      [],
+    );
+
+    expect(result.metrics.totalContribution).toBe(9_000);
+    expect(
+      result.transactions
+        .filter((row) => row.type === "buy")
+        .map((row) => row.date),
+    ).toEqual(["2024-01-20", "2024-02-15", "2024-03-11"]);
+  });
+});
+
 // P1-2：非交易日跨月顺延到下一个交易日，而非跳过本月。
 describe("P1-2 非交易日跨月顺延", () => {
   it("月末无交易日时顺延到下月且不占用下月投入", () => {
@@ -436,6 +467,51 @@ describe("回测请求领域校验", () => {
         [],
       ),
     ).toThrow("回测标的不能重复");
+  });
+
+  it("拒绝非法日期和非有限金额", () => {
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        startDate: "2024-02-30",
+      }),
+    ).toThrow("回测日期必须是合法的 YYYY-MM-DD");
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        endDate: "2024/03/01",
+      }),
+    ).toThrow("回测日期必须是合法的 YYYY-MM-DD");
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        monthlyAmount: Number.POSITIVE_INFINITY,
+      }),
+    ).toThrow("每月金额必须是大于 0 的有限数字");
+  });
+
+  it("拒绝非字符串股票代码", () => {
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        symbols: [601398],
+      } as unknown as BacktestRequest),
+    ).toThrow("仅支持 6 位 A 股股票代码");
+  });
+
+  it("拒绝未支持的快捷区间和分红处理枚举", () => {
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        rangeYears: 7,
+      } as unknown as BacktestRequest),
+    ).toThrow("快捷区间仅支持 3、5、10、15 年");
+    expect(() =>
+      assertBacktestRequest({
+        ...request,
+        dividendTiming: "reinvest_later",
+      } as unknown as BacktestRequest),
+    ).toThrow("分红处理方式仅支持除权日或到账日");
   });
 });
 
