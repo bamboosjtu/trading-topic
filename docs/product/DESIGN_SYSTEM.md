@@ -27,7 +27,6 @@
 ### 2.2 高密度但不拥挤
 
 - 桌面端优先使用横向空间、表格、分栏和紧凑工具栏。
-- 不复制移动端纵向大卡片和重复标题。
 - 同层级信息保持统一字号、行高、间距和对齐方式。
 
 ### 2.3 单一动作色
@@ -259,9 +258,9 @@ A 股语境采用红涨绿跌：
 
 ## 13. 页面设计文档
 
-- [持仓明细 UI Brief](desktop_ui/holdings_ui_brief.md)
-- [交易流水 UI Brief](desktop_ui/ledger_ui_brief.md)
-- [收益日历 UI Brief](desktop_ui/income_calendar_ui_brief.md)
+- [持仓明细 UI Brief](desktop_ui/持仓明细_ui_brief.md)
+- [交易流水 UI Brief](desktop_ui/交易流水_ui_brief.md)
+- [收益日历 UI Brief](desktop_ui/收益日历_ui_brief.md)
 
 ## 14. 视觉验收
 
