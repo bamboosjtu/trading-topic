@@ -290,6 +290,182 @@ export interface AccountSummary {
   dataCutoff: string | null;
 }
 
+export type LiveDataStatus = "ready" | "empty" | "stale" | "partial";
+export type SecurityType = "stock" | "etf";
+export type PerformancePeriod =
+  | "day"
+  | "week"
+  | "month"
+  | "threeMonths"
+  | "sixMonths"
+  | "year";
+
+export interface LiveDataQuality {
+  status: LiveDataStatus;
+  dataCutoff: string | null;
+  updatedAt: string | null;
+  issues: string[];
+  missingSymbols: string[];
+  missingDates: string[];
+}
+
+export type PeriodPerformance = Record<PerformancePeriod, number | null>;
+
+export interface PositionView {
+  symbol: string;
+  name: string;
+  securityType: SecurityType;
+  quantity: number;
+  cost: number;
+  averageCost: number;
+  lastPrice: number | null;
+  marketValue: number | null;
+  cumulativeInvestment: number;
+  unrealizedPnl: number | null;
+  realizedPnl: number;
+  cumulativeDividend: number;
+  totalReturn: number | null;
+  periodPerformance: PeriodPerformance;
+  recentEntries: LedgerRecordView[];
+}
+
+export interface PositionsOverview {
+  quality: LiveDataQuality;
+  hasLedgerEntries: boolean;
+  metrics: {
+    totalAsset: number | null;
+    marketValue: number | null;
+    totalPnl: number | null;
+    totalReturnRate: number | null;
+    availableCash: number;
+    positionRatio: number | null;
+  };
+  portfolioPerformance: PeriodPerformance;
+  positions: PositionView[];
+  valuationSource: string;
+}
+
+export interface LedgerQuery {
+  startDate?: string;
+  endDate?: string;
+  entryTypes?: EntryType[];
+  securityType?: SecurityType;
+  symbol?: string;
+  keyword?: string;
+  page: number;
+  pageSize: 20 | 50 | 100;
+}
+
+export interface LedgerRecordView {
+  id: string;
+  businessDate: string;
+  type: EntryType;
+  symbol: string | null;
+  name: string | null;
+  securityType: SecurityType | null;
+  quantity: number | null;
+  price: number | null;
+  amount: number | null;
+  fee: number;
+  note: string | null;
+  repoCode: string | null;
+  annualRate: number | null;
+  termDays: number | null;
+  maturityAmount: number | null;
+  maturityDate: string | null;
+  perShare: number | null;
+  recordDate: string | null;
+  paymentDate: string | null;
+  isReversed: boolean;
+  reversesEntryId: string | null;
+}
+
+export interface LedgerQueryResult {
+  quality: LiveDataQuality;
+  integrityError: string | null;
+  metrics: {
+    recordCount: number;
+    totalBuy: number;
+    totalSell: number;
+    totalDividend: number;
+    netTransferIn: number;
+  };
+  rows: LedgerRecordView[];
+  total: number;
+  page: number;
+  pageSize: 20 | 50 | 100;
+  symbolOptions: Array<{
+    symbol: string;
+    name: string;
+    securityType: SecurityType;
+  }>;
+}
+
+export type IncomeCalendarScope = "all" | "current";
+
+export interface IncomeCalendarQuery {
+  month: string;
+  scope: IncomeCalendarScope;
+  symbol?: string;
+}
+
+export interface IncomeContribution {
+  symbol: string;
+  name: string;
+  holdingChange: number;
+  pricePnl: number | null;
+  dividendPnl: number;
+  totalPnl: number | null;
+}
+
+export interface IncomeCalendarEvent {
+  type: EntryType | "reverse_repo_maturity";
+  symbol: string | null;
+  name: string | null;
+  quantity: number | null;
+  perShare: number | null;
+  amount: number | null;
+  note: string | null;
+}
+
+export interface IncomeCalendarDay {
+  date: string;
+  totalPnl: number | null;
+  pricePnl: number | null;
+  dividendPnl: number;
+  returnRate: number | null;
+  hasMarketData: boolean;
+  isPartial: boolean;
+  contributions: IncomeContribution[];
+  events: IncomeCalendarEvent[];
+}
+
+export interface IncomeMetric {
+  amount: number | null;
+  rate: number | null;
+}
+
+export interface IncomeCalendarView {
+  quality: LiveDataQuality;
+  month: string;
+  scope: IncomeCalendarScope;
+  symbol: string | null;
+  scopeLabel: string;
+  metrics: {
+    month: IncomeMetric;
+    price: IncomeMetric;
+    dividend: IncomeMetric;
+    cumulative: IncomeMetric;
+    yearToDate: IncomeMetric;
+  };
+  days: IncomeCalendarDay[];
+  symbolOptions: Array<{
+    symbol: string;
+    name: string;
+    isCurrent: boolean;
+  }>;
+}
+
 export interface AppSettings {
   priceSource: "tencent";
   dividendSource: "eastmoney";
@@ -364,6 +540,13 @@ export interface DesktopApi {
   getBacktestWorkspace(): Promise<BacktestWorkspaceState | null>;
   saveBacktestWorkspace(state: BacktestWorkspaceState): Promise<void>;
   exportBacktestExperiment(experimentId: string): Promise<ExportResult>;
+  getPositionsOverview(): Promise<PositionsOverview>;
+  refreshPositionsMarket(): Promise<PositionsOverview>;
+  exportPositions(): Promise<ExportResult>;
+  queryLedger(query: LedgerQuery): Promise<LedgerQueryResult>;
+  exportLedger(query: LedgerQuery): Promise<ExportResult>;
+  getIncomeCalendar(query: IncomeCalendarQuery): Promise<IncomeCalendarView>;
+  exportIncomeCalendar(query: IncomeCalendarQuery): Promise<ExportResult>;
   listLedger(): Promise<LedgerEntry[]>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;

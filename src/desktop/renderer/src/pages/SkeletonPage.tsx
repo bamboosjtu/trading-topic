@@ -4,15 +4,15 @@ import { useLocation } from "react-router-dom";
 const PAGE_META: Record<string, { title: string; description: string }> = {
   "/positions": {
     title: "持仓明细",
-    description: "查看当前持仓数量、成本与估值状态。",
+    description: "正在读取本地持仓与行情估值。",
   },
   "/trades": {
     title: "交易流水",
-    description: "按时间追踪实际买入、卖出与费用记录。",
+    description: "正在读取本地资金与证券事实记录。",
   },
-  "/dividend-calendar": {
-    title: "分红日历",
-    description: "集中查看登记日、除权日与分红到账安排。",
+  "/income-calendar": {
+    title: "收益日历",
+    description: "正在生成价格变动与分红收益日历。",
   },
   "/settings": {
     title: "设置",

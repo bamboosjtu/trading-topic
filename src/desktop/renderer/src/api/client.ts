@@ -2,7 +2,9 @@ import type {
   BacktestRequest,
   BacktestWorkspaceState,
   DesktopApi,
+  IncomeCalendarQuery,
   LedgerEntryInput,
+  LedgerQuery,
 } from "../../../shared/contracts";
 
 function bridge(): DesktopApi {
@@ -28,6 +30,15 @@ export const api = {
     bridge().saveBacktestWorkspace(state),
   exportBacktestExperiment: (experimentId: string) =>
     bridge().exportBacktestExperiment(experimentId),
+  getPositionsOverview: () => bridge().getPositionsOverview(),
+  refreshPositionsMarket: () => bridge().refreshPositionsMarket(),
+  exportPositions: () => bridge().exportPositions(),
+  queryLedger: (query: LedgerQuery) => bridge().queryLedger(query),
+  exportLedger: (query: LedgerQuery) => bridge().exportLedger(query),
+  getIncomeCalendar: (query: IncomeCalendarQuery) =>
+    bridge().getIncomeCalendar(query),
+  exportIncomeCalendar: (query: IncomeCalendarQuery) =>
+    bridge().exportIncomeCalendar(query),
   listLedger: () => bridge().listLedger(),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
   reverseLedger: (entryId: string, reason: string) =>
@@ -53,8 +64,21 @@ export type {
   ChartDataState,
   EntryType,
   HealthResponse,
+  IncomeCalendarQuery,
+  IncomeCalendarDay,
+  IncomeCalendarScope,
+  IncomeContribution,
+  IncomeCalendarView,
   LedgerEntry,
   LedgerEntryInput,
+  LedgerQuery,
+  LedgerQueryResult,
+  LedgerRecordView,
+  LiveDataQuality,
+  PerformancePeriod,
+  PositionsOverview,
+  PositionView,
+  SecurityType,
   SimpleBacktestResult,
   SimpleBacktestRow,
   StockInfo,

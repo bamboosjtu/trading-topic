@@ -62,6 +62,14 @@ export interface MarketDataCacheEntry {
   fetchedAt: string;
 }
 
+export interface StoredMarketPrice {
+  symbol: string;
+  date: string;
+  close: number;
+  source: string;
+  fetchedAt: string;
+}
+
 function rows<T>(
   database: BetterSqlite3.Database,
   sql: string,
@@ -471,6 +479,57 @@ export class LocalDatabase {
     for (const event of entry.dividends) {
       insertAction.run(entry.symbol, event.date, JSON.stringify(event));
     }
+  }
+
+  saveMarketPriceSnapshots(entries: MarketDataCacheEntry[]): void {
+    this.database.transaction(() => {
+      for (const entry of entries) this.insertMarketData(entry);
+    })();
+  }
+
+  listMarketPrices(symbols?: readonly string[]): StoredMarketPrice[] {
+    if (symbols !== undefined) {
+      if (!symbols.length) return [];
+      const placeholders = symbols.map(() => "?").join(", ");
+      return rows<{
+        symbol: string;
+        trade_date: string;
+        close: number;
+        source: string;
+        fetched_at: string;
+      }>(
+        this.database,
+        `SELECT symbol, trade_date, close, source, fetched_at
+         FROM market_prices
+         WHERE symbol IN (${placeholders})
+         ORDER BY symbol, trade_date`,
+        [...symbols],
+      ).map((row) => ({
+        symbol: row.symbol,
+        date: row.trade_date,
+        close: row.close,
+        source: row.source,
+        fetchedAt: row.fetched_at,
+      }));
+    }
+    return rows<{
+      symbol: string;
+      trade_date: string;
+      close: number;
+      source: string;
+      fetched_at: string;
+    }>(
+      this.database,
+      `SELECT symbol, trade_date, close, source, fetched_at
+       FROM market_prices
+       ORDER BY symbol, trade_date`,
+    ).map((row) => ({
+      symbol: row.symbol,
+      date: row.trade_date,
+      close: row.close,
+      source: row.source,
+      fetchedAt: row.fetched_at,
+    }));
   }
 
   latestPrices(): { prices: Record<string, number>; dataCutoff: string | null } {

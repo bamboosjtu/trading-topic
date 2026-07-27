@@ -36,7 +36,7 @@ export const NAV_GROUPS: NavigationGroup[] = [
     items: [
       { key: "/positions", icon: <PieChartOutlined />, label: "持仓明细" },
       { key: "/trades", icon: <SwapOutlined />, label: "交易流水" },
-      { key: "/dividend-calendar", icon: <CalendarOutlined />, label: "分红日历" },
+      { key: "/income-calendar", icon: <CalendarOutlined />, label: "收益日历" },
     ],
   },
   {

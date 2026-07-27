@@ -3,7 +3,9 @@ import type {
   BacktestRequest,
   BacktestWorkspaceState,
   DesktopApi,
+  IncomeCalendarQuery,
   LedgerEntryInput,
+  LedgerQuery,
 } from "../shared/contracts";
 
 const api: DesktopApi = {
@@ -24,6 +26,17 @@ const api: DesktopApi = {
     ipcRenderer.invoke("backtest:workspace:save", state),
   exportBacktestExperiment: (experimentId: string) =>
     ipcRenderer.invoke("backtest:experiment:export", experimentId),
+  getPositionsOverview: () => ipcRenderer.invoke("positions:overview"),
+  refreshPositionsMarket: () => ipcRenderer.invoke("positions:refresh"),
+  exportPositions: () => ipcRenderer.invoke("positions:export"),
+  queryLedger: (query: LedgerQuery) =>
+    ipcRenderer.invoke("ledger:query", query),
+  exportLedger: (query: LedgerQuery) =>
+    ipcRenderer.invoke("ledger:export", query),
+  getIncomeCalendar: (query: IncomeCalendarQuery) =>
+    ipcRenderer.invoke("income-calendar:get", query),
+  exportIncomeCalendar: (query: IncomeCalendarQuery) =>
+    ipcRenderer.invoke("income-calendar:export", query),
   listLedger: () => ipcRenderer.invoke("ledger:list"),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),

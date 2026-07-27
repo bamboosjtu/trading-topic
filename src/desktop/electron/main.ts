@@ -5,9 +5,16 @@ import { fileURLToPath } from "node:url";
 import type {
   BacktestRequest,
   BacktestWorkspaceState,
+  IncomeCalendarQuery,
   LedgerEntryInput,
+  LedgerQuery,
 } from "../shared/contracts";
 import { buildBacktestWorkbook } from "./export/backtestWorkbook";
+import {
+  buildIncomeCalendarWorkbook,
+  buildLedgerWorkbook,
+  buildPositionsWorkbook,
+} from "./export/liveWorkbooks";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
 
@@ -112,6 +119,65 @@ function registerIpc(): void {
         "info",
         `已导出回测试验 ${experiment.experimentId} 的 ${experiment.results.length} 条结果及明细`,
       );
+      return { cancelled: false, path: result.filePath };
+    },
+  );
+  ipcMain.handle("positions:overview", () => service.getPositionsOverview());
+  ipcMain.handle("positions:refresh", () => service.refreshPositionsMarket());
+  ipcMain.handle("positions:export", async () => {
+    const overview = service.getPositionsOverview();
+    const result = await dialog.showSaveDialog({
+      title: "导出持仓明细",
+      defaultPath: `攒股收息-持仓明细-${timestamp()}.xlsx`,
+      filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
+    });
+    if (result.canceled || !result.filePath) return { cancelled: true };
+    writeFileSync(result.filePath, await buildPositionsWorkbook(overview));
+    database.log("info", "已导出持仓明细");
+    return { cancelled: false, path: result.filePath };
+  });
+  ipcMain.handle("ledger:query", (_event, query: LedgerQuery) =>
+    service.queryLedger(query),
+  );
+  ipcMain.handle("ledger:export", async (_event, query: LedgerQuery) => {
+    const firstPage = service.queryLedger({ ...query, page: 1, pageSize: 100 });
+    const rows = [...firstPage.rows];
+    const pages = Math.ceil(firstPage.total / 100);
+    for (let page = 2; page <= pages; page += 1) {
+      rows.push(
+        ...service.queryLedger({ ...query, page, pageSize: 100 }).rows,
+      );
+    }
+    const result = await dialog.showSaveDialog({
+      title: "导出交易流水",
+      defaultPath: `攒股收息-交易流水-${timestamp()}.xlsx`,
+      filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
+    });
+    if (result.canceled || !result.filePath) return { cancelled: true };
+    writeFileSync(
+      result.filePath,
+      await buildLedgerWorkbook({ ...firstPage, rows }),
+    );
+    database.log("info", `已导出 ${rows.length} 条交易流水`);
+    return { cancelled: false, path: result.filePath };
+  });
+  ipcMain.handle(
+    "income-calendar:get",
+    (_event, query: IncomeCalendarQuery) =>
+      service.getIncomeCalendar(query),
+  );
+  ipcMain.handle(
+    "income-calendar:export",
+    async (_event, query: IncomeCalendarQuery) => {
+      const view = service.getIncomeCalendar(query);
+      const result = await dialog.showSaveDialog({
+        title: "导出收益日历",
+        defaultPath: `攒股收息-收益日历-${query.month}-${timestamp()}.xlsx`,
+        filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
+      });
+      if (result.canceled || !result.filePath) return { cancelled: true };
+      writeFileSync(result.filePath, await buildIncomeCalendarWorkbook(view));
+      database.log("info", `已导出 ${query.month} 收益日历`);
       return { cancelled: false, path: result.filePath };
     },
   );

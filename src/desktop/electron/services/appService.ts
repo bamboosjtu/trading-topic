@@ -9,12 +9,18 @@ import type {
   LedgerEntryInput,
   SimpleBacktestResult,
   BacktestWorkspaceState,
+  IncomeCalendarQuery,
+  IncomeCalendarView,
+  LedgerQuery,
+  LedgerQueryResult,
+  PositionsOverview,
   StockInfo,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
   BACKTEST_CALIBER_VERSION,
   DATA_SOURCE_THROTTLE_MS,
+  LIVE_PRICE_REFRESH_LOOKBACK_MONTHS,
   STOCK_UNIVERSE_CACHE_MAX_AGE_MS,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
@@ -30,6 +36,12 @@ import {
   simulateBacktest,
 } from "../domain/analysis";
 import { rebuildAccount } from "../domain/ledger";
+import {
+  activeLedgerEntries,
+  buildIncomeCalendar,
+  buildPositionsOverview,
+  queryLedgerRecords,
+} from "../domain/livePortfolio";
 import { LocalDatabase } from "../storage/database";
 
 function validateLedger(input: LedgerEntryInput): void {
@@ -298,6 +310,93 @@ export class AppService {
 
   listLedger(): LedgerEntry[] {
     return this.database.listLedger();
+  }
+
+  private localStockUniverse(): StockInfo[] {
+    return this.database.listStockUniverse();
+  }
+
+  private liveDataSnapshot(): {
+    entries: LedgerEntry[];
+    prices: ReturnType<LocalDatabase["listMarketPrices"]>;
+  } {
+    const entries = this.database.listLedger();
+    const { effective } = activeLedgerEntries(entries);
+    const symbols = [
+      ...new Set(effective.flatMap((entry) => entry.symbol ?? [])),
+    ];
+    return {
+      entries,
+      prices: this.database.listMarketPrices(symbols),
+    };
+  }
+
+  getPositionsOverview(): PositionsOverview {
+    const snapshot = this.liveDataSnapshot();
+    return buildPositionsOverview(
+      snapshot.entries,
+      snapshot.prices,
+      this.localStockUniverse(),
+    );
+  }
+
+  async refreshPositionsMarket(): Promise<PositionsOverview> {
+    const symbols = this.getPositionsOverview().positions.map(
+      (position) => position.symbol,
+    );
+    if (!symbols.length) return this.getPositionsOverview();
+    const endDate = new Date().toISOString().slice(0, 10);
+    const start = new Date(`${endDate}T00:00:00Z`);
+    start.setUTCMonth(start.getUTCMonth() - LIVE_PRICE_REFRESH_LOOKBACK_MONTHS);
+    const startDate = start.toISOString().slice(0, 10);
+    const snapshots = [];
+    for (const symbol of symbols) {
+      const response = await fetchUnadjustedPrices(symbol, startDate, endDate);
+      snapshots.push({
+        symbol,
+        prices: response.rows,
+        dividends: [],
+        source: response.provenance.source,
+        fetchedAt: response.provenance.fetchedAt,
+      });
+    }
+    // 所有标的数据成功后才一次性写入，避免半成功刷新污染账户估值。
+    this.database.saveMarketPriceSnapshots(snapshots);
+    this.database.log(
+      "info",
+      `已刷新实盘行情：${symbols.length} 个标的，${startDate}..${endDate}`,
+    );
+    return this.getPositionsOverview();
+  }
+
+  queryLedger(query: LedgerQuery): LedgerQueryResult {
+    let integrityError: string | null = null;
+    try {
+      const latest = this.database.latestPrices();
+      rebuildAccount(
+        this.database.listLedger(),
+        latest.prices,
+        latest.dataCutoff,
+      );
+    } catch (error) {
+      integrityError = error instanceof Error ? error.message : String(error);
+    }
+    return queryLedgerRecords(
+      this.database.listLedger(),
+      this.localStockUniverse(),
+      query,
+      integrityError,
+    );
+  }
+
+  getIncomeCalendar(query: IncomeCalendarQuery): IncomeCalendarView {
+    const snapshot = this.liveDataSnapshot();
+    return buildIncomeCalendar(
+      snapshot.entries,
+      snapshot.prices,
+      this.localStockUniverse(),
+      query,
+    );
   }
 
   addLedger(input: LedgerEntryInput): LedgerEntry {
