@@ -7,6 +7,10 @@ import type {
 import { roundMoney } from "./finance";
 import { currentMarketDate, validDate } from "./dateUtils";
 import { reduceLedger } from "./ledgerReducer";
+import {
+  tradeDateStatus,
+  type TradeDateContext,
+} from "./marketCalendar";
 
 const DIRECT_ENTRY_TYPES = new Set<LedgerEntryInput["type"]>([
   "buy",
@@ -56,6 +60,7 @@ function cleanText(value: string | undefined): string | undefined {
 export function normalizeLedgerInput(
   input: LedgerEntryInput,
   marketDate = currentMarketDate(),
+  tradeDateContext?: TradeDateContext,
 ): LedgerEntryInput {
   if (!DIRECT_ENTRY_TYPES.has(input.type)) {
     throw new Error("冲正或修正只能从原流水详情发起");
@@ -86,6 +91,11 @@ export function normalizeLedgerInput(
   };
 
   if (input.type === "buy" || input.type === "sell") {
+    if (
+      tradeDateStatus(input.businessDate, tradeDateContext) === "closed"
+    ) {
+      throw new Error("买入和卖出必须发生在该标的的有效交易日");
+    }
     normalized.price = requireFinite(input.price, "成交价格", {
       positive: true,
       decimals: 4,
@@ -106,24 +116,13 @@ export function normalizeLedgerInput(
     if (input.recordDate && !validDate(input.recordDate)) {
       throw new Error("登记日必须使用合法的 YYYY-MM-DD");
     }
-    if (input.paymentDate && !validDate(input.paymentDate)) {
-      throw new Error("到账日必须使用合法的 YYYY-MM-DD");
+    if (input.recordDate && input.businessDate < input.recordDate) {
+      throw new Error("分红到账日不能早于登记日");
     }
-    if (
-      input.recordDate &&
-      input.paymentDate &&
-      input.paymentDate < input.recordDate
-    ) {
-      throw new Error("到账日不能早于登记日");
-    }
-    if (
-      (input.recordDate && input.recordDate > marketDate) ||
-      (input.paymentDate && input.paymentDate > marketDate)
-    ) {
-      throw new Error("已到账分红的登记日和到账日不能晚于当前市场日期");
+    if (input.recordDate && input.recordDate > marketDate) {
+      throw new Error("已到账分红的登记日不能晚于当前市场日期");
     }
     normalized.recordDate = input.recordDate;
-    normalized.paymentDate = input.paymentDate;
   }
 
   return normalized;
@@ -177,8 +176,13 @@ export function previewLedgerMutation(
   input: LedgerEntryInput,
   replacingEntryId?: string,
   asOf = currentMarketDate(),
+  tradeDateContext?: TradeDateContext,
 ): LedgerImpactPreview {
-  const normalizedInput = normalizeLedgerInput(input, asOf);
+  const normalizedInput = normalizeLedgerInput(
+    input,
+    asOf,
+    tradeDateContext,
+  );
   const target = replacingEntryId
     ? entries.find((entry) => entry.id === replacingEntryId)
     : undefined;
@@ -217,7 +221,14 @@ export function previewLedgerMutation(
     tradeAmount,
     before,
     after,
-    warnings: [],
+    warnings:
+      (normalizedInput.type === "buy" || normalizedInput.type === "sell") &&
+      tradeDateStatus(normalizedInput.businessDate, tradeDateContext) ===
+        "unknown"
+        ? [
+            "本地行情尚未覆盖该业务日期，无法确认是否为休市或停牌日；请核对成交凭证。",
+          ]
+        : [],
   };
 }
 

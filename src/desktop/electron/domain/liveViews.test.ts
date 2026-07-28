@@ -133,6 +133,88 @@ describe("投资收益视图", () => {
       totalReturn: 110,
     });
     expect(overview.metrics.xirr).not.toBeNull();
+    expect("totalReturnRate" in overview.metrics).toBe(false);
+  });
+
+  it("事实截止日晚于估值截止日时保留当日交易，但不使用昨日收盘估值", () => {
+    const entries = [
+      entry("buy-today", "buy", "2026-07-28", {
+        symbol: "601398",
+        price: 5.2,
+        quantity: 100,
+      }),
+    ];
+    const overview = buildPositionsOverview(
+      entries,
+      [price("601398", "2026-07-27", 5)],
+      stocks,
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-27",
+      },
+    );
+    expect(overview.positions[0]).toMatchObject({
+      quantity: 100,
+      marketValue: null,
+      totalReturn: null,
+    });
+    expect(overview.metrics).toMatchObject({
+      cumulativeBuySpend: 520,
+      marketValue: null,
+      totalReturn: null,
+    });
+    expect(overview.quality.status).toBe("partial");
+
+    const calendar = buildIncomeCalendar(
+      entries,
+      [price("601398", "2026-07-27", 5)],
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-27",
+      },
+    );
+    const tradeDay = calendar.days.find(
+      (day) => day.date === "2026-07-28",
+    );
+    expect(tradeDay).toMatchObject({
+      isPartial: true,
+      hasMarketData: false,
+      totalPnl: null,
+    });
+    expect(tradeDay?.events).toHaveLength(1);
+  });
+
+  it("收益日历不因买入前缓存行情生成大量零收益日期", () => {
+    const entries = [
+      entry("new-buy", "buy", "2026-07-10", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+    ];
+    const view = buildIncomeCalendar(
+      entries,
+      [
+        price("601398", "2026-07-01", 4.8),
+        price("601398", "2026-07-09", 4.9),
+        price("601398", "2026-07-10", 5),
+        price("601398", "2026-07-13", 5.1),
+      ],
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      {
+        factAsOfDate: "2026-07-13",
+        valuationCutoff: "2026-07-13",
+      },
+    );
+    expect(view.days.map((day) => day.date)).toEqual([
+      "2026-07-10",
+      "2026-07-13",
+    ]);
   });
 
   it("收益日历只包含市场价格、分红和交易影响三项归因", () => {
@@ -158,7 +240,10 @@ describe("投资收益视图", () => {
       stocks,
       { month: "2026-07", scope: "all" },
       [],
-      "2026-07-02",
+      {
+        factAsOfDate: "2026-07-02",
+        valuationCutoff: "2026-07-02",
+      },
     );
     const buyDay = view.days.find((day) => day.date === "2026-07-01")!;
     expect(buyDay.marketPricePnl).toBe(0);
@@ -196,7 +281,10 @@ describe("投资收益视图", () => {
       stocks,
       { month: "2024-01", scope: "all" },
       [],
-      "2024-01-31",
+      {
+        factAsOfDate: "2024-01-31",
+        valuationCutoff: "2024-01-31",
+      },
     );
     expect(view.quality.status).toBe("ready");
   });
@@ -231,7 +319,10 @@ describe("投资收益视图", () => {
       stocks,
       { month: "2024-01", scope: "all" },
       [],
-      "2024-01-31",
+      {
+        factAsOfDate: "2024-01-31",
+        valuationCutoff: "2024-01-31",
+      },
     );
     expect(
       view.days.find((day) => day.date === "2024-01-02")?.tradingCostPnl,
@@ -305,5 +396,36 @@ describe("投资收益视图", () => {
       null,
     );
     expect(withDirectory.rows[0].name).toBe("沪深300ETF");
+  });
+
+  it("分红并再投入只展示业务关联，不暴露内部关联分组编号", () => {
+    const rows = queryLedgerRecords(
+      [
+        entry("dividend-linked", "dividend", "2026-07-10", {
+          symbol: "601398",
+          amount: 300,
+          linkedGroupId: "internal-uuid",
+        }),
+        entry("buy-linked", "buy", "2026-07-13", {
+          symbol: "601398",
+          price: 5,
+          quantity: 60,
+          linkedGroupId: "internal-uuid",
+        }),
+      ],
+      stocks,
+      { page: 1, pageSize: 20 },
+    ).rows;
+    expect(rows[0]).toMatchObject({
+      linkedOperation: "dividend_reinvestment",
+      linkedRecords: [
+        {
+          id: "dividend-linked",
+          type: "dividend",
+          businessDate: "2026-07-10",
+        },
+      ],
+    });
+    expect("linkedGroupId" in rows[0]).toBe(false);
   });
 });

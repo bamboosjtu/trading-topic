@@ -7,12 +7,23 @@ import {
   fetchAdjustedBars,
   fetchCorporateActions,
   fetchUnadjustedPrices,
+  marketSymbol,
   parseCorporateActions,
   parseReportedCorporateActions,
 } from "./tencent";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("marketSymbol", () => {
+  it("正确映射沪深京股票与境内交易所 ETF", () => {
+    expect(marketSymbol("600519")).toBe("sh600519");
+    expect(marketSymbol("510300")).toBe("sh510300");
+    expect(marketSymbol("159915")).toBe("sz159915");
+    expect(marketSymbol("000001")).toBe("sz000001");
+    expect(marketSymbol("920002")).toBe("bj920002");
+  });
 });
 
 describe("fetchCorporateActions", () => {

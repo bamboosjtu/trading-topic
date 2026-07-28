@@ -4,6 +4,16 @@ import {
   currentMarketDate,
 } from "../../shared/marketDate";
 
+export interface TradingCalendarCoverage {
+  startDate: string;
+  endDate: string;
+}
+
+export interface TradeDateContext {
+  knownTradingDates: readonly string[];
+  coveredRanges: readonly TradingCalendarCoverage[];
+}
+
 function marketClock(
   now: Date,
 ): { hour: number; minute: number } {
@@ -71,4 +81,20 @@ export function latestWeekdayCandidate(now: Date = new Date()): string {
     candidate = addDays(candidate, -1);
   }
   return candidate;
+}
+
+export function tradeDateStatus(
+  date: string,
+  context?: TradeDateContext,
+): "trading" | "closed" | "unknown" {
+  if (!validDate(date)) return "closed";
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return "closed";
+  if (!context) return "unknown";
+  if (context.knownTradingDates.includes(date)) return "trading";
+  return context.coveredRanges.some(
+    (range) => range.startDate <= date && range.endDate >= date,
+  )
+    ? "closed"
+    : "unknown";
 }

@@ -3,6 +3,7 @@ out/
 dist/
 .vite/
 .userData/
+artifacts/
 *.log
 .DS_Store
 

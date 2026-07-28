@@ -14,7 +14,7 @@ const EASTMONEY_URL =
 const EASTMONEY_EMPTY_RESULT_CODE = 9201;
 
 export function marketSymbol(symbol: string): string {
-  if (symbol.startsWith("6")) return `sh${symbol}`;
+  if (/^[56]/.test(symbol)) return `sh${symbol}`;
   if (/^[489]/.test(symbol)) return `bj${symbol}`;
   return `sz${symbol}`;
 }
@@ -399,7 +399,10 @@ function parseTencentSeries(
   const field = adjustment === "qfq" ? "qfqday" : "day";
   const series = security[field];
   if (!Array.isArray(series)) {
-    throw new Error(`腾讯行情 ${year} 年响应结构已变化：缺少 ${field}`);
+    const available = Object.keys(security).join(", ") || "无";
+    throw new Error(
+      `腾讯行情 ${year} 年响应结构已变化：缺少 ${field}（现有字段：${available}）`,
+    );
   }
   for (const item of series) {
     if (
@@ -440,7 +443,9 @@ async function fetchTencentDailyRows(
   const lastYear = Number(endDate.slice(0, 4));
   for (let year = firstYear; year <= lastYear; year += 1) {
     const url = new URL(TENCENT_URL);
-    const variable = `kline_${adjustment}_day${year}`;
+    // The proxy can cache by `_var`; include the security and adjustment so a
+    // preceding unadjusted/other-symbol request cannot poison this response.
+    const variable = `kline_${code}_${adjustment}_day${year}`;
     url.searchParams.set("_var", variable);
     url.searchParams.set(
       "param",
@@ -504,14 +509,13 @@ export async function fetchUnadjustedPrices(
     endDate,
     "none",
   )).map((item) => ({ date: String(item[0]), close: Number(item[2]) }));
-  if (!rows.length) throw new Error(`${symbol} 未取得腾讯不复权日线`);
   const fetchedAt = new Date().toISOString();
   return {
     rows,
     provenance: {
       source: "腾讯财经 newfqkline（产品域独立适配）",
       fetchedAt,
-      dataCutoff: rows.at(-1)!.date,
+      dataCutoff: rows.at(-1)?.date ?? endDate,
       adjustment: "none",
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
@@ -540,13 +544,12 @@ export async function fetchAdjustedBars(
         adjustment: "qfq",
       }),
     );
-  if (!rows.length) throw new Error(`${symbol} 未取得腾讯前复权 OHLCV 日线`);
   return {
     rows,
     provenance: {
       source: "腾讯财经 newfqkline 前复权 OHLCV（产品域独立适配）",
       fetchedAt: new Date().toISOString(),
-      dataCutoff: rows.at(-1)!.date,
+      dataCutoff: rows.at(-1)?.date ?? endDate,
       adjustment: "qfq",
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },

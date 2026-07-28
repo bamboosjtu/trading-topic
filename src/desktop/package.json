@@ -15,6 +15,7 @@
     "pack:portable": "npm run build && electron-builder --win portable --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "smoke:market-data": "node scripts/run-market-data-smoke.mjs",
     "preview": "electron-vite preview"
   },
   "devDependencies": {
@@ -55,7 +56,8 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "asar": true,
     "asarUnpack": [

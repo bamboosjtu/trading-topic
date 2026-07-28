@@ -21,7 +21,8 @@ export interface MarketDataProvenance {
   fallbackUsed: boolean;
   fallbackReason?: string;
   fetchedAt: string;
-  dataCutoff: string;
+  /** 本次响应最后一个正式交易日；合法空区间为 null。 */
+  dataCutoff: string | null;
   adjustment: "none" | "qfq";
 }
 
@@ -261,7 +262,6 @@ export interface LedgerEntryInput {
   fee?: number;
   perShare?: number;
   recordDate?: string;
-  paymentDate?: string;
   note?: string;
   reversesEntryId?: string;
   correctsEntryId?: string;
@@ -315,7 +315,6 @@ export interface PositionView {
   realizedPnl: number;
   cumulativeDividend: number;
   totalReturn: number | null;
-  totalReturnRate: number | null;
   xirr: number | null;
   periodPerformance: PeriodPerformance;
   recentEntries: LedgerRecordView[];
@@ -333,7 +332,6 @@ export interface PositionsOverview {
     realizedPnl: number;
     cumulativeDividend: number;
     totalReturn: number | null;
-    totalReturnRate: number | null;
     xirr: number | null;
   };
   portfolioPerformance: PeriodPerformance;
@@ -367,10 +365,14 @@ export interface LedgerRecordView {
   note: string | null;
   perShare: number | null;
   recordDate: string | null;
-  paymentDate: string | null;
   recordedAt: string;
   correctedAt: string | null;
-  linkedGroupId: string | null;
+  linkedOperation: "dividend_reinvestment" | null;
+  linkedRecords: Array<{
+    id: string;
+    type: "buy" | "dividend";
+    businessDate: string;
+  }>;
   isReversed: boolean;
   reversesEntryId: string | null;
   correctsEntryId: string | null;
@@ -515,6 +517,14 @@ export interface DividendReinvestmentResult {
   buy: LedgerEntry;
 }
 
+export interface DividendReinvestmentPreview {
+  dividend: LedgerImpactPreview;
+  buy: LedgerImpactPreview;
+  before: LedgerImpactState;
+  after: LedgerImpactState;
+  warnings: string[];
+}
+
 export interface HealthResponse {
   status: "ok";
   version: string;
@@ -592,10 +602,14 @@ export interface DesktopApi {
     input: LedgerEntryInput,
     replacingEntryId?: string,
   ): Promise<LedgerImpactPreview>;
+  previewDividendReinvestment(
+    input: DividendReinvestmentInput,
+  ): Promise<DividendReinvestmentPreview>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
   addDividendReinvestment(
     input: DividendReinvestmentInput,
   ): Promise<DividendReinvestmentResult>;
+  getLedgerRecord(entryId: string): Promise<LedgerRecordView>;
   correctLedger(
     entryId: string,
     input: LedgerEntryInput,

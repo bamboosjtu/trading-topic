@@ -45,11 +45,13 @@ const PERFORMANCE_PERIODS = Object.keys(
 type InstrumentState = LedgerPositionState;
 
 export interface LiveModel {
+  factAsOfDate: string;
   cutoff: string | null;
   updatedAt: string | null;
   priceSource: string;
   provenance: MarketDataProvenance[];
   missingSymbols: string[];
+  unvaluedTradeSymbols: string[];
   missingDates: string[];
   issues: string[];
   effectiveEntries: LedgerEntry[];
@@ -57,6 +59,11 @@ export interface LiveModel {
   positions: Map<string, InstrumentState>;
   latestPrices: Map<string, StoredMarketPrice>;
   daily: DailyAttribution[];
+}
+
+export interface LiveModelBoundary {
+  factAsOfDate: string;
+  valuationCutoff: string | null;
 }
 
 function emptyPeriodPerformance(): PeriodPerformance {
@@ -95,12 +102,11 @@ export function buildLiveModel(
   prices: readonly StoredMarketPrice[],
   stocks: readonly StockInfo[],
   purpose: "positions" | "history" = "history",
-  requestedCutoff?: string,
+  boundary?: LiveModelBoundary,
 ): LiveModel {
   const today = currentMarketDate();
-  const asOfDate =
-    requestedCutoff && requestedCutoff < today ? requestedCutoff : today;
-  const ledgerState = reduceLedger(entries, asOfDate);
+  const factAsOfDate = boundary?.factAsOfDate ?? today;
+  const ledgerState = reduceLedger(entries, factAsOfDate);
   const { effectiveEntries: effective, reversedIds } = ledgerState;
   const pricesBySymbol = rowsBySymbol(prices);
   const allSymbols = [
@@ -117,21 +123,43 @@ export function buildLiveModel(
   const availableCutoffs = symbols
     .map((symbol) => pricesBySymbol.get(symbol)?.at(-1)?.date)
     .filter((date): date is string => Boolean(date))
-    .filter((date) => date <= asOfDate);
-  const cutoff =
-    purpose === "history"
-      ? requestedCutoff && requestedCutoff <= today
-        ? requestedCutoff
-        : availableCutoffs.sort().at(-1) ?? null
+    .filter((date) => date <= factAsOfDate);
+  const cutoff = boundary
+    ? boundary.valuationCutoff
+    : purpose === "history"
+      ? availableCutoffs.sort().at(-1) ?? null
       : availableCutoffs.length === symbols.length && symbols.length
         ? availableCutoffs.sort()[0]
         : null;
   const missingSymbols = symbols.filter(
     (symbol) => !(pricesBySymbol.get(symbol)?.length),
   );
-  const issues = missingSymbols.length
-    ? [`缺少 ${missingSymbols.length} 个标的的本地正式收盘行情`]
-    : [];
+  const unvaluedTradeSymbols = cutoff
+    ? symbols.filter((symbol) =>
+        effective.some(
+          (entry) =>
+            entry.symbol === symbol &&
+            (entry.type === "buy" || entry.type === "sell") &&
+            entry.businessDate > cutoff,
+        ),
+      )
+    : symbols.filter((symbol) =>
+        effective.some(
+          (entry) =>
+            entry.symbol === symbol &&
+            (entry.type === "buy" || entry.type === "sell"),
+        ),
+      );
+  const issues = [
+    ...(missingSymbols.length
+      ? [`缺少 ${missingSymbols.length} 个标的的本地正式收盘行情`]
+      : []),
+    ...(unvaluedTradeSymbols.length
+      ? [
+          `${unvaluedTradeSymbols.length} 个标的在估值截止日后存在买卖事实，正式市值和收益暂不可计算`,
+        ]
+      : []),
+  ];
   const latestPrices = new Map<string, StoredMarketPrice>();
   if (cutoff) {
     for (const symbol of symbols) {
@@ -160,15 +188,18 @@ export function buildLiveModel(
   const daily = buildDailyAttribution(
     effective,
     pricesBySymbol,
+    factAsOfDate,
     cutoff,
     namesMap(stocks, entries),
   );
   return {
+    factAsOfDate,
     cutoff,
     updatedAt,
     priceSource,
     provenance,
     missingSymbols,
+    unvaluedTradeSymbols,
     missingDates: daily.filter((day) => day.isPartial).map((day) => day.date),
     issues,
     effectiveEntries: effective,
@@ -195,6 +226,7 @@ export function qualityFor(
     status: !hasFacts
       ? "empty"
       : model.missingSymbols.length ||
+          model.unvaluedTradeSymbols.length ||
           model.missingDates.length ||
           additionalIssues.length
         ? "partial"
@@ -275,9 +307,16 @@ export function buildPositionsOverview(
   entries: readonly LedgerEntry[],
   prices: readonly StoredMarketPrice[],
   stocks: readonly StockInfo[],
+  boundary?: LiveModelBoundary,
 ): PositionsOverview {
-  const model = buildLiveModel(entries, prices, stocks, "positions");
-  const state = reduceLedger(entries, currentMarketDate());
+  const model = buildLiveModel(
+    entries,
+    prices,
+    stocks,
+    "positions",
+    boundary,
+  );
+  const state = reduceLedger(entries, model.factAsOfDate);
   const names = namesMap(stocks, entries);
   const securityTypes = securityTypesMap(stocks, entries);
   const currentPositions = [...state.positions.entries()].filter(
@@ -285,7 +324,7 @@ export function buildPositionsOverview(
   );
   const positions = currentPositions.map(([symbol, position]) => {
     const quote = model.latestPrices.get(symbol);
-    const marketValue = quote
+    const marketValue = quote && !model.unvaluedTradeSymbols.includes(symbol)
       ? roundMoney(quote.close * position.quantity)
       : null;
     const unrealizedPnl =
@@ -324,10 +363,6 @@ export function buildPositionsOverview(
       realizedPnl: position.realizedPnl,
       cumulativeDividend: position.cumulativeDividend,
       totalReturn,
-      totalReturnRate:
-        totalReturn !== null && netInvestment > 0
-          ? totalReturn / netInvestment
-          : null,
       xirr: investmentXirr(symbolEntries, model.cutoff, marketValue),
       periodPerformance: periodPerformance(model.daily, model.cutoff, symbol),
       recentEntries: entries
@@ -376,10 +411,6 @@ export function buildPositionsOverview(
       realizedPnl: state.realizedPnl,
       cumulativeDividend: state.cumulativeDividend,
       totalReturn: hasFacts ? totalReturn : null,
-      totalReturnRate:
-        totalReturn !== null && state.netInvestment > 0
-          ? totalReturn / state.netInvestment
-          : null,
       // 已清仓时没有期末估值行情，现金流仍可在最后一笔事实日闭合。
       xirr: investmentXirr(
         model.effectiveEntries,

@@ -484,10 +484,45 @@ export function TradesPage() {
               <div><dt>交易费用</dt><dd>{money(detail.fee)}</dd></div>
               <div><dt>每股分红</dt><dd>{numberValue(detail.perShare, 4)}</dd></div>
               <div><dt>登记日</dt><dd>{detail.recordDate ?? "—"}</dd></div>
-              <div><dt>到账日</dt><dd>{detail.paymentDate ?? "—"}</dd></div>
               <div><dt>录入时间</dt><dd>{dayjs(detail.recordedAt).format("YYYY-MM-DD HH:mm:ss")}</dd></div>
               <div><dt>修正时间</dt><dd>{detail.correctedAt ? dayjs(detail.correctedAt).format("YYYY-MM-DD HH:mm:ss") : "—"}</dd></div>
-              <div><dt>关联分组</dt><dd>{detail.linkedGroupId ?? "—"}</dd></div>
+              <div>
+                <dt>关联操作</dt>
+                <dd>
+                  {detail.linkedOperation === "dividend_reinvestment"
+                    ? "分红并再投入"
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>关联记录</dt>
+                <dd>
+                  {detail.linkedRecords.length
+                    ? detail.linkedRecords.map((linked) => (
+                        <Button
+                          key={linked.id}
+                          type="link"
+                          size="small"
+                          onClick={() => {
+                            void api
+                              .getLedgerRecord(linked.id)
+                              .then(setDetail)
+                              .catch((error: unknown) =>
+                                message.error(
+                                  error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                                ),
+                              );
+                          }}
+                        >
+                          {linked.type === "dividend" ? "分红到账" : "买入"}{" "}
+                          {linked.businessDate}
+                        </Button>
+                      ))
+                    : "—"}
+                </dd>
+              </div>
               <div><dt>备注</dt><dd>{detail.note ?? "—"}</dd></div>
               <div><dt>记录状态</dt><dd>{detail.isReversed ? "已冲正" : detail.correctsEntryId ? "修正后的有效记录" : detail.type === "adjustment" ? "冲正 / 修正记录" : "有效"}</dd></div>
             </dl>

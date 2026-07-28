@@ -13,6 +13,7 @@ import {
   buildLiveModel,
   qualityFor,
   type LiveModel,
+  type LiveModelBoundary,
 } from "./positionsView";
 import { namesMap } from "./liveViewSupport";
 import type { DailyAttribution } from "./dailyAttribution";
@@ -49,7 +50,10 @@ export function buildIncomeCalendar(
   stocks: readonly StockInfo[],
   query: IncomeCalendarQuery,
   externalIssues: readonly string[] = [],
-  requestedCutoff = monthEnd(query.month),
+  boundary: LiveModelBoundary = {
+    factAsOfDate: [monthEnd(query.month), currentMarketDate()].sort()[0],
+    valuationCutoff: monthEnd(query.month),
+  },
 ): IncomeCalendarView {
   if (!/^\d{4}-\d{2}$/.test(query.month)) {
     throw new Error("收益月份必须使用 YYYY-MM 格式");
@@ -59,7 +63,7 @@ export function buildIncomeCalendar(
     prices,
     stocks,
     "history",
-    requestedCutoff,
+    boundary,
   );
   const names = namesMap(stocks, entries);
   const activeSymbols = new Set(

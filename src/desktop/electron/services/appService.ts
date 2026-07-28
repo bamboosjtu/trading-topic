@@ -16,7 +16,9 @@ import type {
   PositionsOverview,
   StockInfo,
   DividendReinvestmentInput,
+  DividendReinvestmentPreview,
   DividendReinvestmentResult,
+  LedgerRecordView,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
@@ -44,7 +46,10 @@ import {
 } from "../domain/ledgerCommands";
 import { buildPositionsOverview } from "../domain/positionsView";
 import { buildIncomeCalendar } from "../domain/incomeCalendar";
-import { queryLedgerRecords } from "../domain/ledgerQuery";
+import {
+  getLedgerRecordById,
+  queryLedgerRecords,
+} from "../domain/ledgerQuery";
 import {
   LocalDatabase,
   type MarketDataCacheEntry,
@@ -63,6 +68,7 @@ import {
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   latestWeekdayCandidate,
+  type TradeDateContext,
 } from "../domain/marketCalendar";
 
 function isCompleteStockUniverse(stocks: readonly StockInfo[]): boolean {
@@ -241,7 +247,13 @@ export class AppService {
 
     const dataCutoff = marketData
       .map(({ prices }) => prices.provenance.dataCutoff)
+      .filter((date): date is string => Boolean(date))
       .sort()[0];
+    if (
+      marketData.some(({ prices }) => prices.provenance.dataCutoff === null)
+    ) {
+      throw new Error("至少一个回测标的没有取得正式交易日行情");
+    }
     if (!dataCutoff) throw new Error("回测试验没有共同的数据截止时间");
     const experimentId = randomUUID();
     const createdAt = new Date().toISOString();
@@ -254,6 +266,22 @@ export class AppService {
     };
     const results = marketData.map(
       ({ symbol, prices, dividends, chartData, chartProvenance }) => {
+        if (!prices.provenance.dataCutoff) {
+          throw new Error(`${symbol} 没有可用于回测的正式行情截止日`);
+        }
+        const priceProvenance = {
+          ...prices.provenance,
+          dataCutoff: prices.provenance.dataCutoff,
+        };
+        const chartSource =
+          chartProvenance?.dataCutoff
+            ? [
+                {
+                  ...chartProvenance,
+                  dataCutoff: chartProvenance.dataCutoff,
+                },
+              ]
+            : [];
         const result = simulateBacktest(
           effectiveRequest,
           symbol,
@@ -261,9 +289,9 @@ export class AppService {
           prices.rows,
           dividends.rows,
           [
-            prices.provenance,
+            priceProvenance,
             dividends.provenance,
-            ...(chartProvenance ? [chartProvenance] : []),
+            ...chartSource,
           ],
           { id: experimentId, createdAt },
         );
@@ -390,37 +418,52 @@ export class AppService {
     requested: readonly LivePriceRange[],
   ): LivePriceRange[] {
     return requested.flatMap((range) => {
-      const rows = this.database.listLiveMarketPrices([range.symbol]);
-      if (!rows.length) return [range];
-      const covered = (candidate: LivePriceRange): boolean =>
-        rows.some(
-          (row) =>
-            row.requestedFrom !== undefined &&
-            row.requestedThrough !== undefined &&
-            row.requestedFrom <= candidate.startDate &&
-            row.requestedThrough >= candidate.endDate,
+      const coverage = this.database
+        .listLiveMarketCoverage([range.symbol])
+        .filter((item) => item.adjustment === "none")
+        .sort((left, right) =>
+          left.requestedFrom.localeCompare(right.requestedFrom),
         );
-      if (covered(range)) return [];
-      const first = rows[0].date;
-      const last = rows.at(-1)!.date;
-      if (last < range.startDate || first > range.endDate) {
-        return covered(range) ? [] : [range];
-      }
       const missing: LivePriceRange[] = [];
-      if (first > range.startDate) {
-        missing.push({
-          ...range,
-          endDate: addDays(first, -1),
-        });
+      let cursor = range.startDate;
+      for (const item of coverage) {
+        if (item.requestedThrough < cursor) continue;
+        if (item.requestedFrom > range.endDate) break;
+        if (item.requestedFrom > cursor) {
+          missing.push({
+            ...range,
+            startDate: cursor,
+            endDate: addDays(item.requestedFrom, -1),
+          });
+        }
+        if (item.requestedThrough >= cursor) {
+          cursor = addDays(item.requestedThrough, 1);
+        }
+        if (cursor > range.endDate) break;
       }
-      if (last < range.endDate) {
-        missing.push({
-          ...range,
-          startDate: addDays(last, 1),
-        });
+      if (cursor <= range.endDate) {
+        missing.push({ ...range, startDate: cursor });
       }
-      return missing.filter((candidate) => !covered(candidate));
+      return missing.filter(
+        (candidate) => candidate.startDate <= candidate.endDate,
+      );
     });
+  }
+
+  private tradeDateContext(symbol?: string): TradeDateContext | undefined {
+    if (!symbol) return undefined;
+    return {
+      knownTradingDates: this.database
+        .listLiveMarketPrices([symbol])
+        .map((row) => row.date),
+      coveredRanges: this.database
+        .listLiveMarketCoverage([symbol])
+        .filter((row) => row.adjustment === "none")
+        .map((row) => ({
+          startDate: row.requestedFrom,
+          endDate: row.requestedThrough,
+        })),
+    };
   }
 
   private completedMarketDate(now = new Date()): string {
@@ -472,10 +515,16 @@ export class AppService {
 
   getPositionsOverview(): PositionsOverview {
     const snapshot = this.liveDataSnapshot();
+    const factAsOfDate = currentMarketDate();
+    const valuationCutoff = latestCompletedTradingDate(
+      new Date(),
+      this.database.listLiveMarketDates(),
+    );
     return buildPositionsOverview(
       snapshot.entries,
       snapshot.prices,
       this.localStockUniverse(),
+      { factAsOfDate, valuationCutoff },
     );
   }
 
@@ -535,6 +584,16 @@ export class AppService {
     );
   }
 
+  getLedgerRecord(entryId: string): LedgerRecordView {
+    const row = getLedgerRecordById(
+      this.database.listLedger(),
+      this.localStockUniverse(),
+      entryId,
+    );
+    if (!row) throw new Error("关联流水不存在或已无法读取");
+    return row;
+  }
+
   async getIncomeCalendar(
     query: IncomeCalendarQuery,
   ): Promise<IncomeCalendarView> {
@@ -553,14 +612,24 @@ export class AppService {
       latestTradingDateInMonth(
         query.month,
         this.database.listLiveMarketDates(),
-      ) ?? requestedMonthEnd;
+      ) ??
+      (query.month === currentMarketDate().slice(0, 7)
+        ? latestCompletedTradingDate(
+            new Date(),
+            this.database.listLiveMarketDates(),
+          )
+        : null);
+    const factAsOfDate = [
+      monthEnd(query.month),
+      currentMarketDate(),
+    ].sort()[0];
     return buildIncomeCalendar(
       snapshot.entries,
       snapshot.prices,
       this.localStockUniverse(),
       query,
       issues,
-      actualMonthCutoff,
+      { factAsOfDate, valuationCutoff: actualMonthCutoff },
     );
   }
 
@@ -581,48 +650,20 @@ export class AppService {
   addDividendReinvestment(
     input: DividendReinvestmentInput,
   ): DividendReinvestmentResult {
+    const preview = this.previewDividendReinvestment(input);
     const linkedGroupId = randomUUID();
-    const marketDate = currentMarketDate();
-    const common = {
-      symbol: input.symbol,
-      instrumentName: input.instrumentName,
-      securityType: input.securityType,
-      linkedGroupId,
-      note: input.note,
-    };
-    const dividendInput = normalizeLedgerInput(
-      {
-        ...common,
-        type: "dividend",
-        businessDate: input.dividendDate,
-        amount: input.dividendAmount,
-        perShare: input.perShare,
-        recordDate: input.recordDate,
-        paymentDate: input.dividendDate,
-      },
-      marketDate,
-    );
-    const buyInput = normalizeLedgerInput(
-      {
-        ...common,
-        type: "buy",
-        businessDate: input.reinvestmentDate,
-        price: input.buyPrice,
-        quantity: input.buyQuantity,
-        fee: input.fee,
-      },
-      marketDate,
-    );
     const recordedAt = new Date().toISOString();
     const dividend: LedgerEntry = {
-      ...dividendInput,
+      ...preview.dividend.normalizedInput,
+      linkedGroupId,
       id: randomUUID(),
       recordedAt,
       currency: "CNY",
       source: "user",
     };
     const buy: LedgerEntry = {
-      ...buyInput,
+      ...preview.buy.normalizedInput,
+      linkedGroupId,
       id: randomUUID(),
       recordedAt: new Date(Date.parse(recordedAt) + 1).toISOString(),
       currency: "CNY",
@@ -632,9 +673,69 @@ export class AppService {
     this.database.addLedgerEntries([dividend, buy]);
     this.database.log(
       "info",
-      `新增分红并再投入：${input.symbol} ${linkedGroupId}`,
+      `新增分红并再投入：${input.symbol}`,
     );
     return { linkedGroupId, dividend, buy };
+  }
+
+  previewDividendReinvestment(
+    input: DividendReinvestmentInput,
+  ): DividendReinvestmentPreview {
+    if (input.reinvestmentDate < input.dividendDate) {
+      throw new Error("再投入日期不得早于分红到账日期");
+    }
+    const entries = this.database.listLedger();
+    const marketDate = currentMarketDate();
+    const common = {
+      symbol: input.symbol,
+      instrumentName: input.instrumentName,
+      securityType: input.securityType,
+      note: input.note,
+    };
+    const dividend = previewLedgerMutation(
+      entries,
+      normalizeLedgerInput(
+        {
+          ...common,
+          type: "dividend",
+          businessDate: input.dividendDate,
+          amount: input.dividendAmount,
+          perShare: input.perShare,
+          recordDate: input.recordDate,
+        },
+        marketDate,
+      ),
+      undefined,
+      marketDate,
+    );
+    const previewDividendEntry: LedgerEntry = {
+      ...dividend.normalizedInput,
+      id: "__preview_dividend__",
+      recordedAt: "9999-12-31T23:59:59.998Z",
+      currency: "CNY",
+      source: "system",
+    };
+    const buy = previewLedgerMutation(
+      [...entries, previewDividendEntry],
+      {
+        ...common,
+        type: "buy",
+        businessDate: input.reinvestmentDate,
+        price: input.buyPrice,
+        quantity: input.buyQuantity,
+        fee: input.fee,
+      },
+      undefined,
+      marketDate,
+      this.tradeDateContext(input.symbol),
+    );
+    return {
+      dividend,
+      buy,
+      before: dividend.before,
+      after: buy.after,
+      warnings: [...dividend.warnings, ...buy.warnings],
+    };
   }
 
   previewLedger(
@@ -645,6 +746,8 @@ export class AppService {
       this.database.listLedger(),
       input,
       replacingEntryId,
+      currentMarketDate(),
+      this.tradeDateContext(input.symbol),
     );
   }
 

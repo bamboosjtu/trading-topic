@@ -91,7 +91,7 @@ describe("投资事实命令", () => {
       }),
       entry("sell", {
         type: "sell",
-        businessDate: "2026-01-03",
+        businessDate: "2026-01-05",
         symbol: "601398",
         price: 5.1,
         quantity: 100,
@@ -100,13 +100,13 @@ describe("投资事实命令", () => {
     expect(() =>
       previewLedgerMutation(rows, {
         type: "sell",
-        businessDate: "2026-01-03",
+        businessDate: "2026-01-05",
         symbol: "601398",
         price: 5,
         quantity: 100,
       }),
     ).toThrow("卖出数量超过有效持仓");
-    expect(() => assertLedgerReversal(rows, "buy", "2026-01-03")).toThrow(
+    expect(() => assertLedgerReversal(rows, "buy", "2026-01-05")).toThrow(
       "卖出数量超过有效持仓",
     );
   });
@@ -145,5 +145,73 @@ describe("投资事实命令", () => {
         "2026-07-28",
       ),
     ).toThrow("只能从原流水详情发起");
+  });
+
+  it("买卖拒绝已确认的休市日，日历未知时明确告警，分红可在非交易日到账", () => {
+    const coveredHoliday = {
+      knownTradingDates: ["2026-02-24"],
+      coveredRanges: [
+        { startDate: "2026-02-15", endDate: "2026-02-24" },
+      ],
+    };
+    expect(() =>
+      normalizeLedgerInput(
+        {
+          type: "buy",
+          businessDate: "2026-02-23",
+          symbol: "601398",
+          price: 5,
+          quantity: 100,
+        },
+        "2026-07-28",
+        coveredHoliday,
+      ),
+    ).toThrow("有效交易日");
+    expect(() =>
+      normalizeLedgerInput(
+        {
+          type: "sell",
+          businessDate: "2026-07-26",
+          symbol: "601398",
+          price: 5,
+          quantity: 1,
+        },
+        "2026-07-28",
+      ),
+    ).toThrow("有效交易日");
+
+    const preview = previewLedgerMutation(
+      [],
+      {
+        type: "buy",
+        businessDate: "2026-07-27",
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      },
+      undefined,
+      "2026-07-28",
+      { knownTradingDates: [], coveredRanges: [] },
+    );
+    expect(preview.warnings).toContain(
+      "本地行情尚未覆盖该业务日期，无法确认是否为休市或停牌日；请核对成交凭证。",
+    );
+
+    expect(
+      normalizeLedgerInput(
+        {
+          type: "dividend",
+          businessDate: "2026-07-26",
+          symbol: "601398",
+          amount: 100,
+        },
+        "2026-07-28",
+        { knownTradingDates: [], coveredRanges: [] },
+      ),
+    ).toMatchObject({
+      type: "dividend",
+      businessDate: "2026-07-26",
+      amount: 100,
+    });
   });
 });

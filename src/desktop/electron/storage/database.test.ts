@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import BetterSqlite3 from "better-sqlite3";
 import type {
   BacktestExperiment,
   BacktestRequest,
@@ -157,7 +158,7 @@ describe("LocalDatabase", () => {
     expect(database.listLedger()).toEqual([]);
   });
 
-  it("导出并恢复 schema v8 的不可变回测试验、投资事实与行情来源", async () => {
+  it("导出并恢复 schema v9 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -196,9 +197,10 @@ describe("LocalDatabase", () => {
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(8);
+    expect(backup.schemaVersion).toBe(9);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
+    expect(backup.liveMarketCoverage).toHaveLength(1);
 
     const restored = await openDatabase(
       join(directory, "restored.sqlite"),
@@ -217,6 +219,150 @@ describe("LocalDatabase", () => {
       dataCutoff: "2026-07-24",
       adjustment: "none",
     });
+    expect(restored.listLiveMarketCoverage(["601398"])[0]).toMatchObject({
+      requestedFrom: "2026-07-24",
+      requestedThrough: "2026-07-24",
+      resultStatus: "data",
+    });
+  });
+
+  it("合法空行情区间独立持久化并随备份恢复", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-02-24T08:00:00Z",
+          dataCutoff: null,
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-02-15",
+        requestedThrough: "2026-02-23",
+      },
+    ]);
+    expect(database.listLiveMarketPrices(["601398"])).toEqual([]);
+    expect(database.listLiveMarketCoverage(["601398"])).toEqual([
+      expect.objectContaining({
+        symbol: "601398",
+        requestedFrom: "2026-02-15",
+        requestedThrough: "2026-02-23",
+        dataCutoff: null,
+        resultStatus: "empty",
+      }),
+    ]);
+
+    const restored = await openDatabase(join(directory, "restored.sqlite"));
+    restored.restoreBackup(database.exportBackup());
+    expect(restored.listLiveMarketCoverage(["601398"])[0]).toMatchObject({
+      requestedFrom: "2026-02-15",
+      requestedThrough: "2026-02-23",
+      resultStatus: "empty",
+    });
+  });
+
+  it("schema 7 升级显式保留买入卖出分红和审计链，丢弃退出 R1 的账户事实", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-migrate-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "legacy.sqlite");
+    const legacy = new BetterSqlite3(filePath);
+    legacy.exec(`
+      CREATE TABLE ledger_entries (
+        id TEXT PRIMARY KEY,
+        business_date TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+      );
+    `);
+    const insert = legacy.prepare(
+      "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+    );
+    const legacyEntries = [
+      {
+        id: "buy-old",
+        type: "buy",
+        businessDate: "2025-01-02",
+        recordedAt: "2025-01-02T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      },
+      {
+        id: "dividend-old",
+        type: "dividend",
+        businessDate: "2025-06-01",
+        paymentDate: "2025-06-05",
+        recordedAt: "2025-06-05T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        symbol: "601398",
+        amount: 30,
+      },
+      {
+        id: "adjust-old",
+        type: "adjustment",
+        businessDate: "2025-01-02",
+        recordedAt: "2025-07-01T01:00:00Z",
+        currency: "CNY",
+        source: "system",
+        reversesEntryId: "buy-old",
+      },
+      {
+        id: "transfer-old",
+        type: "transfer_in",
+        businessDate: "2025-01-01",
+        recordedAt: "2025-01-01T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        amount: 10_000,
+      },
+      {
+        id: "repo-old",
+        type: "reverse_repo",
+        businessDate: "2025-01-03",
+        recordedAt: "2025-01-03T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        amount: 5_000,
+      },
+    ];
+    for (const entry of legacyEntries) {
+      insert.run(
+        entry.id,
+        entry.businessDate,
+        entry.recordedAt,
+        entry.type,
+        JSON.stringify(entry),
+      );
+    }
+    legacy.pragma("user_version = 7");
+    legacy.close();
+
+    const migrated = await openDatabase(filePath);
+    const rows = migrated.listLedger();
+    expect(rows.map((row) => row.id).sort()).toEqual([
+      "adjust-old",
+      "buy-old",
+      "dividend-old",
+    ]);
+    expect(rows.find((row) => row.id === "dividend-old")).toMatchObject({
+      businessDate: "2025-06-05",
+      amount: 30,
+    });
+    expect(
+      "paymentDate" in rows.find((row) => row.id === "dividend-old")!,
+    ).toBe(false);
+    expect(migrated.exportBackup().schemaVersion).toBe(9);
   });
 
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {

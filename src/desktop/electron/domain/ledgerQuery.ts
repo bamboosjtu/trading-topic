@@ -19,6 +19,54 @@ import {
   toLedgerRecord,
 } from "./liveViewSupport";
 
+function toLedgerRecords(
+  entries: readonly LedgerEntry[],
+  stocks: readonly StockInfo[],
+): LedgerRecordView[] {
+  const names = namesMap(stocks, entries);
+  const securityTypes = securityTypesMap(stocks, entries);
+  const { effective, reversedIds } = activeLedgerEntries(entries);
+  const groups = new Map<string, LedgerEntry[]>();
+  // 关联展示只指向当前有效事实；被历史重述替换的旧版本仍在审计列表中，
+  // 但不会与修正后的事实同时作为可跳转的业务关联出现。
+  for (const entry of effective) {
+    if (!entry.linkedGroupId) continue;
+    const group = groups.get(entry.linkedGroupId) ?? [];
+    group.push(entry);
+    groups.set(entry.linkedGroupId, group);
+  }
+  return [...entries].sort(canonicalLedgerOrderDescending).map((entry) => {
+    const row = toLedgerRecord(entry, names, securityTypes, reversedIds);
+    const group = entry.linkedGroupId
+      ? (groups.get(entry.linkedGroupId) ?? [])
+      : [];
+    const linkedRecords = group
+      .filter(
+        (candidate): candidate is LedgerEntry & {
+          type: "buy" | "dividend";
+        } =>
+          candidate.id !== entry.id &&
+          (candidate.type === "buy" || candidate.type === "dividend"),
+      )
+      .sort(canonicalLedgerOrderDescending)
+      .map((candidate) => ({
+        id: candidate.id,
+        type: candidate.type,
+        businessDate: candidate.businessDate,
+      }));
+    const isDividendReinvestment =
+      group.some((candidate) => candidate.type === "dividend") &&
+      group.some((candidate) => candidate.type === "buy");
+    return {
+      ...row,
+      linkedOperation: isDividendReinvestment
+        ? "dividend_reinvestment"
+        : null,
+      linkedRecords,
+    };
+  });
+}
+
 function matchesQuery(
   row: LedgerRecordView,
   query: LedgerQuery,
@@ -68,15 +116,11 @@ export function queryLedgerRecords(
   ) {
     throw new Error("流水开始日期不能晚于结束日期");
   }
+  const { effective } = activeLedgerEntries(entries);
+  const allRows = toLedgerRecords(entries, stocks)
+    .filter((row) => matchesQuery(row, query));
   const names = namesMap(stocks, entries);
   const securityTypes = securityTypesMap(stocks, entries);
-  const { effective, reversedIds } = activeLedgerEntries(entries);
-  const allRows = [...entries]
-    .sort(canonicalLedgerOrderDescending)
-    .map((entry) =>
-      toLedgerRecord(entry, names, securityTypes, reversedIds),
-    )
-    .filter((row) => matchesQuery(row, query));
   const effectiveIds = new Set(effective.map((entry) => entry.id));
   const aggregateRows = allRows.filter(
     (row) => effectiveIds.has(row.id) && row.type !== "adjustment",
@@ -139,4 +183,12 @@ export function queryLedgerRecords(
           inferSecurityType(symbol, names.get(symbol)),
       })),
   };
+}
+
+export function getLedgerRecordById(
+  entries: readonly LedgerEntry[],
+  stocks: readonly StockInfo[],
+  entryId: string,
+): LedgerRecordView | null {
+  return toLedgerRecords(entries, stocks).find((row) => row.id === entryId) ?? null;
 }

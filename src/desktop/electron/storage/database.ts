@@ -16,7 +16,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -56,6 +56,19 @@ interface BackupPayload {
     adjustment: "none" | "qfq";
     requested_from: string;
     requested_through: string;
+  }>;
+  liveMarketCoverage: Array<{
+    symbol: string;
+    requested_from: string;
+    requested_through: string;
+    source: "tencent" | "sina";
+    primary_source: "tencent";
+    fallback_used: number;
+    fallback_reason: string | null;
+    fetched_at: string;
+    data_cutoff: string | null;
+    adjustment: "none" | "qfq";
+    result_status: "data" | "empty";
   }>;
   corporateActions: Array<{
     symbol: string;
@@ -98,6 +111,20 @@ export interface StoredMarketPrice {
   requestedThrough?: string;
 }
 
+export interface StoredMarketCoverage {
+  symbol: string;
+  requestedFrom: string;
+  requestedThrough: string;
+  source: "tencent" | "sina";
+  primarySource: "tencent";
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  fetchedAt: string;
+  dataCutoff: string | null;
+  adjustment: "none" | "qfq";
+  resultStatus: "data" | "empty";
+}
+
 function rows<T>(
   database: BetterSqlite3.Database,
   sql: string,
@@ -124,9 +151,10 @@ export class LocalDatabase {
   }
 
   private migrate(): void {
-    const currentVersion = this.database.pragma("user_version", {
-      simple: true,
-    }) as number;
+    this.database.transaction(() => {
+      const currentVersion = this.database.pragma("user_version", {
+        simple: true,
+      }) as number;
     if (currentVersion < 5) {
       this.database.exec(`
         DROP TABLE IF EXISTS backtest_runs;
@@ -135,11 +163,75 @@ export class LocalDatabase {
         DROP TABLE IF EXISTS backtest_workspace;
       `);
     }
+    const retainedLedgerEntries: LedgerEntry[] = [];
+    if (currentVersion < 9) {
+      const hasLedgerTable = rows<{ name: string }>(
+        this.database,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries'",
+      ).length > 0;
+      if (hasLedgerTable) {
+        const legacyRows = rows<{ type: string; payload_json: string }>(
+          this.database,
+          "SELECT type, payload_json FROM ledger_entries",
+        );
+        const parsed = legacyRows.map((row) => {
+          let entry: LedgerEntry;
+          try {
+            entry = JSON.parse(row.payload_json) as LedgerEntry;
+          } catch {
+            throw new Error(
+              "旧版投资事实无法解析；为避免静默丢失，数据库升级已停止",
+            );
+          }
+          if (entry.type !== row.type) {
+            throw new Error(
+              "旧版投资事实类型不一致；为避免静默丢失，数据库升级已停止",
+            );
+          }
+          return entry;
+        });
+        const retainedIds = new Set(
+          parsed
+            .filter((entry) =>
+              ["buy", "sell", "dividend"].includes(entry.type),
+            )
+            .map((entry) => entry.id),
+        );
+        for (const original of parsed) {
+          if (
+            !["buy", "sell", "dividend", "adjustment"].includes(
+              original.type,
+            )
+          ) {
+            continue;
+          }
+          if (
+            original.type === "adjustment" &&
+            (!original.reversesEntryId ||
+              !retainedIds.has(original.reversesEntryId))
+          ) {
+            continue;
+          }
+          const entry = { ...original } as LedgerEntry & {
+            paymentDate?: string;
+          };
+          if (
+            entry.type === "dividend" &&
+            entry.paymentDate &&
+            /^\d{4}-\d{2}-\d{2}$/.test(entry.paymentDate)
+          ) {
+            entry.businessDate = entry.paymentDate;
+          }
+          delete entry.paymentDate;
+          retainedLedgerEntries.push(entry);
+        }
+      }
+      this.database.exec("DROP TABLE IF EXISTS ledger_entries");
+    }
     if (currentVersion < 8) {
-      // R1 尚无用户数据：领域模型收敛后直接重建投资事实与行情缓存，
-      // 不保留旧事实类型或旧来源字段的兼容层。
+      // 旧行情缓存与账户型设置可以重建；投资事实已在上方显式提取，
+      // 只保留买入、卖出、分红及其有效审计链。
       this.database.exec(`
-        DROP TABLE IF EXISTS ledger_entries;
         DROP TABLE IF EXISTS market_prices;
         DROP TABLE IF EXISTS live_market_prices;
         DROP TABLE IF EXISTS settings;
@@ -201,6 +293,20 @@ export class LocalDatabase {
         requested_through TEXT NOT NULL,
         PRIMARY KEY (symbol, trade_date)
       );
+      CREATE TABLE IF NOT EXISTS live_market_coverage (
+        symbol TEXT NOT NULL,
+        requested_from TEXT NOT NULL,
+        requested_through TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('tencent', 'sina')),
+        primary_source TEXT NOT NULL CHECK (primary_source = 'tencent'),
+        fallback_used INTEGER NOT NULL CHECK (fallback_used IN (0, 1)),
+        fallback_reason TEXT,
+        fetched_at TEXT NOT NULL,
+        data_cutoff TEXT,
+        adjustment TEXT NOT NULL CHECK (adjustment IN ('none', 'qfq')),
+        result_status TEXT NOT NULL CHECK (result_status IN ('data', 'empty')),
+        PRIMARY KEY (symbol, requested_from, requested_through, adjustment)
+      );
       CREATE TABLE IF NOT EXISTS corporate_actions (
         symbol TEXT NOT NULL,
         event_date TEXT NOT NULL,
@@ -234,13 +340,45 @@ export class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy
         ON backtest_results(strategy_key);
     `);
+    if (currentVersion < 9 && retainedLedgerEntries.length) {
+      const insertLedger = this.database.prepare(
+        "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+      );
+      this.database.transaction(() => {
+        for (const entry of retainedLedgerEntries) {
+          insertLedger.run(
+            entry.id,
+            entry.businessDate,
+            entry.recordedAt,
+            entry.type,
+            JSON.stringify(entry),
+          );
+        }
+      })();
+    }
+    if (currentVersion === 8) {
+      this.database.exec(`
+        INSERT OR IGNORE INTO live_market_coverage(
+          symbol, requested_from, requested_through, source, primary_source,
+          fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
+          result_status
+        )
+        SELECT
+          symbol, requested_from, requested_through, source, primary_source,
+          fallback_used, fallback_reason, MAX(fetched_at), MAX(data_cutoff),
+          adjustment, 'data'
+        FROM live_market_prices
+        GROUP BY symbol, requested_from, requested_through, adjustment;
+      `);
+    }
     this.database.pragma(`user_version = ${SCHEMA_VERSION}`);
-    this.database
-      .prepare(
-        `INSERT INTO settings(key, value_json) VALUES ('app', ?)
-         ON CONFLICT(key) DO NOTHING`,
-      )
-      .run(JSON.stringify(DEFAULT_SETTINGS));
+      this.database
+        .prepare(
+          `INSERT INTO settings(key, value_json) VALUES ('app', ?)
+           ON CONFLICT(key) DO NOTHING`,
+        )
+        .run(JSON.stringify(DEFAULT_SETTINGS));
+    })();
   }
 
   log(level: "info" | "warn" | "error", message: string): void {
@@ -527,6 +665,11 @@ export class LocalDatabase {
   }
 
   private insertMarketData(entry: MarketDataCacheEntry): void {
+    const dataCutoff =
+      entry.provenance.dataCutoff ?? entry.prices.at(-1)?.date;
+    if (!dataCutoff && entry.prices.length) {
+      throw new Error("行情快照包含价格但缺少实际数据截止日");
+    }
     const insertPrice = this.database.prepare(
       `INSERT OR REPLACE INTO market_prices(
          symbol, trade_date, close, source, primary_source, fallback_used,
@@ -546,7 +689,7 @@ export class LocalDatabase {
         entry.provenance.fallbackUsed ? 1 : 0,
         entry.provenance.fallbackReason ?? null,
         entry.provenance.fetchedAt,
-        entry.provenance.dataCutoff,
+        dataCutoff,
         entry.provenance.adjustment,
       );
     }
@@ -563,8 +706,37 @@ export class LocalDatabase {
          requested_from, requested_through
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const insertCoverage = this.database.prepare(
+      `INSERT OR REPLACE INTO live_market_coverage(
+         symbol, requested_from, requested_through, source, primary_source,
+         fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
+         result_status
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
     this.database.transaction(() => {
       for (const entry of entries) {
+        const requestedFrom =
+          entry.requestedFrom ?? entry.prices[0]?.date;
+        const requestedThrough =
+          entry.requestedThrough ??
+          entry.prices.at(-1)?.date ??
+          entry.provenance.dataCutoff;
+        if (!requestedFrom || !requestedThrough) {
+          throw new Error("行情覆盖记录缺少请求起止日期");
+        }
+        insertCoverage.run(
+          entry.symbol,
+          requestedFrom,
+          requestedThrough,
+          entry.provenance.source,
+          entry.provenance.primarySource ?? "tencent",
+          entry.provenance.fallbackUsed ? 1 : 0,
+          entry.provenance.fallbackReason ?? null,
+          entry.provenance.fetchedAt,
+          entry.provenance.dataCutoff,
+          entry.provenance.adjustment,
+          entry.prices.length ? "data" : "empty",
+        );
         for (const row of entry.prices) {
           insertPrice.run(
             entry.symbol,
@@ -575,10 +747,10 @@ export class LocalDatabase {
             entry.provenance.fallbackUsed ? 1 : 0,
             entry.provenance.fallbackReason ?? null,
             entry.provenance.fetchedAt,
-            entry.provenance.dataCutoff,
+            entry.provenance.dataCutoff ?? row.date,
             entry.provenance.adjustment,
-            entry.requestedFrom ?? entry.prices[0]?.date ?? entry.provenance.dataCutoff,
-            entry.requestedThrough ?? entry.provenance.dataCutoff,
+            requestedFrom,
+            requestedThrough,
           );
         }
       }
@@ -628,6 +800,52 @@ export class LocalDatabase {
       adjustment: row.adjustment,
       requestedFrom: row.requested_from,
       requestedThrough: row.requested_through,
+    }));
+  }
+
+  listLiveMarketCoverage(
+    symbols?: readonly string[],
+  ): StoredMarketCoverage[] {
+    const parameters = symbols ? [...symbols] : [];
+    if (symbols && !symbols.length) return [];
+    const where = symbols
+      ? `WHERE symbol IN (${symbols.map(() => "?").join(", ")})`
+      : "";
+    return rows<{
+      symbol: string;
+      requested_from: string;
+      requested_through: string;
+      source: "tencent" | "sina";
+      primary_source: "tencent";
+      fallback_used: number;
+      fallback_reason: string | null;
+      fetched_at: string;
+      data_cutoff: string | null;
+      adjustment: "none" | "qfq";
+      result_status: "data" | "empty";
+    }>(
+      this.database,
+      `SELECT symbol, requested_from, requested_through, source,
+              primary_source, fallback_used, fallback_reason, fetched_at,
+              data_cutoff, adjustment, result_status
+       FROM live_market_coverage
+       ${where}
+       ORDER BY symbol, requested_from, requested_through`,
+      parameters,
+    ).map((row) => ({
+      symbol: row.symbol,
+      requestedFrom: row.requested_from,
+      requestedThrough: row.requested_through,
+      source: row.source,
+      primarySource: row.primary_source,
+      fallbackUsed: Boolean(row.fallback_used),
+      ...(row.fallback_reason
+        ? { fallbackReason: row.fallback_reason }
+        : {}),
+      fetchedAt: row.fetched_at,
+      dataCutoff: row.data_cutoff,
+      adjustment: row.adjustment,
+      resultStatus: row.result_status,
     }));
   }
 
@@ -750,6 +968,14 @@ export class LocalDatabase {
                 adjustment, requested_from, requested_through
          FROM live_market_prices ORDER BY symbol, trade_date`,
       ),
+      liveMarketCoverage: rows(
+        this.database,
+        `SELECT symbol, requested_from, requested_through, source,
+                primary_source, fallback_used, fallback_reason, fetched_at,
+                data_cutoff, adjustment, result_status
+         FROM live_market_coverage
+         ORDER BY symbol, requested_from, requested_through`,
+      ),
       corporateActions: rows(
         this.database,
         "SELECT symbol, event_date, payload_json FROM corporate_actions ORDER BY symbol, event_date",
@@ -772,6 +998,9 @@ export class LocalDatabase {
       ) ||
       !Array.isArray((payload as Partial<BackupPayload>).marketPrices) ||
       !Array.isArray((payload as Partial<BackupPayload>).liveMarketPrices) ||
+      !Array.isArray(
+        (payload as Partial<BackupPayload>).liveMarketCoverage,
+      ) ||
       !Array.isArray((payload as Partial<BackupPayload>).corporateActions) ||
       !Array.isArray((payload as Partial<BackupPayload>).stockUniverse)
     ) {
@@ -794,6 +1023,7 @@ export class LocalDatabase {
     const invalidMarketRow = [
       ...backup.marketPrices,
       ...backup.liveMarketPrices,
+      ...backup.liveMarketCoverage,
     ].some(
       (row) =>
         !["tencent", "sina"].includes(row.source) ||
@@ -804,6 +1034,17 @@ export class LocalDatabase {
     if (invalidMarketRow) {
       throw new Error("备份包含非法行情来源或复权口径");
     }
+    if (
+      backup.liveMarketCoverage.some(
+        (row) =>
+          !["data", "empty"].includes(row.result_status) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_from) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_through) ||
+          row.requested_from > row.requested_through,
+      )
+    ) {
+      throw new Error("备份包含非法行情覆盖记录");
+    }
     this.database.transaction(() => {
       this.database.exec(`
         DELETE FROM ledger_entries;
@@ -811,6 +1052,7 @@ export class LocalDatabase {
         DELETE FROM backtest_experiments;
         DELETE FROM market_prices;
         DELETE FROM live_market_prices;
+        DELETE FROM live_market_coverage;
         DELETE FROM corporate_actions;
         DELETE FROM settings;
         DELETE FROM stock_universe;
@@ -872,6 +1114,28 @@ export class LocalDatabase {
           row.adjustment,
           row.requested_from,
           row.requested_through,
+        );
+      }
+      const insertCoverage = this.database.prepare(
+        `INSERT INTO live_market_coverage(
+           symbol, requested_from, requested_through, source, primary_source,
+           fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
+           result_status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const row of backup.liveMarketCoverage) {
+        insertCoverage.run(
+          row.symbol,
+          row.requested_from,
+          row.requested_through,
+          row.source,
+          row.primary_source,
+          row.fallback_used,
+          row.fallback_reason,
+          row.fetched_at,
+          row.data_cutoff,
+          row.adjustment,
+          row.result_status,
         );
       }
       const insertAction = this.database.prepare(

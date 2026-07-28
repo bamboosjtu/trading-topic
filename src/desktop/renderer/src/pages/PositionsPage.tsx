@@ -239,7 +239,6 @@ export function PositionsPage() {
               { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "持仓市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
               { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出净收入 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
               { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
-              { label: "投资总收益率", value: percent(overview.data.metrics.totalReturnRate, true), helper: "投资总收益 / 正的净投入", icon: <FundOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.totalReturnRate) },
               { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: "按实际现金流日期年化", icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
             ]}
           />

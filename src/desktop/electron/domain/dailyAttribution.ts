@@ -6,6 +6,7 @@ import type { StoredMarketPrice } from "../storage/database";
 import { addDays, validDate } from "./dateUtils";
 import { roundMoney } from "./finance";
 import {
+  canonicalLedgerOrder,
   ledgerEntryAmount,
   reduceLedger,
 } from "./ledgerReducer";
@@ -75,18 +76,69 @@ function emptyContribution(): ContributionAttribution {
 export function buildDailyAttribution(
   entries: readonly LedgerEntry[],
   pricesBySymbol: Map<string, StoredMarketPrice[]>,
-  cutoff: string | null,
+  factAsOfDate: string,
+  valuationCutoff: string | null,
   names: Map<string, string>,
 ): DailyAttribution[] {
-  if (!cutoff) return [];
+  const holdingIntervals = new Map<
+    string,
+    Array<{ startDate: string; endDate: string }>
+  >();
+  const quantities = new Map<string, number>();
+  const starts = new Map<string, string>();
+  for (const entry of [...entries].sort(canonicalLedgerOrder)) {
+    if (
+      entry.businessDate > factAsOfDate ||
+      !entry.symbol ||
+      (entry.type !== "buy" && entry.type !== "sell")
+    ) {
+      continue;
+    }
+    const before = quantities.get(entry.symbol) ?? 0;
+    const after =
+      before +
+      (entry.type === "buy"
+        ? (entry.quantity ?? 0)
+        : -(entry.quantity ?? 0));
+    if (before <= 1e-8 && after > 1e-8) {
+      starts.set(entry.symbol, entry.businessDate);
+    }
+    if (before > 1e-8 && after <= 1e-8) {
+      const startDate = starts.get(entry.symbol);
+      if (startDate) {
+        const current = holdingIntervals.get(entry.symbol) ?? [];
+        current.push({ startDate, endDate: entry.businessDate });
+        holdingIntervals.set(entry.symbol, current);
+      }
+      starts.delete(entry.symbol);
+    }
+    quantities.set(entry.symbol, Math.max(0, after));
+  }
+  for (const [symbol, startDate] of starts) {
+    const current = holdingIntervals.get(symbol) ?? [];
+    current.push({ startDate, endDate: factAsOfDate });
+    holdingIntervals.set(symbol, current);
+  }
+
   const dates = new Set<string>();
-  for (const rows of pricesBySymbol.values()) {
+  for (const [symbol, rows] of pricesBySymbol) {
+    const intervals = holdingIntervals.get(symbol) ?? [];
     for (const row of rows) {
-      if (row.date <= cutoff) dates.add(row.date);
+      if (
+        valuationCutoff &&
+        row.date <= valuationCutoff &&
+        row.date <= factAsOfDate &&
+        intervals.some(
+          (interval) =>
+            interval.startDate <= row.date && interval.endDate >= row.date,
+        )
+      ) {
+        dates.add(row.date);
+      }
     }
   }
   for (const entry of entries) {
-    if (entry.businessDate <= cutoff) dates.add(entry.businessDate);
+    if (entry.businessDate <= factAsOfDate) dates.add(entry.businessDate);
   }
   const orderedDates = [...dates].filter(validDate).sort();
   if (!orderedDates.length) return [];
@@ -100,7 +152,7 @@ export function buildDailyAttribution(
   const closingByDate = new Map<string, Map<string, number>>();
   for (const [symbol, rows] of pricesBySymbol) {
     for (const row of rows) {
-      if (row.date > cutoff) continue;
+      if (!valuationCutoff || row.date > valuationCutoff) continue;
       const current = closingByDate.get(row.date) ?? new Map<string, number>();
       current.set(symbol, row.close);
       closingByDate.set(row.date, current);
@@ -161,7 +213,8 @@ export function buildDailyAttribution(
       const needsOfficialClose =
         Boolean(todaysPrices?.size) ||
         hasTradeToday ||
-        (date === cutoff && (openingQuantity > 1e-8 || closingQuantity > 1e-8));
+        (date === valuationCutoff &&
+          (openingQuantity > 1e-8 || closingQuantity > 1e-8));
       const item = contributions.get(symbol) ?? emptyContribution();
 
       if (

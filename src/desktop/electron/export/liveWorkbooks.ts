@@ -52,7 +52,6 @@ export async function buildPositionsWorkbook(
     { header: "已实现盈亏", key: "realizedPnl", width: 16 },
     { header: "累计分红", key: "cumulativeDividend", width: 16 },
     { header: "投资总收益", key: "totalReturn", width: 16 },
-    { header: "投资总收益率", key: "totalReturnRate", width: 16 },
     { header: "XIRR", key: "xirr", width: 14 },
     { header: "数据截止", key: "dataCutoff", width: 14 },
     { header: "数据状态", key: "quality", width: 12 },
@@ -82,7 +81,6 @@ export async function buildPositionsWorkbook(
     sheet.getColumn(key).numFmt = "0.000";
   }
   sheet.getColumn("quantity").numFmt = "#,##0.00";
-  sheet.getColumn("totalReturnRate").numFmt = "0.00%;[Green]-0.00%";
   sheet.getColumn("xirr").numFmt = "0.00%;[Green]-0.00%";
   styleWorksheet(sheet);
   const provenance = workbook.addWorksheet("行情来源");
@@ -220,10 +218,10 @@ export async function buildLedgerWorkbook(
     { header: "修正后记录", key: "isCorrection", width: 14 },
     { header: "每股分红", key: "perShare", width: 14 },
     { header: "登记日", key: "recordDate", width: 14 },
-    { header: "到账日", key: "paymentDate", width: 14 },
     { header: "录入时间", key: "recordedAt", width: 26 },
     { header: "修正时间", key: "correctedAt", width: 26 },
-    { header: "关联分组", key: "linkedGroupId", width: 38 },
+    { header: "关联操作", key: "linkedOperation", width: 20 },
+    { header: "关联记录", key: "linkedRecords", width: 32 },
   ];
   for (const row of result.rows) {
     sheet.addRow({
@@ -236,6 +234,16 @@ export async function buildLedgerWorkbook(
             : null,
       isReversed: row.isReversed ? "是" : "否",
       isCorrection: row.correctsEntryId ? "是" : "否",
+      linkedOperation:
+        row.linkedOperation === "dividend_reinvestment"
+          ? "分红并再投入"
+          : null,
+      linkedRecords: row.linkedRecords
+        .map(
+          (linked) =>
+            `${linked.type === "dividend" ? "分红到账" : "买入"} ${linked.businessDate}`,
+        )
+        .join("；"),
     });
   }
   for (const key of ["amount", "fee", "perShare"]) {

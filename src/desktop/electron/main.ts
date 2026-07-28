@@ -140,6 +140,9 @@ function registerIpc(): void {
   ipcMain.handle("ledger:query", (_event, query: LedgerQuery) =>
     service.queryLedger(query),
   );
+  ipcMain.handle("ledger:record:get", (_event, entryId: string) =>
+    service.getLedgerRecord(entryId),
+  );
   ipcMain.handle("ledger:export", async (_event, query: LedgerQuery) => {
     const firstPage = service.queryLedger({ ...query, page: 1, pageSize: 100 });
     const rows = [...firstPage.rows];
@@ -189,6 +192,11 @@ function registerIpc(): void {
   );
   ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>
     service.addLedger(input),
+  );
+  ipcMain.handle(
+    "ledger:dividend-reinvestment:preview",
+    (_event, input: DividendReinvestmentInput) =>
+      service.previewDividendReinvestment(input),
   );
   ipcMain.handle(
     "ledger:dividend-reinvestment:add",

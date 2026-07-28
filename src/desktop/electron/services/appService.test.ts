@@ -524,7 +524,7 @@ describe("AppService 实盘流水", () => {
       securityType: "stock",
       dividendDate: "2026-07-10",
       dividendAmount: 300,
-      reinvestmentDate: "2026-07-11",
+      reinvestmentDate: "2026-07-13",
       buyPrice: 6,
       buyQuantity: 60,
       fee: 1,
@@ -551,10 +551,20 @@ describe("AppService 实盘流水", () => {
       cumulativeBuySpend: 361,
       netInvestment: 61,
     });
+    expect(service.getLedgerRecord(result.dividend.id)).toMatchObject({
+      linkedOperation: "dividend_reinvestment",
+      linkedRecords: [
+        {
+          id: result.buy.id,
+          type: "buy",
+          businessDate: "2026-07-13",
+        },
+      ],
+    });
 
     const replacement = service.correctLedger(result.buy.id, {
       type: "buy",
-      businessDate: "2026-07-11",
+      businessDate: "2026-07-13",
       symbol: "601398",
       instrumentName: "工商银行",
       securityType: "stock",
@@ -563,6 +573,41 @@ describe("AppService 实盘流水", () => {
       fee: 1,
     });
     expect(replacement.linkedGroupId).toBe(result.linkedGroupId);
+  });
+
+  it("分红并再投入在领域层拒绝倒序日期，并返回两条事实的合并影响预览", async () => {
+    const { service, database } = await serviceWithDatabase();
+    expect(() =>
+      service.previewDividendReinvestment({
+        symbol: "601398",
+        dividendDate: "2026-07-14",
+        dividendAmount: 300,
+        reinvestmentDate: "2026-07-13",
+        buyPrice: 5,
+        buyQuantity: 60,
+      }),
+    ).toThrow("再投入日期不得早于分红到账日期");
+    const preview = service.previewDividendReinvestment({
+      symbol: "601398",
+      dividendDate: "2026-07-10",
+      dividendAmount: 300,
+      reinvestmentDate: "2026-07-13",
+      buyPrice: 5,
+      buyQuantity: 60,
+      fee: 1,
+    });
+    expect(preview.before).toMatchObject({
+      holdingQuantity: 0,
+      cumulativeDividend: 0,
+      cumulativeBuySpend: 0,
+    });
+    expect(preview.after).toMatchObject({
+      holdingQuantity: 60,
+      cumulativeDividend: 300,
+      cumulativeBuySpend: 301,
+      netInvestment: 1,
+    });
+    expect(database.listLedger()).toEqual([]);
   });
 
   it("追加修正原子保留原记录、冲正记录与修正后记录", async () => {

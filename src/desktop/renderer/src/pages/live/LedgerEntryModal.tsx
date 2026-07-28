@@ -37,7 +37,6 @@ interface LedgerFormValues {
   fee?: number;
   perShare?: number;
   recordDate?: Dayjs;
-  paymentDate?: Dayjs;
   note?: string;
 }
 
@@ -54,7 +53,6 @@ function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
     fee: row.fee,
     perShare: row.perShare ?? undefined,
     recordDate: row.recordDate ? dayjs(row.recordDate) : undefined,
-    paymentDate: row.paymentDate ? dayjs(row.paymentDate) : undefined,
     note: row.note ?? undefined,
   };
 }
@@ -72,7 +70,6 @@ function toLedgerInput(values: LedgerFormValues): LedgerEntryInput {
     fee: values.fee,
     perShare: values.perShare,
     recordDate: values.recordDate?.format("YYYY-MM-DD"),
-    paymentDate: values.paymentDate?.format("YYYY-MM-DD"),
     note: values.note?.trim(),
   };
 }
@@ -246,13 +243,14 @@ export function LedgerEntryModal({
             <Select options={DIRECT_ENTRY_TYPE_OPTIONS} />
           </Form.Item>
           <Form.Item
-            label="业务日期"
+            label={entryType === "dividend" ? "分红到账日" : "业务日期"}
             name="businessDate"
             rules={[{ required: true, message: "请选择业务日期" }]}
           >
             <DatePicker
               disabledDate={(value) =>
-                value.format("YYYY-MM-DD") > currentMarketDate()
+                value.format("YYYY-MM-DD") > currentMarketDate() ||
+                (isTrade && (value.day() === 0 || value.day() === 6))
               }
             />
           </Form.Item>
@@ -352,9 +350,6 @@ export function LedgerEntryModal({
                 <InputNumber min={0} precision={6} prefix="¥" />
               </Form.Item>
               <Form.Item label="股权登记日（可选）" name="recordDate">
-                <DatePicker />
-              </Form.Item>
-              <Form.Item label="分红到账日（可选）" name="paymentDate">
                 <DatePicker />
               </Form.Item>
             </>

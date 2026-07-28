@@ -14,11 +14,13 @@ import {
 import dayjs, { type Dayjs } from "dayjs";
 import type {
   DividendReinvestmentInput,
+  DividendReinvestmentPreview,
   SecurityType,
   StockInfo,
 } from "../../api/client";
 import { api } from "../../api/client";
 import { currentMarketDate } from "../../../../shared/marketDate";
+import { money, numberValue } from "./liveFormat";
 
 interface Values {
   symbol: string;
@@ -48,6 +50,10 @@ export function DividendReinvestmentModal({
 }) {
   const { message } = App.useApp();
   const [form] = Form.useForm<Values>();
+  const dividendDate = Form.useWatch("dividendDate", form);
+  const [preview, setPreview] =
+    useState<DividendReinvestmentPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const stockBySymbol = useMemo(
     () => new Map(stocks.map((stock) => [stock.symbol, stock])),
@@ -64,6 +70,7 @@ export function DividendReinvestmentModal({
 
   useEffect(() => {
     if (!open) return;
+    setPreview(null);
     form.resetFields();
     const today = dayjs(currentMarketDate());
     form.setFieldsValue({
@@ -74,11 +81,9 @@ export function DividendReinvestmentModal({
     });
   }, [form, open]);
 
-  const submit = async () => {
-    try {
-      setSaving(true);
-      const values = await form.validateFields();
-      const input: DividendReinvestmentInput = {
+  const readInput = async (): Promise<DividendReinvestmentInput> => {
+    const values = await form.validateFields();
+    return {
         symbol: values.symbol.trim(),
         instrumentName: values.instrumentName.trim(),
         securityType: values.securityType,
@@ -91,7 +96,30 @@ export function DividendReinvestmentModal({
         buyQuantity: values.buyQuantity,
         fee: values.fee,
         note: values.note?.trim(),
-      };
+    };
+  };
+
+  const runPreview = async (): Promise<DividendReinvestmentPreview | null> => {
+    try {
+      setPreviewing(true);
+      const result = await api.previewDividendReinvestment(await readInput());
+      setPreview(result);
+      return result;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : String(error));
+      setPreview(null);
+      return null;
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const submit = async () => {
+    try {
+      setSaving(true);
+      const checked = await runPreview();
+      if (!checked) return;
+      const input = await readInput();
       await api.addDividendReinvestment(input);
       message.success("分红与再投入买入已在同一事务中保存");
       onSaved();
@@ -116,7 +144,21 @@ export function DividendReinvestmentModal({
         <Button key="cancel" disabled={saving} onClick={onClose}>
           取消
         </Button>,
-        <Button key="save" type="primary" loading={saving} onClick={() => void submit()}>
+        <Button
+          key="preview"
+          loading={previewing && !saving}
+          disabled={saving}
+          onClick={() => void runPreview()}
+        >
+          校验并预览
+        </Button>,
+        <Button
+          key="save"
+          type="primary"
+          loading={saving}
+          disabled={!preview}
+          onClick={() => void submit()}
+        >
           保存两条关联事实
         </Button>,
       ]}
@@ -126,7 +168,12 @@ export function DividendReinvestmentModal({
         type="info"
         message="系统会原子写入一条分红事实和一条买入事实。买入支出超过分红的部分自然计入累计净投入。"
       />
-      <Form form={form} layout="vertical" requiredMark="optional">
+      <Form
+        form={form}
+        layout="vertical"
+        requiredMark="optional"
+        onValuesChange={() => setPreview(null)}
+      >
         <div className="ledger-form-grid">
           <Form.Item
             label="证券代码"
@@ -176,7 +223,11 @@ export function DividendReinvestmentModal({
             name="dividendDate"
             rules={[{ required: true }]}
           >
-            <DatePicker />
+            <DatePicker
+              disabledDate={(value) =>
+                value.format("YYYY-MM-DD") > currentMarketDate()
+              }
+            />
           </Form.Item>
           <Form.Item
             label="分红到账金额"
@@ -194,9 +245,30 @@ export function DividendReinvestmentModal({
           <Form.Item
             label="再投入日期"
             name="reinvestmentDate"
-            rules={[{ required: true }]}
+            dependencies={["dividendDate"]}
+            rules={[
+              { required: true },
+              {
+                validator: async (_, value?: Dayjs) => {
+                  if (
+                    value &&
+                    dividendDate &&
+                    value.isBefore(dividendDate, "day")
+                  ) {
+                    throw new Error("再投入日期不得早于分红到账日期");
+                  }
+                },
+              },
+            ]}
           >
-            <DatePicker />
+            <DatePicker
+              disabledDate={(value) =>
+                value.format("YYYY-MM-DD") > currentMarketDate() ||
+                value.day() === 0 ||
+                value.day() === 6 ||
+                Boolean(dividendDate && value.isBefore(dividendDate, "day"))
+              }
+            />
           </Form.Item>
           <Form.Item
             label="买入价格"
@@ -220,6 +292,57 @@ export function DividendReinvestmentModal({
           </Form.Item>
         </div>
       </Form>
+      <section className="ledger-impact-panel">
+        <div className="ledger-impact-heading">
+          <strong>原子操作影响预览</strong>
+          <span>
+            {preview
+              ? "分红与再投入买入均校验通过"
+              : "保存前必须校验两条关联事实的合并影响。"}
+          </span>
+        </div>
+        {preview ? (
+          <>
+            <div className="ledger-impact-grid">
+              <div>
+                <span>标的数量</span>
+                <strong className="tabular-nums">
+                  {numberValue(preview.before.holdingQuantity)} <i>→</i>{" "}
+                  {numberValue(preview.after.holdingQuantity)}
+                </strong>
+              </div>
+              <div>
+                <span>累计分红</span>
+                <strong className="tabular-nums">
+                  {money(preview.before.cumulativeDividend)} <i>→</i>{" "}
+                  {money(preview.after.cumulativeDividend)}
+                </strong>
+              </div>
+              <div>
+                <span>累计买入支出</span>
+                <strong className="tabular-nums">
+                  {money(preview.before.cumulativeBuySpend)} <i>→</i>{" "}
+                  {money(preview.after.cumulativeBuySpend)}
+                </strong>
+              </div>
+              <div>
+                <span>累计净投入</span>
+                <strong className="tabular-nums">
+                  {money(preview.before.netInvestment)} <i>→</i>{" "}
+                  {money(preview.after.netInvestment)}
+                </strong>
+              </div>
+            </div>
+            {preview.warnings.map((warning) => (
+              <Alert key={warning} showIcon type="warning" message={warning} />
+            ))}
+          </>
+        ) : (
+          <div className="ledger-impact-placeholder">
+            领域层会先预演分红到账，再以该状态预演买入；任一校验失败都不会写入。
+          </div>
+        )}
+      </section>
     </Modal>
   );
 }
