@@ -15,7 +15,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent",
   dividendSource: "eastmoney",
@@ -31,6 +31,13 @@ interface BackupPayload {
   ledgerEntries: LedgerEntry[];
   backtestExperiments: BacktestExperiment[];
   marketPrices: Array<{
+    symbol: string;
+    trade_date: string;
+    close: number;
+    source: string;
+    fetched_at: string;
+  }>;
+  liveMarketPrices: Array<{
     symbol: string;
     trade_date: string;
     close: number;
@@ -99,7 +106,7 @@ export class LocalDatabase {
     const currentVersion = this.database.pragma("user_version", {
       simple: true,
     }) as number;
-    if (currentVersion < SCHEMA_VERSION) {
+    if (currentVersion < 5) {
       this.database.exec(`
         DROP TABLE IF EXISTS backtest_runs;
         DROP TABLE IF EXISTS backtest_results;
@@ -135,6 +142,14 @@ export class LocalDatabase {
         UNIQUE (experiment_id, symbol)
       );
       CREATE TABLE IF NOT EXISTS market_prices (
+        symbol TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        close REAL NOT NULL,
+        source TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (symbol, trade_date)
+      );
+      CREATE TABLE IF NOT EXISTS live_market_prices (
         symbol TEXT NOT NULL,
         trade_date TEXT NOT NULL,
         close REAL NOT NULL,
@@ -494,6 +509,74 @@ export class LocalDatabase {
     })();
   }
 
+  saveLiveMarketPriceSnapshots(entries: MarketDataCacheEntry[]): void {
+    const insertPrice = this.database.prepare(
+      "INSERT OR REPLACE INTO live_market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    this.database.transaction(() => {
+      for (const entry of entries) {
+        for (const row of entry.prices) {
+          insertPrice.run(
+            entry.symbol,
+            row.date,
+            row.close,
+            entry.source,
+            entry.fetchedAt,
+          );
+        }
+      }
+    })();
+  }
+
+  listLiveMarketPrices(symbols?: readonly string[]): StoredMarketPrice[] {
+    const parameters = symbols ? [...symbols] : [];
+    if (symbols && !symbols.length) return [];
+    const where = symbols
+      ? `WHERE symbol IN (${symbols.map(() => "?").join(", ")})`
+      : "";
+    return rows<{
+      symbol: string;
+      trade_date: string;
+      close: number;
+      source: string;
+      fetched_at: string;
+    }>(
+      this.database,
+      `SELECT symbol, trade_date, close, source, fetched_at
+       FROM live_market_prices
+       ${where}
+       ORDER BY symbol, trade_date`,
+      parameters,
+    ).map((row) => ({
+      symbol: row.symbol,
+      date: row.trade_date,
+      close: row.close,
+      source: row.source,
+      fetchedAt: row.fetched_at,
+    }));
+  }
+
+  latestLivePrices(): {
+    prices: Record<string, number>;
+    dataCutoff: string | null;
+  } {
+    const result = rows<{ symbol: string; trade_date: string; close: number }>(
+      this.database,
+      `SELECT p.symbol, p.trade_date, p.close
+       FROM live_market_prices p
+       JOIN (
+         SELECT symbol, MAX(trade_date) AS max_date
+         FROM live_market_prices GROUP BY symbol
+       ) latest ON latest.symbol = p.symbol AND latest.max_date = p.trade_date`,
+    );
+    return {
+      prices: Object.fromEntries(result.map((row) => [row.symbol, row.close])),
+      dataCutoff: result.length
+        ? result.map((row) => row.trade_date).sort().at(-1)!
+        : null,
+    };
+  }
+
   listMarketPrices(symbols?: readonly string[]): StoredMarketPrice[] {
     if (symbols !== undefined) {
       if (!symbols.length) return [];
@@ -570,6 +653,10 @@ export class LocalDatabase {
         this.database,
         "SELECT symbol, trade_date, close, source, fetched_at FROM market_prices ORDER BY symbol, trade_date",
       ),
+      liveMarketPrices: rows(
+        this.database,
+        "SELECT symbol, trade_date, close, source, fetched_at FROM live_market_prices ORDER BY symbol, trade_date",
+      ),
       corporateActions: rows(
         this.database,
         "SELECT symbol, event_date, payload_json FROM corporate_actions ORDER BY symbol, event_date",
@@ -591,6 +678,7 @@ export class LocalDatabase {
         (payload as Partial<BackupPayload>).backtestExperiments,
       ) ||
       !Array.isArray((payload as Partial<BackupPayload>).marketPrices) ||
+      !Array.isArray((payload as Partial<BackupPayload>).liveMarketPrices) ||
       !Array.isArray((payload as Partial<BackupPayload>).corporateActions) ||
       !Array.isArray((payload as Partial<BackupPayload>).stockUniverse)
     ) {
@@ -603,6 +691,7 @@ export class LocalDatabase {
         DELETE FROM backtest_results;
         DELETE FROM backtest_experiments;
         DELETE FROM market_prices;
+        DELETE FROM live_market_prices;
         DELETE FROM corporate_actions;
         DELETE FROM settings;
         DELETE FROM stock_universe;
@@ -628,6 +717,18 @@ export class LocalDatabase {
       );
       for (const row of backup.marketPrices) {
         insertPrice.run(
+          row.symbol,
+          row.trade_date,
+          row.close,
+          row.source,
+          row.fetched_at,
+        );
+      }
+      const insertLivePrice = this.database.prepare(
+        "INSERT INTO live_market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      );
+      for (const row of backup.liveMarketPrices) {
+        insertLivePrice.run(
           row.symbol,
           row.trade_date,
           row.close,

@@ -21,6 +21,7 @@ import type {
   StockInfo,
 } from "../../api/client";
 import { api } from "../../api/client";
+import { currentMarketDate } from "../../../../shared/marketDate";
 import { DIRECT_ENTRY_TYPE_OPTIONS } from "./liveConstants";
 import { money, numberValue } from "./liveFormat";
 
@@ -32,7 +33,7 @@ interface LedgerFormValues {
   instrumentName?: string;
   amount?: number;
   price?: number;
-  lots?: number;
+  quantity?: number;
   fee?: number;
   perShare?: number;
   recordDate?: Dayjs;
@@ -54,7 +55,7 @@ function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
     instrumentName: row.name ?? undefined,
     amount: row.amount ?? undefined,
     price: row.price ?? undefined,
-    lots: row.quantity === null ? undefined : row.quantity / 100,
+    quantity: row.quantity ?? undefined,
     fee: row.fee,
     perShare: row.perShare ?? undefined,
     recordDate: row.recordDate ? dayjs(row.recordDate) : undefined,
@@ -78,8 +79,7 @@ function toLedgerInput(values: LedgerFormValues): LedgerEntryInput {
     instrumentName: values.instrumentName?.trim(),
     amount: values.amount,
     price: values.price,
-    quantity:
-      values.lots === undefined ? undefined : Math.round(values.lots * 100),
+    quantity: values.quantity,
     fee: values.fee,
     perShare: values.perShare,
     recordDate: values.recordDate?.format("YYYY-MM-DD"),
@@ -161,7 +161,7 @@ export function LedgerEntryModal({
         ? rowToForm(correctionTarget)
         : {
             type: "buy",
-            businessDate: dayjs(),
+            businessDate: dayjs(currentMarketDate()),
             securityType: "stock",
             fee: 0,
           },
@@ -179,18 +179,6 @@ export function LedgerEntryModal({
       const input = await readInput();
       const result = await api.previewLedger(input, correctionTarget?.id);
       setPreview(result);
-      if (result.normalizedInput.maturityDate) {
-        form.setFieldValue(
-          "maturityDate",
-          dayjs(result.normalizedInput.maturityDate),
-        );
-      }
-      if (result.normalizedInput.maturityAmount !== undefined) {
-        form.setFieldValue(
-          "maturityAmount",
-          result.normalizedInput.maturityAmount,
-        );
-      }
       return result;
     } catch (error) {
       if (error instanceof Error) message.error(error.message);
@@ -281,7 +269,11 @@ export function LedgerEntryModal({
             name="businessDate"
             rules={[{ required: true, message: "请选择业务日期" }]}
           >
-            <DatePicker />
+            <DatePicker
+              disabledDate={(value) =>
+                value.format("YYYY-MM-DD") > currentMarketDate()
+              }
+            />
           </Form.Item>
           {isSecurityEntry ? (
             <>
@@ -341,9 +333,14 @@ export function LedgerEntryModal({
           {isTrade ? (
             <>
               <Form.Item
-                label="数量（手）"
-                name="lots"
-                rules={[{ required: true, message: "请输入成交手数" }]}
+                label="数量 / 份额"
+                name="quantity"
+                rules={[{ required: true, message: "请输入实际成交数量" }]}
+                extra={
+                  entryType === "buy"
+                    ? "股票买入通常为 100 股整数倍；零股、ETF 份额和修正事实按实际数量录入。"
+                    : "卖出允许录入不超过可用持仓的实际整数数量。"
+                }
               >
                 <InputNumber min={1} precision={0} />
               </Form.Item>
@@ -400,24 +397,33 @@ export function LedgerEntryModal({
               <Form.Item
                 label="成交年化收益率"
                 name="annualRatePercent"
-                rules={[{ required: true, message: "请输入成交年化收益率" }]}
+                extra="辅助信息，不参与到期事实计算。"
               >
                 <InputNumber min={0} precision={4} suffix="%" />
               </Form.Item>
               <Form.Item
                 label="期限（天）"
                 name="termDays"
-                rules={[{ required: true, message: "请输入期限" }]}
+                extra="名义期限，仅作记录。"
               >
                 <InputNumber min={1} precision={0} />
               </Form.Item>
               <Form.Item label="费用" name="fee">
                 <InputNumber min={0} precision={2} prefix="¥" />
               </Form.Item>
-              <Form.Item label="到期日（可自动计算）" name="maturityDate">
+              <Form.Item
+                label="实际到期日"
+                name="maturityDate"
+                rules={[{ required: true, message: "请输入实际到期日" }]}
+              >
                 <DatePicker />
               </Form.Item>
-              <Form.Item label="到期金额（可自动计算）" name="maturityAmount">
+              <Form.Item
+                label="实际到期金额"
+                name="maturityAmount"
+                rules={[{ required: true, message: "请输入实际到期金额" }]}
+                extra="请输入券商最终结算金额；系统不会按自然日自动推导。"
+              >
                 <InputNumber min={0} precision={2} prefix="¥" />
               </Form.Item>
             </>

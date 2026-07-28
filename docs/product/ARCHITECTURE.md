@@ -112,7 +112,7 @@ src/desktop/
 - 配股属于 R1 已报告但不参与的公司行动：结果记录事件和“不追加资金”假设，不复权价格保留除权后的市场影响。其他无法确定处理口径的公司行动必须阻断。
 - 前复权 K 线是独立的非证据型浏览数据，但新实验仍要求数据源返回结构完整的真实 OHLCV；响应异常时终止实验。历史快照缺失时使用 `unavailable/error` 状态说明原因；严禁用不复权收盘价伪造 OHLC。
 - 日 K 直接展示真实前复权数据；周 K、月 K 由日线聚合：开盘取首日开盘、最高/最低取周期极值、收盘取末日收盘、成交量求和。
-- 已有 SQLite 快照仍可供账户估值和历史结果查看。
+- 回测证据缓存与实盘估值缓存物理隔离：`market_prices` 只服务回测试验，`live_market_prices` 只服务持仓与收益日历。实盘结果不得因为用户曾运行过回测而偶然变完整。
 
 ## 7. SQLite 与本地文件
 
@@ -130,9 +130,10 @@ rebuild，避免同一版本再次下载或对同一 ABI 再次本地编译。
 - 历史摘要查询只返回最近 500 次实验，界面必须明确这一窗口；上限不代表数据库只保存 500 次。
 - 回测详情只从 `backtest_results` 的结果快照转换，不重新联网或二次模拟。
 - XLSX 在 Electron 主进程按实验生成：汇总 sheet 后跟该实验每个标的的明细 sheet，渲染层只通过受限 IPC 发起保存。
-- 持仓与收益日历通过 `PositionsOverview` 和 `IncomeCalendarView` 只读消费领域结果；交易流水页通过 `LedgerQueryResult` 查询事实，并通过 `previewLedger / addLedger / correctLedger / reverseLedger` 四类受限命令写入账本。累计收益、区间表现、月度/累计/年内收益、价格与分红归因均在 `electron/domain/livePortfolio.ts` 计算；录入校验、成交金额、现金/持仓/成本/分红/待到账资产影响摘要由 `electron/domain/ledgerCommands.ts` 返回，Renderer 只负责表单、筛选、格式化和布局。
+- 持仓与收益日历通过 `PositionsOverview` 和 `IncomeCalendarView` 只读消费领域结果；交易流水页通过 `LedgerQueryResult` 查询事实，并通过 `previewLedger / addLedger / correctLedger / reverseLedger` 四类受限命令写入账本。`ledgerReducer.ts` 是唯一账本归约实现，统一同日顺序、冲正/修正、显式截止日、持仓、现金和逆回购本金；`ledgerCommands.ts` 只负责命令校验与影响预览；`ledgerQuery.ts`、`positionsView.ts`、`dailyAttribution.ts`、`incomeCalendar.ts` 分别负责流水查询、持仓视图、日度四项归因和收益日历汇总，不得复制账本公式。Renderer 只负责表单、筛选、格式化和布局。
 - 普通录入只接受资金转入/转出、买入、卖出、现金分红和国债逆回购；`adjustment` 不能从普通表单创建。追加修正以一个 SQLite 事务写入“撤销原影响”的 adjustment 和修正后事实；冲正只追加 adjustment。原记录不覆盖、不删除，重复冲正或会造成历史卖空的变更会在落库前拒绝。
-- 本地行情刷新只针对当前有效持仓；全部标的获取成功后通过一个 SQLite 事务提交，失败时保留旧快照。缺失行情不得回退到持仓成本冒充市值，相关金额和比率返回 `null` 并进入 `partial`。
+- 持仓页按当前有效持仓补齐最近 13 个月实盘行情；收益日历按所选月份、前一有效估值以及从首笔持仓事实开始的累计收益需求增量补齐，包含历史已清仓标的的实际持有区间。已清仓标的后续缺行情不得截断其他持仓，只有当日实际持有且缺少可用估值的标的会把对应日期标为 `partial`。缺失行情不得回退到持仓成本冒充市值。
+- `recordedAt` 使用 UTC ISO 时间戳；业务日期统一由 `currentMarketDate("Asia/Shanghai")` 生成。普通流水拒绝未来业务日期，逆回购只有实际到期日可以位于未来；任一账本视图必须显式传入 `asOfDate` 并过滤未来事实。
 - 实盘查询统一返回 `ready / empty / stale / partial` 质量状态；IPC 或数据库异常通过 rejected Promise 进入页面 `error`。三个页面不以空数组同时表示加载、错误和无数据。
 - 持仓、流水和收益日历 XLSX 均在主进程生成；Renderer 不接触文件路径和文件系统。
 
@@ -153,7 +154,7 @@ rebuild，避免同一版本再次下载或对同一 ABI 再次本地编译。
 | 构建     | `npm run build`，验证 main、preload、renderer 三个入口                                                                |
 | Windows 打包 | `npm run pack:portable`，生成无需安装的 x64 portable EXE 到 `src/desktop/release/`                                  |
 | 隔离扫描 | `src/desktop/` 不含 Python，不引用、执行或读取 Labs、Research                                                         |
-| 持久化   | 每次运行新增不可变实验、结果归属与删除、实验与共享行情缓存原子回滚、工作区活动实验和股票目录重开恢复、四标的完整冷启动链路、schema v5 备份恢复 |
+| 持久化   | 每次运行新增不可变实验、结果归属与删除、实验缓存原子回滚、回测/实盘行情隔离、工作区活动实验和股票目录重开恢复、四标的完整冷启动链路、schema v6 备份恢复 |
 | 导出     | XLSX 汇总字段与每个“标的 + 参数”明细 sheet 名称、内容                                                                 |
-| 实盘领域 | 流水字段与精度校验、影响预览、修正/冲正原子追加、持仓成本/估值/缺行情、冲正后的流水汇总、价格与分红日度归因、月度和累计指标 |
+| 实盘领域 | 唯一同日排序、显式截止日、未来日期拒绝、实际股数/份额、逆回购本金/到期收益、影响预览、修正/冲正原子追加、已清仓标的不截断、四项日度收益恒等式、月度和累计指标 |
 | 界面冒烟 | 1920×1080 下回测双 Tab，以及持仓筛选/详情、流水录入/影响预览/筛选/分页/详情/修正/冲正、收益日历/标的贡献；3840×2160 下保持字号尺度并扩展内容 |

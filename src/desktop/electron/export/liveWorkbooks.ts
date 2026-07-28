@@ -91,8 +91,10 @@ export async function buildIncomeCalendarWorkbook(
     { header: "日期", key: "date", width: 14 },
     { header: "范围", key: "scope", width: 18 },
     { header: "当日总收益", key: "totalPnl", width: 16 },
-    { header: "价格变动收益", key: "pricePnl", width: 18 },
+    { header: "市场价格收益", key: "marketPricePnl", width: 18 },
     { header: "分红收益", key: "dividendPnl", width: 16 },
+    { header: "交易影响", key: "tradingCostPnl", width: 16 },
+    { header: "逆回购收益", key: "reverseRepoIncome", width: 16 },
     { header: "当日收益率", key: "returnRate", width: 14 },
     { header: "行情状态", key: "marketStatus", width: 14 },
     { header: "事件数", key: "eventCount", width: 10 },
@@ -109,7 +111,13 @@ export async function buildIncomeCalendarWorkbook(
       eventCount: day.events.length,
     });
   }
-  for (const key of ["totalPnl", "pricePnl", "dividendPnl"]) {
+  for (const key of [
+    "totalPnl",
+    "marketPricePnl",
+    "dividendPnl",
+    "tradingCostPnl",
+    "reverseRepoIncome",
+  ]) {
     days.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
   }
   days.getColumn("returnRate").numFmt = "0.00%;[Green]-0.00%";
@@ -121,8 +129,9 @@ export async function buildIncomeCalendarWorkbook(
     { header: "证券代码", key: "symbol", width: 12 },
     { header: "证券名称", key: "name", width: 18 },
     { header: "持仓变动", key: "holdingChange", width: 14 },
-    { header: "价格变动收益", key: "pricePnl", width: 18 },
+    { header: "市场价格收益", key: "marketPricePnl", width: 18 },
     { header: "分红收益", key: "dividendPnl", width: 16 },
+    { header: "交易影响", key: "tradingCostPnl", width: 16 },
     { header: "总收益", key: "totalPnl", width: 16 },
   ];
   for (const day of view.days) {
@@ -130,7 +139,12 @@ export async function buildIncomeCalendarWorkbook(
       contributions.addRow({ date: day.date, ...row });
     }
   }
-  for (const key of ["pricePnl", "dividendPnl", "totalPnl"]) {
+  for (const key of [
+    "marketPricePnl",
+    "dividendPnl",
+    "tradingCostPnl",
+    "totalPnl",
+  ]) {
     contributions.getColumn(key).numFmt =
       '¥#,##0.00;[Red]-¥#,##0.00';
   }

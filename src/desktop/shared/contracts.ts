@@ -434,8 +434,12 @@ export interface IncomeContribution {
   symbol: string;
   name: string;
   holdingChange: number;
-  pricePnl: number | null;
+  marketPricePnl: number | null;
   dividendPnl: number;
+  /** 成交价与当日估值价之差及手续费；费用、不利成交为负。 */
+  tradingCostPnl: number;
+  /** 单标的贡献固定为 0；逆回购收益只归属于账户。 */
+  reverseRepoIncome: number;
   totalPnl: number | null;
 }
 
@@ -452,8 +456,10 @@ export interface IncomeCalendarEvent {
 export interface IncomeCalendarDay {
   date: string;
   totalPnl: number | null;
-  pricePnl: number | null;
+  marketPricePnl: number | null;
   dividendPnl: number;
+  tradingCostPnl: number;
+  reverseRepoIncome: number;
   returnRate: number | null;
   hasMarketData: boolean;
   isPartial: boolean;
@@ -474,8 +480,10 @@ export interface IncomeCalendarView {
   scopeLabel: string;
   metrics: {
     month: IncomeMetric;
-    price: IncomeMetric;
+    marketPrice: IncomeMetric;
     dividend: IncomeMetric;
+    tradingCost: IncomeMetric;
+    reverseRepo: IncomeMetric;
     cumulative: IncomeMetric;
     yearToDate: IncomeMetric;
   };

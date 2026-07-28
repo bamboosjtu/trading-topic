@@ -1,10 +1,12 @@
+import { currentMarketDate } from "../../../../shared/marketDate";
+
 export function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return currentMarketDate();
 }
 
 export function dateYearsAgo(years: number): string {
-  const date = new Date();
-  date.setFullYear(date.getFullYear() - years);
+  const date = new Date(`${currentMarketDate()}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() - years);
   return date.toISOString().slice(0, 10);
 }
 

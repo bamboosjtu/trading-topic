@@ -169,7 +169,7 @@ function registerIpc(): void {
   ipcMain.handle(
     "income-calendar:export",
     async (_event, query: IncomeCalendarQuery) => {
-      const view = service.getIncomeCalendar(query);
+      const view = await service.getIncomeCalendar(query);
       const result = await dialog.showSaveDialog({
         title: "导出收益日历",
         defaultPath: `攒股收息-收益日历-${query.month}-${timestamp()}.xlsx`,

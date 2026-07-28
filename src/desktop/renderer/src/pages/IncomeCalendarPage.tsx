@@ -113,6 +113,37 @@ export function IncomeCalendarPage() {
       ),
     },
     {
+      title: "市场价变",
+      dataIndex: "marketPricePnl",
+      width: 100,
+      align: "right",
+      render: (value: number | null) => (
+        <span className={`tabular-nums ${pnlClass(value)}`}>
+          {money(value, true)}
+        </span>
+      ),
+    },
+    {
+      title: "分红",
+      dataIndex: "dividendPnl",
+      width: 90,
+      align: "right",
+      render: (value: number) => (
+        <span className="tabular-nums">{money(value)}</span>
+      ),
+    },
+    {
+      title: "交易影响",
+      dataIndex: "tradingCostPnl",
+      width: 100,
+      align: "right",
+      render: (value: number) => (
+        <span className={`tabular-nums ${pnlClass(value)}`}>
+          {money(value, true)}
+        </span>
+      ),
+    },
+    {
       title: "当日贡献",
       dataIndex: "totalPnl",
       width: 120,
@@ -131,7 +162,7 @@ export function IncomeCalendarPage() {
     <div className="live-page income-page">
       <LivePageHeader
         title="收益日历"
-        description="按日查看组合价格变动与现金分红贡献；累计指标由领域层统一计算。"
+        description="按日查看市场价格、现金分红、交易影响与逆回购收益；累计指标由领域层统一计算。"
         actions={
           <>
             <Button icon={<ArrowLeftOutlined />} aria-label="上一个月" onClick={() => moveMonth(-1)} />
@@ -203,7 +234,7 @@ export function IncomeCalendarPage() {
           <LiveMetricStrip
             items={[
               { label: "本月收益", value: money(calendar.data.metrics.month.amount, true), helper: percent(calendar.data.metrics.month.rate, true), icon: <TrophyOutlined />, tone: "blue", valueClass: pnlClass(calendar.data.metrics.month.amount) },
-              { label: "价格变动收益", value: money(calendar.data.metrics.price.amount, true), helper: percent(calendar.data.metrics.price.rate, true), icon: <LineChartOutlined />, tone: "red", valueClass: pnlClass(calendar.data.metrics.price.amount) },
+              { label: "市场价格收益", value: money(calendar.data.metrics.marketPrice.amount, true), helper: percent(calendar.data.metrics.marketPrice.rate, true), icon: <LineChartOutlined />, tone: "red", valueClass: pnlClass(calendar.data.metrics.marketPrice.amount) },
               { label: "分红收益", value: money(calendar.data.metrics.dividend.amount), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
               { label: "累计收益", value: money(calendar.data.metrics.cumulative.amount, true), helper: percent(calendar.data.metrics.cumulative.rate, true), icon: <RiseOutlined />, tone: "green", valueClass: pnlClass(calendar.data.metrics.cumulative.amount) },
               { label: "年内收益", value: money(calendar.data.metrics.yearToDate.amount, true), helper: percent(calendar.data.metrics.yearToDate.rate, true), icon: <StockOutlined />, tone: "violet", valueClass: pnlClass(calendar.data.metrics.yearToDate.amount) },
@@ -247,8 +278,10 @@ export function IncomeCalendarPage() {
                               {money(day.totalPnl, true)}
                             </strong>
                             <small>
-                              价格 {money(day.pricePnl, true)}
+                              价变 {money(day.marketPricePnl, true)}
                               {day.dividendPnl ? ` · 分红 ${money(day.dividendPnl)}` : ""}
+                              {day.tradingCostPnl ? ` · 交易 ${money(day.tradingCostPnl, true)}` : ""}
+                              {day.reverseRepoIncome ? ` · 逆回购 ${money(day.reverseRepoIncome, true)}` : ""}
                             </small>
                             <i className={`calendar-heat ${direction} level-${level}`} />
                             {day.dividendPnl > 0 ? <b className="dividend-dot" title="当日有现金分红" /> : null}
@@ -279,12 +312,20 @@ export function IncomeCalendarPage() {
                         <strong className={pnlClass(selectedDay.returnRate)}>{percent(selectedDay.returnRate, true)}</strong>
                       </div>
                       <div>
-                        <span>价格变动</span>
-                        <strong className={pnlClass(selectedDay.pricePnl)}>{money(selectedDay.pricePnl, true)}</strong>
+                        <span>市场价格</span>
+                        <strong className={pnlClass(selectedDay.marketPricePnl)}>{money(selectedDay.marketPricePnl, true)}</strong>
                       </div>
                       <div>
                         <span>现金分红</span>
                         <strong>{money(selectedDay.dividendPnl)}</strong>
+                      </div>
+                      <div>
+                        <span>交易影响</span>
+                        <strong className={pnlClass(selectedDay.tradingCostPnl)}>{money(selectedDay.tradingCostPnl, true)}</strong>
+                      </div>
+                      <div>
+                        <span>逆回购收益</span>
+                        <strong className={pnlClass(selectedDay.reverseRepoIncome)}>{money(selectedDay.reverseRepoIncome, true)}</strong>
                       </div>
                     </div>
                     <h3>标的贡献</h3>

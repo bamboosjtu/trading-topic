@@ -126,7 +126,21 @@ describe("实盘流水命令", () => {
     );
   });
 
-  it("逆回购按本金、收益率、期限与费用补齐到期事实", () => {
+  it("逆回购必须录入实际到期日与实际到期金额，不根据名义期限推导事实", () => {
+    expect(() =>
+      normalizeLedgerInput(
+        {
+          type: "reverse_repo",
+          businessDate: "2026-07-27",
+          repoCode: "204001",
+          amount: 100_000,
+          annualRate: 0.02,
+          termDays: 1,
+          maturityDate: "2026-07-29",
+        },
+        "2026-07-27",
+      ),
+    ).toThrow("实际到期金额");
     const normalized = normalizeLedgerInput({
       type: "reverse_repo",
       businessDate: "2026-07-27",
@@ -135,9 +149,35 @@ describe("实盘流水命令", () => {
       annualRate: 0.02,
       termDays: 1,
       fee: 1,
-    });
+      maturityDate: "2026-07-29",
+      maturityAmount: 100_004.32,
+    }, "2026-07-27");
 
-    expect(normalized.maturityDate).toBe("2026-07-28");
-    expect(normalized.maturityAmount).toBe(100_004.48);
+    expect(normalized.maturityDate).toBe("2026-07-29");
+    expect(normalized.maturityAmount).toBe(100_004.32);
+  });
+
+  it("允许零股事实并拒绝未来普通业务日期", () => {
+    const normalized = normalizeLedgerInput(
+      {
+        type: "sell",
+        businessDate: "2026-07-27",
+        symbol: "601398",
+        price: 5,
+        quantity: 37,
+      },
+      "2026-07-28",
+    );
+    expect(normalized.quantity).toBe(37);
+    expect(() =>
+      normalizeLedgerInput(
+        {
+          type: "transfer_in",
+          businessDate: "2026-07-29",
+          amount: 1_000,
+        },
+        "2026-07-28",
+      ),
+    ).toThrow("不能晚于当前 A 股市场日期");
   });
 });

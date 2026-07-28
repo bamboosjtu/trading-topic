@@ -206,9 +206,9 @@ describe("finance and ledger", () => {
     ];
     const result = rebuildAccount(entries, { "601398": 12 }, "2024-03-01");
     expect(result.availableCash).toBe(8_095);
-    expect(result.reverseRepoAsset).toBe(1_010);
+    expect(result.reverseRepoAsset).toBe(1_000);
     expect(result.marketValue).toBe(1_200);
-    expect(result.totalAsset).toBe(10_305);
+    expect(result.totalAsset).toBe(10_295);
     expect(result.positions[0].quantity).toBe(100);
   });
 
@@ -234,6 +234,23 @@ describe("finance and ledger", () => {
       },
     ];
     expect(rebuildAccount(entries, {}, "2024-01-02").availableCash).toBe(0);
+  });
+
+  it("估值截止日不截断显式账户截止日前的流水事实", () => {
+    const entries: LedgerEntry[] = [
+      {
+        id: "cash",
+        type: "transfer_in",
+        businessDate: "2024-01-02",
+        recordedAt: "2024-01-02T00:00:00Z",
+        currency: "CNY",
+        source: "user",
+        amount: 1_000,
+      },
+    ];
+    expect(
+      rebuildAccount(entries, {}, "2024-01-01", "2024-01-02").availableCash,
+    ).toBe(1_000);
   });
 });
 

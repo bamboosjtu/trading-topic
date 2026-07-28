@@ -122,7 +122,7 @@ afterEach(() => {
 });
 
 describe("LocalDatabase", () => {
-  it("导出并恢复 schema v5 的不可变回测试验与流水", async () => {
+  it("导出并恢复 schema v6 的不可变回测试验、流水与独立实盘行情", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -138,9 +138,18 @@ describe("LocalDatabase", () => {
     database.saveBacktestExperiment(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
     );
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [{ date: "2026-07-24", close: 7.2 }],
+        dividends: [],
+        source: "test-live",
+        fetchedAt: "2026-07-24T08:00:00Z",
+      },
+    ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(5);
+    expect(backup.schemaVersion).toBe(6);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
 
@@ -152,6 +161,11 @@ describe("LocalDatabase", () => {
     expect(restored.getBacktestExperiment("experiment-1")?.results[0].id).toBe(
       "experiment-1-result",
     );
+    expect(restored.listLiveMarketPrices(["601398"])[0]).toMatchObject({
+      date: "2026-07-24",
+      close: 7.2,
+      source: "test-live",
+    });
   });
 
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {

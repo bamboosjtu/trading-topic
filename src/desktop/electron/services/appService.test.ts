@@ -425,7 +425,7 @@ describe("AppService 回测试验", () => {
     expect(rightsIssueWarnings[0]).toContain("R1 假设不参与");
   });
 
-  it("任一标的数据获取失败时不写入共享行情缓存", async () => {
+  it("任一标的数据获取失败时不写入回测行情缓存", async () => {
     const { service, database } = await serviceWithDatabase();
     database.replaceStockUniverse(
       completeStockUniverse([
@@ -566,5 +566,99 @@ describe("AppService 实盘流水", () => {
         amount: 9_000,
       }),
     ).toThrow("已经被冲正或修正");
+  });
+
+  it("收益日历按历史持有区间补齐独立实盘行情缓存", async () => {
+    const { service, database } = await serviceWithDatabase();
+    for (const input of [
+      {
+        type: "buy" as const,
+        businessDate: "2025-01-02",
+        symbol: "601398",
+        price: 5,
+        quantity: 37,
+      },
+      {
+        type: "sell" as const,
+        businessDate: "2025-02-03",
+        symbol: "601398",
+        price: 5.2,
+        quantity: 37,
+      },
+      {
+        type: "buy" as const,
+        businessDate: "2026-05-06",
+        symbol: "601398",
+        price: 5.3,
+        quantity: 37,
+      },
+      {
+        type: "sell" as const,
+        businessDate: "2026-06-08",
+        symbol: "601398",
+        price: 5.4,
+        quantity: 37,
+      },
+      {
+        type: "buy" as const,
+        businessDate: "2026-07-01",
+        symbol: "601939",
+        price: 7,
+        quantity: 101,
+      },
+    ]) {
+      service.addLedger(input);
+    }
+    vi.mocked(fetchUnadjustedPrices).mockImplementation(
+      async (symbol, startDate, endDate) => ({
+        rows: [
+          { date: startDate, close: symbol === "601398" ? 5 : 7 },
+          { date: endDate, close: symbol === "601398" ? 5.2 : 7.2 },
+        ],
+        provenance: {
+          source: "腾讯财经 live-test",
+          fetchedAt: "2026-07-28T01:00:00Z",
+          dataCutoff: endDate,
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+    );
+
+    const view = await service.getIncomeCalendar({
+      month: "2026-07",
+      scope: "all",
+    });
+
+    expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
+      "601398",
+      "2025-01-02",
+      "2025-02-03",
+    );
+    expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
+      "601939",
+      "2026-07-01",
+      "2026-07-28",
+    );
+    expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
+      "601398",
+      "2026-05-06",
+      "2026-06-08",
+    );
+    expect(fetchUnadjustedPrices).not.toHaveBeenCalledWith(
+      "601398",
+      "2025-02-03",
+      "2026-05-06",
+    );
+    expect(database.listMarketPrices()).toHaveLength(0);
+    expect(database.listLiveMarketPrices()).toHaveLength(6);
+    expect(view.quality.dataCutoff).toBe("2026-07-28");
+
+    vi.mocked(fetchUnadjustedPrices).mockClear();
+    await service.getIncomeCalendar({
+      month: "2026-07",
+      scope: "all",
+    });
+    expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 });

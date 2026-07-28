@@ -41,16 +41,92 @@ import {
   assertLedgerReversal,
   previewLedgerMutation,
 } from "../domain/ledgerCommands";
+import { buildPositionsOverview } from "../domain/positionsView";
+import { buildIncomeCalendar } from "../domain/incomeCalendar";
+import { queryLedgerRecords } from "../domain/ledgerQuery";
+import {
+  LocalDatabase,
+  type MarketDataCacheEntry,
+} from "../storage/database";
+import {
+  addDays,
+  addMonths,
+  currentMarketDate,
+  monthEnd,
+} from "../domain/dateUtils";
 import {
   activeLedgerEntries,
-  buildIncomeCalendar,
-  buildPositionsOverview,
-  queryLedgerRecords,
-} from "../domain/livePortfolio";
-import { LocalDatabase } from "../storage/database";
+  reduceLedger,
+} from "../domain/ledgerReducer";
 
 function isCompleteStockUniverse(stocks: readonly StockInfo[]): boolean {
   return stocks.length >= STOCK_UNIVERSE_MIN_SIZE;
+}
+
+interface LivePriceRange {
+  symbol: string;
+  startDate: string;
+  endDate: string;
+}
+
+function incomePriceRanges(
+  entries: readonly LedgerEntry[],
+  query: IncomeCalendarQuery,
+): LivePriceRange[] {
+  const marketDate = currentMarketDate();
+  const endDate = [monthEnd(query.month), marketDate].sort()[0];
+  const currentPositions = reduceLedger(entries, marketDate).positions;
+  const { effective } = activeLedgerEntries(entries, marketDate);
+  const currentSymbols = new Set(
+    [...currentPositions.entries()]
+      .filter(([, position]) => position.quantity > 1e-8)
+      .map(([symbol]) => symbol),
+  );
+  const symbols = query.symbol
+    ? [query.symbol]
+    : query.scope === "current"
+      ? [...currentSymbols]
+      : [
+          ...new Set(
+            effective
+              .filter((entry) => entry.businessDate <= endDate)
+              .flatMap((entry) => entry.symbol ?? []),
+          ),
+        ];
+
+  return symbols.flatMap((symbol) => {
+    const securityFacts = effective.filter(
+      (entry) =>
+        entry.symbol === symbol &&
+        entry.businessDate <= endDate &&
+        (entry.type === "buy" || entry.type === "sell"),
+    );
+    const ranges: LivePriceRange[] = [];
+    let quantity = 0;
+    let startDate: string | null = null;
+    for (const entry of securityFacts) {
+      const before = quantity;
+      quantity +=
+        entry.type === "buy"
+          ? (entry.quantity ?? 0)
+          : -(entry.quantity ?? 0);
+      if (before <= 1e-8 && quantity > 1e-8) {
+        startDate = entry.businessDate;
+      }
+      if (before > 1e-8 && quantity <= 1e-8 && startDate) {
+        ranges.push({
+          symbol,
+          startDate,
+          endDate: entry.businessDate,
+        });
+        startDate = null;
+      }
+    }
+    if (startDate) {
+      ranges.push({ symbol, startDate, endDate });
+    }
+    return ranges;
+  });
 }
 
 export class AppService {
@@ -234,8 +310,8 @@ export class AppService {
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
     };
-    // 回测试验与本次获取的共享行情缓存一次性提交。任一标的数据、计算或
-    // 实验写入失败时，事务回滚，避免失败实验污染账户估值所使用的缓存。
+    // 回测试验与本次获取的回测证据缓存一次性提交。任一标的数据、计算或
+    // 实验写入失败时全部回滚，不留下无对应成功实验的证据快照。
     this.database.saveBacktestExperimentWithMarketData(
       experiment,
       marketData.map(({ symbol, prices, dividends }) => ({
@@ -291,17 +367,78 @@ export class AppService {
 
   private liveDataSnapshot(): {
     entries: LedgerEntry[];
-    prices: ReturnType<LocalDatabase["listMarketPrices"]>;
+    prices: ReturnType<LocalDatabase["listLiveMarketPrices"]>;
   } {
     const entries = this.database.listLedger();
-    const { effective } = activeLedgerEntries(entries);
+    const { effective } = activeLedgerEntries(entries, currentMarketDate());
     const symbols = [
       ...new Set(effective.flatMap((entry) => entry.symbol ?? [])),
     ];
     return {
       entries,
-      prices: this.database.listMarketPrices(symbols),
+      prices: this.database.listLiveMarketPrices(symbols),
     };
+  }
+
+  private missingLivePriceRanges(
+    requested: readonly LivePriceRange[],
+  ): LivePriceRange[] {
+    return requested.flatMap((range) => {
+      const rows = this.database.listLiveMarketPrices([range.symbol]);
+      if (!rows.length) return [range];
+      const first = rows[0].date;
+      const last = rows.at(-1)!.date;
+      if (last < range.startDate || first > range.endDate) {
+        return [range];
+      }
+      const missing: LivePriceRange[] = [];
+      if (first > range.startDate) {
+        missing.push({
+          ...range,
+          endDate: addDays(first, -1),
+        });
+      }
+      if (last < range.endDate) {
+        missing.push({
+          ...range,
+          startDate: addDays(last, 1),
+        });
+      }
+      return missing;
+    });
+  }
+
+  private async fetchLivePriceRanges(
+    ranges: readonly LivePriceRange[],
+  ): Promise<{ issues: string[] }> {
+    const snapshots: MarketDataCacheEntry[] = [];
+    const issues: string[] = [];
+    for (const range of this.missingLivePriceRanges(ranges)) {
+      try {
+        const response = await fetchUnadjustedPrices(
+          range.symbol,
+          range.startDate,
+          range.endDate,
+        );
+        snapshots.push({
+          symbol: range.symbol,
+          prices: response.rows,
+          dividends: [],
+          source: response.provenance.source,
+          fetchedAt: response.provenance.fetchedAt,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        issues.push(
+          `${range.symbol} ${range.startDate}..${range.endDate} 行情补齐失败：${message}`,
+        );
+      }
+    }
+    if (snapshots.length) {
+      this.database.saveLiveMarketPriceSnapshots(snapshots);
+    }
+    for (const issue of issues) this.database.log("warn", issue);
+    return { issues };
   }
 
   getPositionsOverview(): PositionsOverview {
@@ -318,23 +455,34 @@ export class AppService {
       (position) => position.symbol,
     );
     if (!symbols.length) return this.getPositionsOverview();
-    const endDate = new Date().toISOString().slice(0, 10);
-    const start = new Date(`${endDate}T00:00:00Z`);
-    start.setUTCMonth(start.getUTCMonth() - LIVE_PRICE_REFRESH_LOOKBACK_MONTHS);
-    const startDate = start.toISOString().slice(0, 10);
-    const snapshots = [];
-    for (const symbol of symbols) {
-      const response = await fetchUnadjustedPrices(symbol, startDate, endDate);
+    const endDate = currentMarketDate();
+    const startDate = addMonths(
+      endDate,
+      -LIVE_PRICE_REFRESH_LOOKBACK_MONTHS,
+    );
+    const requested = symbols.map((symbol) => ({
+      symbol,
+      startDate,
+      endDate,
+    }));
+    const missing = this.missingLivePriceRanges(requested);
+    const snapshots: MarketDataCacheEntry[] = [];
+    for (const range of missing) {
+      const response = await fetchUnadjustedPrices(
+        range.symbol,
+        range.startDate,
+        range.endDate,
+      );
       snapshots.push({
-        symbol,
+        symbol: range.symbol,
         prices: response.rows,
         dividends: [],
         source: response.provenance.source,
         fetchedAt: response.provenance.fetchedAt,
       });
     }
-    // 所有标的数据成功后才一次性写入，避免半成功刷新污染账户估值。
-    this.database.saveMarketPriceSnapshots(snapshots);
+    // 持仓刷新仍保持全成功后统一写入，避免半成功估值。
+    this.database.saveLiveMarketPriceSnapshots(snapshots);
     this.database.log(
       "info",
       `已刷新实盘行情：${symbols.length} 个标的，${startDate}..${endDate}`,
@@ -345,12 +493,7 @@ export class AppService {
   queryLedger(query: LedgerQuery): LedgerQueryResult {
     let integrityError: string | null = null;
     try {
-      const latest = this.database.latestPrices();
-      rebuildAccount(
-        this.database.listLedger(),
-        latest.prices,
-        latest.dataCutoff,
-      );
+      reduceLedger(this.database.listLedger(), currentMarketDate());
     } catch (error) {
       integrityError = error instanceof Error ? error.message : String(error);
     }
@@ -362,13 +505,18 @@ export class AppService {
     );
   }
 
-  getIncomeCalendar(query: IncomeCalendarQuery): IncomeCalendarView {
+  async getIncomeCalendar(
+    query: IncomeCalendarQuery,
+  ): Promise<IncomeCalendarView> {
+    const coverage = incomePriceRanges(this.database.listLedger(), query);
+    const { issues } = await this.fetchLivePriceRanges(coverage);
     const snapshot = this.liveDataSnapshot();
     return buildIncomeCalendar(
       snapshot.entries,
       snapshot.prices,
       this.localStockUniverse(),
       query,
+      issues,
     );
   }
 
@@ -403,7 +551,7 @@ export class AppService {
     const reversal: LedgerEntry = {
       id: randomUUID(),
       type: "adjustment",
-      businessDate: recordedAt.slice(0, 10),
+      businessDate: currentMarketDate(),
       recordedAt,
       currency: "CNY",
       source: "system",
@@ -432,7 +580,7 @@ export class AppService {
     const entry: LedgerEntry = {
       id: randomUUID(),
       type: "adjustment",
-      businessDate: new Date().toISOString().slice(0, 10),
+      businessDate: currentMarketDate(),
       recordedAt: new Date().toISOString(),
       currency: "CNY",
       source: "system",
@@ -445,11 +593,12 @@ export class AppService {
   }
 
   accountSummary(): AccountSummary {
-    const latest = this.database.latestPrices();
+    const latest = this.database.latestLivePrices();
     return rebuildAccount(
       this.database.listLedger(),
       latest.prices,
       latest.dataCutoff,
+      currentMarketDate(),
     );
   }
 }

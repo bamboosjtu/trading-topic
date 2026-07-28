@@ -8,7 +8,7 @@
 
 ## 1. 评审结论
 
-R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边界清晰、核心金融口径有测试覆盖。主要待解决项是 **设置页未实现**导致的文档与实现不一致，以及若干因设置页延后而产生的“已接线但未被 UI 消费”的 IPC 通道。这些不影响 R1 已公开的回测与实盘两条主线，但应在下一个迭代补齐。
+本轮复核确认了实盘账本排序、逆回购、历史行情覆盖、收益归因、市场业务日期与实际数量录入问题，并已统一修复。三域隔离、进程边界和核心金融口径均有测试覆盖。仍待后续迭代的是**设置页未实现**导致的文档与实现不一致，以及与该页面对应的尚未被 UI 消费的 IPC 通道。
 
 | 维度 | 结论 |
 | --- | --- |
@@ -16,7 +16,7 @@ R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边�
 | 进程与安全边界 | 通过 |
 | 领域分层 | 通过 |
 | 类型契约 | 通过 |
-| 测试覆盖 | 通过（82/82） |
+| 测试覆盖 | 通过（95/95） |
 | 类型检查 | 通过 |
 | 构建 | 通过 |
 | 文档一致性 | **部分不一致**（仅剩设置页一项，暂缓处理） |
@@ -27,8 +27,8 @@ R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边�
 | 命令 | 结果 |
 | --- | --- |
 | `npm run typecheck` | PASS（`tsc --noEmit` 退出码 0） |
-| `npm test` | PASS（11 文件 / 82 用例，9.18s） |
-| `npm run build` | PASS（main 131 KB、preload 2.4 KB、renderer 3692 模块） |
+| `npm test` | PASS（13 文件 / 95 用例） |
+| `npm run build` | PASS（main 140.77 KB、preload 2.37 KB、renderer 3693 模块） |
 
 测试覆盖范围与 [ARCHITECTURE.md §9](../../docs/product/ARCHITECTURE.md) 声明一致：领域单测、适配器、持久化、导出、冷启动、实盘领域均有用例；冷启动用例 `appService.coldStart.test.ts` 验证 SQLite 重开后四标的实验、工作区、收益/回撤序列、K 线和逐笔明细仍完整可读。
 
@@ -49,7 +49,7 @@ R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边�
 
 ### 3.3 领域分层
 
-- 领域逻辑集中在 [electron/domain/](electron/domain/)：`analysis.ts`（回测）、`ledger.ts` + `ledgerCommands.ts`（账本）、`livePortfolio.ts`（实盘组合与收益归因）、`finance.ts`（XIRR、回撤、金额舍入）。
+- 领域逻辑集中在 [electron/domain/](electron/domain/)：`analysis.ts`（回测）、`ledgerReducer.ts`（唯一账本顺序与归约）、`ledgerCommands.ts`（命令校验/预览）、`ledgerQuery.ts`（流水查询）、`positionsView.ts`（持仓视图）、`dailyAttribution.ts`（日度归因）、`incomeCalendar.ts`（收益日历）、`liveViewSupport.ts`（只读映射）以及 `finance.ts`（XIRR、回撤、金额舍入）。旧 `ledger.ts` 只把统一 reducer 适配为账户汇总，不再维护第二套账本公式。
 - 渲染层 [renderer/src/pages/](renderer/src/pages/) 只消费领域层返回值，未实现金融公式。`marketChartModel.ts` 仅做前复权日 OHLCV 的周/月聚合和均线，符合 ARCHITECTURE.md §3 的约束。
 - 主结果与明细共用同一计算流水：`simulateBacktest` 生成 `BacktestResult`，`backtestResultToSimpleResult` 从持久化快照转换出 `SimpleBacktestResult`，详情弹窗和 XLSX 导出共用此转换，未维护第二套简化回测。
 
@@ -59,6 +59,7 @@ R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边�
 - `saveBacktestExperimentWithMarketData` 在单个事务中提交行情缓存、公司行动缓存、实验与结果，任一失败全部回滚。
 - `deleteBacktestExperiment` 同时删除实验、结果与工作区活动引用，无悬挂外键。
 - 历史摘要查询返回最近 500 次（`RECENT_BACKTEST_EXPERIMENT_LIMIT`），界面已明示窗口；数据库保留全部实验。
+- 回测 `market_prices` 与实盘 `live_market_prices` 分表保存。持仓刷新只补齐当前持仓最近 13 个月；收益日历从首笔持仓事实按实际持有区间增量补齐，历史已清仓标的不会再截断当前持仓。
 
 ## 4. 代码质量
 
@@ -79,9 +80,9 @@ R1 桌面应用整体处于**可发布状态**，三域隔离到位、进程边�
 | --- | --- |
 | [electron/domain/finance.ts](electron/domain/finance.ts) | `daysBetween` |
 | [electron/domain/ledgerCommands.ts](electron/domain/ledgerCommands.ts) | `validDate`、`addDays` |
-| [electron/domain/livePortfolio.ts](electron/domain/livePortfolio.ts) | `validDate`、`addDays`、`daysBetween` |
+| 原 `electron/domain/livePortfolio.ts` | `validDate`、`addDays`、`daysBetween` |
 
-`finance.ts` 的 `daysBetween` 直接除以 86_400_000，`livePortfolio.ts` 的版本使用 `Math.floor`，精度差异在历史日期上无影响，但语义重复。
+`finance.ts` 的 `daysBetween` 直接除以 86_400_000，原 `livePortfolio.ts` 的版本使用 `Math.floor`，精度差异在历史日期上无影响，但语义重复。
 
 **已修复**：抽取 [electron/domain/dateUtils.ts](electron/domain/dateUtils.ts) 作为共享模块，三个文件改为 `import { validDate, addDays, daysBetween } from "./dateUtils"`。由于输入只到日精度，`daysBetween` 返回值恒为整数，`Math.floor` 是无意义包裹，已统一移除。
 
@@ -107,6 +108,15 @@ return {
 **根因**：[index.css](renderer/src/index.css) 原有规则 `.live-empty .ant-empty-description span { color: #74859a; }` 选择器过宽。Ant Design 5 的 Button 把文字包裹在 `<span>` 内，而 `LiveEmpty` 把 `action` 节点放在 `<div class="ant-empty-description">` 内部，导致按钮内 `<span>` 被命中，文字颜色被覆盖为 `#74859a`。由于 antd v5 的 CSS-in-JS 使用 `:where()` 降低特异性，普通选择器轻易盖过主题样式。
 
 **已修复**：把 `strong`、`span` 选择器改为直接子选择器 `.live-empty .ant-empty-description > div > strong` 与 `> div > span`，仅匹配 `LiveEmpty` 模板中的标题与说明，不再命中按钮内部的 `<span>`。两个按钮现在正确显示蓝底白字。
+
+### 4.3 实盘账本与收益归因复核（已修复）
+
+- 唯一顺序：`canonicalLedgerOrder()` 固定为业务日期、录入时间、内部 ID 升序；账本归约使用该顺序，列表使用其稳定倒序。同一批流水不再因数据库读取顺序不同而得出不同持仓。
+- 显式截止日：`reduceLedger(entries, asOfDate)` 会过滤未来事实；`businessDate` 统一按 `Asia/Shanghai` 生成并拒绝未来普通流水，`recordedAt` 继续使用 UTC。
+- 逆回购：未到期待到账资产只确认本金；实际到期日现金增加实际到期金额，收益仅确认为实际到期金额减本金。到期日和实际到期金额为必填事实，年化率和名义期限不参与自动结算。
+- 实际数量：领域层和表单都直接记录股数/份额，卖出允许零股清仓且校验不超过可用持仓，不再做“手数 × 100”转换。
+- 收益恒等式：`totalPnl = marketPricePnl + dividendPnl + tradingCostPnl + reverseRepoIncome`；手续费与不利成交以负的交易影响体现，不再混入市场价格收益。
+- 行情覆盖：收益日历按标的实际持有区间补齐实盘专用缓存；总截止日由所选历史月份或当前可用最新日期确定；只有当日确实持有且缺行情的标的会使对应日期进入 `partial`。
 
 ## 5. 文档一致性
 
@@ -204,10 +214,16 @@ return {
 | 合法空响应与限流/错误结构可区分 | ✅ | `tencent.test.ts`、`stockUniverse.test.ts` |
 | 配股事件逐项报告“不参与”假设 | ✅ | `appService.test.ts` 配股用例 |
 | fixture 不读 research/ | ✅ | `tests/fixtures/README.md` + 隔离扫描 |
-| 七类流水可新增和查看 | ✅ | `ledgerCommands.test.ts` + `livePortfolio.test.ts` |
+| 七类流水可新增和查看 | ✅ | `ledgerCommands.test.ts` + `liveViews.test.ts` |
 | 冲正/修正不修改原记录，余额正确 | ✅ | `ledgerCommands.test.ts` |
-| 持仓、现金、总资产、XIRR 可由流水重建 | ✅ | `livePortfolio.test.ts` + `appService.test.ts` |
-| 逆回购到期前后现金/总资产符合定义 | ✅ | `ledgerCommands.test.ts` 逆回购用例 |
+| 持仓、现金、总资产、XIRR 可由流水重建 | ✅ | `liveViews.test.ts` + `appService.test.ts` |
+| 同日流水在列表与账户中采用唯一稳定顺序 | ✅ | `ledgerReducer.test.ts` + `liveViews.test.ts` |
+| 未来普通流水不污染当前持仓 | ✅ | `ledgerCommands.test.ts` + `ledgerReducer.test.ts` |
+| 逆回购到期前按本金、到期日才确认实际收益 | ✅ | `ledgerReducer.test.ts` + `analysis.test.ts` |
+| 零股/实际份额可录入，卖出不超过持仓 | ✅ | `ledgerCommands.test.ts` |
+| 四项日度收益归因满足恒等式 | ✅ | `liveViews.test.ts` |
+| 已清仓标的不截断当前收益日历 | ✅ | `liveViews.test.ts` |
+| 实盘行情独立缓存并按持有区间补齐 | ✅ | `appService.test.ts` + `database.test.ts` |
 | 估值结果显示价格来源和截止时间 | ✅ | `PositionsPage.tsx` + `valuationSource` 字段 |
 | 断网可查既有数据 | ✅ | 本地 SQLite + 缓存快照 |
 | JSON 导出可在空库恢复 | ✅ | `database.test.ts` 备份恢复用例 |
@@ -230,9 +246,9 @@ return {
 
 - 本报告：`src/desktop/review.md`
 - 类型检查、测试、构建均通过，无回归
-- 本次修复涉及文件：
-  - 新增 [electron/domain/dateUtils.ts](electron/domain/dateUtils.ts)
-  - 修改 [electron/domain/finance.ts](electron/domain/finance.ts)、[ledgerCommands.ts](electron/domain/ledgerCommands.ts)、[livePortfolio.ts](electron/domain/livePortfolio.ts)
-  - 修改 [renderer/src/pages/TradesPage.tsx](renderer/src/pages/TradesPage.tsx)
-  - 修改 [renderer/src/index.css](renderer/src/index.css)
-  - 修改 [docs/README.md](../../docs/README.md)
+- 本轮新增并拆分：
+  - [shared/marketDate.ts](shared/marketDate.ts)：A 股市场自然日唯一入口；
+  - [electron/domain/ledgerReducer.ts](electron/domain/ledgerReducer.ts)：账本唯一排序、有效事实选择和显式截止日归约；
+  - [electron/domain/ledgerQuery.ts](electron/domain/ledgerQuery.ts)、[positionsView.ts](electron/domain/positionsView.ts)、[dailyAttribution.ts](electron/domain/dailyAttribution.ts)、[incomeCalendar.ts](electron/domain/incomeCalendar.ts)：分别承担查询、持仓、日度归因和收益日历；
+  - `live_market_prices`：实盘独立行情缓存，不再消费回测证据缓存。
+- 配套修改覆盖领域命令、AppService、SQLite schema/备份、实盘 XLSX、交易录入与收益日历 UI，以及 PRD、UI Brief、架构和 README。
