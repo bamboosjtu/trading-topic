@@ -38,17 +38,12 @@ interface LedgerFormValues {
   perShare?: number;
   recordDate?: Dayjs;
   paymentDate?: Dayjs;
-  repoCode?: string;
-  annualRatePercent?: number;
-  termDays?: number;
-  maturityAmount?: number;
-  maturityDate?: Dayjs;
   note?: string;
 }
 
 function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
   return {
-    type: row.type === "adjustment" ? "transfer_in" : row.type,
+    type: row.type === "adjustment" ? "buy" : row.type,
     businessDate: dayjs(row.businessDate),
     securityType: row.securityType ?? undefined,
     symbol: row.symbol ?? undefined,
@@ -60,12 +55,6 @@ function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
     perShare: row.perShare ?? undefined,
     recordDate: row.recordDate ? dayjs(row.recordDate) : undefined,
     paymentDate: row.paymentDate ? dayjs(row.paymentDate) : undefined,
-    repoCode: row.repoCode ?? undefined,
-    annualRatePercent:
-      row.annualRate === null ? undefined : row.annualRate * 100,
-    termDays: row.termDays ?? undefined,
-    maturityAmount: row.maturityAmount ?? undefined,
-    maturityDate: row.maturityDate ? dayjs(row.maturityDate) : undefined,
     note: row.note ?? undefined,
   };
 }
@@ -84,14 +73,6 @@ function toLedgerInput(values: LedgerFormValues): LedgerEntryInput {
     perShare: values.perShare,
     recordDate: values.recordDate?.format("YYYY-MM-DD"),
     paymentDate: values.paymentDate?.format("YYYY-MM-DD"),
-    repoCode: values.repoCode?.trim(),
-    annualRate:
-      values.annualRatePercent === undefined
-        ? undefined
-        : values.annualRatePercent / 100,
-    termDays: values.termDays,
-    maturityAmount: values.maturityAmount,
-    maturityDate: values.maturityDate?.format("YYYY-MM-DD"),
     note: values.note?.trim(),
   };
 }
@@ -247,7 +228,7 @@ export function LedgerEntryModal({
         <Alert
           showIcon
           type="info"
-          message="本次修正将追加一条新事实记录，并撤销原记录影响；原流水不会被覆盖或删除。"
+          message="本次修正采用历史重述：分析视图会在原业务日期使用新事实；原流水与修正记录仍完整保留。"
         />
       ) : null}
       <Form
@@ -356,9 +337,9 @@ export function LedgerEntryModal({
               </Form.Item>
             </>
           ) : null}
-          {["transfer_in", "transfer_out", "dividend"].includes(entryType) ? (
+          {entryType === "dividend" ? (
             <Form.Item
-              label={entryType === "dividend" ? "分红到账金额" : "资金金额"}
+              label="分红到账金额"
               name="amount"
               rules={[{ required: true, message: "请输入金额" }]}
             >
@@ -375,56 +356,6 @@ export function LedgerEntryModal({
               </Form.Item>
               <Form.Item label="分红到账日（可选）" name="paymentDate">
                 <DatePicker />
-              </Form.Item>
-            </>
-          ) : null}
-          {entryType === "reverse_repo" ? (
-            <>
-              <Form.Item
-                label="代码 / 品种"
-                name="repoCode"
-                rules={[{ required: true, message: "请输入逆回购代码或品种" }]}
-              >
-                <Input placeholder="例如 204001 / GC001" maxLength={32} />
-              </Form.Item>
-              <Form.Item
-                label="本金"
-                name="amount"
-                rules={[{ required: true, message: "请输入本金" }]}
-              >
-                <InputNumber min={0} precision={2} prefix="¥" />
-              </Form.Item>
-              <Form.Item
-                label="成交年化收益率"
-                name="annualRatePercent"
-                extra="辅助信息，不参与到期事实计算。"
-              >
-                <InputNumber min={0} precision={4} suffix="%" />
-              </Form.Item>
-              <Form.Item
-                label="期限（天）"
-                name="termDays"
-                extra="名义期限，仅作记录。"
-              >
-                <InputNumber min={1} precision={0} />
-              </Form.Item>
-              <Form.Item label="费用" name="fee">
-                <InputNumber min={0} precision={2} prefix="¥" />
-              </Form.Item>
-              <Form.Item
-                label="实际到期日"
-                name="maturityDate"
-                rules={[{ required: true, message: "请输入实际到期日" }]}
-              >
-                <DatePicker />
-              </Form.Item>
-              <Form.Item
-                label="实际到期金额"
-                name="maturityAmount"
-                rules={[{ required: true, message: "请输入实际到期金额" }]}
-                extra="请输入券商最终结算金额；系统不会按自然日自动推导。"
-              >
-                <InputNumber min={0} precision={2} prefix="¥" />
               </Form.Item>
             </>
           ) : null}
@@ -450,11 +381,6 @@ export function LedgerEntryModal({
           <>
             <div className="ledger-impact-grid">
               <ImpactValue
-                label="可用现金"
-                before={preview.before.availableCash}
-                after={preview.after.availableCash}
-              />
-              <ImpactValue
                 label="标的数量"
                 before={preview.before.holdingQuantity}
                 after={preview.after.holdingQuantity}
@@ -471,9 +397,19 @@ export function LedgerEntryModal({
                 after={preview.after.cumulativeDividend}
               />
               <ImpactValue
-                label="待到账资产"
-                before={preview.before.pendingReverseRepoAsset}
-                after={preview.after.pendingReverseRepoAsset}
+                label="累计买入支出"
+                before={preview.before.cumulativeBuySpend}
+                after={preview.after.cumulativeBuySpend}
+              />
+              <ImpactValue
+                label="累计卖出净收入"
+                before={preview.before.cumulativeSellNetIncome}
+                after={preview.after.cumulativeSellNetIncome}
+              />
+              <ImpactValue
+                label="累计净投入"
+                before={preview.before.netInvestment}
+                after={preview.after.netInvestment}
               />
             </div>
             {preview.warnings.map((warning) => (
@@ -482,7 +418,7 @@ export function LedgerEntryModal({
           </>
         ) : (
           <div className="ledger-impact-placeholder">
-            成交金额、现金、持仓数量、成本、累计分红与待到账资产均不在 Renderer 计算。
+            成交金额、持仓数量、成本、累计分红与净投入均由领域层计算。
           </div>
         )}
       </section>

@@ -4,6 +4,7 @@ import type {
   BacktestWorkspaceState,
   DesktopApi,
   IncomeCalendarQuery,
+  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
 } from "../shared/contracts";
@@ -41,11 +42,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("ledger:preview", input, replacingEntryId),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),
+  addDividendReinvestment: (input: DividendReinvestmentInput) =>
+    ipcRenderer.invoke("ledger:dividend-reinvestment:add", input),
   correctLedger: (entryId: string, input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:correct", entryId, input),
   reverseLedger: (entryId: string, reason: string) =>
     ipcRenderer.invoke("ledger:reverse", entryId, reason),
-  accountSummary: () => ipcRenderer.invoke("account:summary"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   exportBackup: () => ipcRenderer.invoke("backup:export"),
   restoreBackup: () => ipcRenderer.invoke("backup:restore"),

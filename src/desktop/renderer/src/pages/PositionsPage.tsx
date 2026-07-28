@@ -17,11 +17,11 @@ import {
   DollarCircleOutlined,
   EyeOutlined,
   FundOutlined,
-  PieChartOutlined,
   ReloadOutlined,
   SearchOutlined,
   StockOutlined,
-  WalletOutlined,
+  GiftOutlined,
+  TransactionOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -145,8 +145,8 @@ export function PositionsPage() {
       render: (value: number | null) => <strong className="tabular-nums">{money(value)}</strong>,
     },
     {
-      title: "累计投入",
-      dataIndex: "cumulativeInvestment",
+      title: "累计买入支出",
+      dataIndex: "cumulativeBuySpend",
       width: 140,
       align: "right",
       render: (value: number) => <span className="tabular-nums">{money(value)}</span>,
@@ -193,7 +193,7 @@ export function PositionsPage() {
     <div className="live-page positions-page">
       <LivePageHeader
         title="持仓明细"
-        description="查看当前持仓、成本与本地行情估值；所有数据均来自本机流水。"
+        description="回答投入多少、当前价值多少以及投资赚了多少；全部结果按证券投资现金流统一重建。"
         actions={
           <>
             <span className="live-cutoff">
@@ -227,12 +227,20 @@ export function PositionsPage() {
           <QualityNotice quality={overview.data.quality} />
           <LiveMetricStrip
             items={[
-              { label: "总资产", value: money(overview.data.metrics.totalAsset), helper: "现金 + 持仓市值", icon: <DollarCircleOutlined />, tone: "blue" },
-              { label: "持仓市值", value: money(overview.data.metrics.marketValue), helper: overview.data.valuationSource, icon: <StockOutlined />, tone: "orange" },
-              { label: "累计收益", value: money(overview.data.metrics.totalPnl, true), helper: "含已实现、浮动与分红", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalPnl) },
-              { label: "累计收益率", value: percent(overview.data.metrics.totalReturnRate, true), helper: "基于累计资金转入", icon: <FundOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.totalReturnRate) },
-              { label: "可用现金", value: overview.data.quality.status === "empty" ? "—" : money(overview.data.metrics.availableCash), helper: "不含未到期逆回购", icon: <WalletOutlined />, tone: "indigo" },
-              { label: "仓位比例", value: percent(overview.data.metrics.positionRatio), helper: "持仓市值 / 总资产", icon: <PieChartOutlined />, tone: "violet" },
+              { label: "当前持仓市值", value: money(overview.data.metrics.marketValue), helper: overview.data.valuationSource, icon: <StockOutlined />, tone: "blue" },
+              { label: "累计买入支出", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
+              { label: "累计卖出净收入", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
+              { label: "累计净投入", value: money(overview.data.metrics.netInvestment), helper: "买入 − 卖出 − 分红", icon: <FundOutlined />, tone: "indigo" },
+              { label: "累计分红", value: money(overview.data.metrics.cumulativeDividend), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
+            ]}
+          />
+          <LiveMetricStrip
+            items={[
+              { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "持仓市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
+              { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出净收入 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
+              { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
+              { label: "投资总收益率", value: percent(overview.data.metrics.totalReturnRate, true), helper: "投资总收益 / 正的净投入", icon: <FundOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.totalReturnRate) },
+              { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: "按实际现金流日期年化", icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
             ]}
           />
           <section className="workspace-panel live-performance-panel">
@@ -296,7 +304,7 @@ export function PositionsPage() {
             {!overview.data.hasLedgerEntries ? (
               <LiveEmpty
                 title="暂无实盘流水"
-                description="先在交易流水页录入资金或证券事实，持仓将在保存后自动重建。"
+                description="先在交易流水页录入买入、卖出或分红事实，持仓将在保存后自动重建。"
                 action={
                   <Button type="primary" onClick={() => navigate("/trades")}>
                     前往交易流水
@@ -306,7 +314,7 @@ export function PositionsPage() {
             ) : !overview.data.positions.length ? (
               <LiveEmpty
                 title="当前无持仓"
-                description="本地已有资金记录，但当前没有可展示的证券持仓。"
+                description="本地已有投资事实，但当前没有可展示的证券持仓；已清仓收益仍保留在累计指标中。"
                 action={<Button onClick={() => navigate("/trades")}>查看交易流水</Button>}
               />
             ) : rows.length ? (
@@ -348,6 +356,10 @@ export function PositionsPage() {
               <div><span>最新市值</span><strong>{money(detail.marketValue)}</strong></div>
               <div><span>累计分红</span><strong>{money(detail.cumulativeDividend)}</strong></div>
               <div><span>总收益</span><strong className={pnlClass(detail.totalReturn)}>{money(detail.totalReturn, true)}</strong></div>
+              <div><span>累计买入支出</span><strong>{money(detail.cumulativeBuySpend)}</strong></div>
+              <div><span>累计卖出净收入</span><strong>{money(detail.cumulativeSellNetIncome)}</strong></div>
+              <div><span>累计净投入</span><strong>{money(detail.netInvestment)}</strong></div>
+              <div><span>XIRR</span><strong className={pnlClass(detail.xirr)}>{percent(detail.xirr, true)}</strong></div>
             </div>
             <h3>区间表现</h3>
             <div className="drawer-performance">

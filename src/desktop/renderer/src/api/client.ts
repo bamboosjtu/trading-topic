@@ -3,6 +3,7 @@ import type {
   BacktestWorkspaceState,
   DesktopApi,
   IncomeCalendarQuery,
+  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
 } from "../../../shared/contracts";
@@ -42,11 +43,12 @@ export const api = {
   previewLedger: (input: LedgerEntryInput, replacingEntryId?: string) =>
     bridge().previewLedger(input, replacingEntryId),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
+  addDividendReinvestment: (input: DividendReinvestmentInput) =>
+    bridge().addDividendReinvestment(input),
   correctLedger: (entryId: string, input: LedgerEntryInput) =>
     bridge().correctLedger(entryId, input),
   reverseLedger: (entryId: string, reason: string) =>
     bridge().reverseLedger(entryId, reason),
-  accountSummary: () => bridge().accountSummary(),
   getSettings: () => bridge().getSettings(),
   exportBackup: () => bridge().exportBackup(),
   restoreBackup: () => bridge().restoreBackup(),
@@ -54,7 +56,6 @@ export const api = {
 };
 
 export type {
-  AccountSummary,
   AdjustedBar,
   AppSettings,
   BacktestExperiment,
@@ -66,6 +67,8 @@ export type {
   BacktestWorkspaceState,
   ChartDataState,
   EntryType,
+  DividendReinvestmentInput,
+  DividendReinvestmentResult,
   HealthResponse,
   IncomeCalendarQuery,
   IncomeCalendarDay,

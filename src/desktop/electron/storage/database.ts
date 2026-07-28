@@ -11,13 +11,14 @@ import type {
   BacktestWorkspaceState,
   DividendEvent,
   LedgerEntry,
+  MarketDataProvenance,
   PricePoint,
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 8;
 const DEFAULT_SETTINGS: AppSettings = {
-  priceSource: "tencent",
+  priceSource: "tencent_sina",
   dividendSource: "eastmoney",
   commissionRate: 0,
   minimumCommission: 0,
@@ -35,14 +36,26 @@ interface BackupPayload {
     trade_date: string;
     close: number;
     source: string;
+    primary_source: string;
+    fallback_used: number;
+    fallback_reason: string | null;
     fetched_at: string;
+    data_cutoff: string;
+    adjustment: "none" | "qfq";
   }>;
   liveMarketPrices: Array<{
     symbol: string;
     trade_date: string;
     close: number;
     source: string;
+    primary_source: string;
+    fallback_used: number;
+    fallback_reason: string | null;
     fetched_at: string;
+    data_cutoff: string;
+    adjustment: "none" | "qfq";
+    requested_from: string;
+    requested_through: string;
   }>;
   corporateActions: Array<{
     symbol: string;
@@ -65,16 +78,24 @@ export interface MarketDataCacheEntry {
   symbol: string;
   prices: PricePoint[];
   dividends: DividendEvent[];
-  source: string;
-  fetchedAt: string;
+  provenance: MarketDataProvenance & { caliberVersion: string };
+  requestedFrom?: string;
+  requestedThrough?: string;
 }
 
 export interface StoredMarketPrice {
   symbol: string;
   date: string;
   close: number;
-  source: string;
+  source: "tencent" | "sina";
+  primarySource: "tencent";
+  fallbackUsed: boolean;
+  fallbackReason?: string;
   fetchedAt: string;
+  dataCutoff: string;
+  adjustment: "none" | "qfq";
+  requestedFrom?: string;
+  requestedThrough?: string;
 }
 
 function rows<T>(
@@ -114,12 +135,23 @@ export class LocalDatabase {
         DROP TABLE IF EXISTS backtest_workspace;
       `);
     }
+    if (currentVersion < 8) {
+      // R1 尚无用户数据：领域模型收敛后直接重建投资事实与行情缓存，
+      // 不保留旧事实类型或旧来源字段的兼容层。
+      this.database.exec(`
+        DROP TABLE IF EXISTS ledger_entries;
+        DROP TABLE IF EXISTS market_prices;
+        DROP TABLE IF EXISTS live_market_prices;
+        DROP TABLE IF EXISTS settings;
+      `);
+    }
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS ledger_entries (
         id TEXT PRIMARY KEY,
         business_date TEXT NOT NULL,
         recorded_at TEXT NOT NULL,
-        type TEXT NOT NULL,
+        type TEXT NOT NULL
+          CHECK (type IN ('buy', 'sell', 'dividend', 'adjustment')),
         payload_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS backtest_experiments (
@@ -145,16 +177,28 @@ export class LocalDatabase {
         symbol TEXT NOT NULL,
         trade_date TEXT NOT NULL,
         close REAL NOT NULL,
-        source TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('tencent', 'sina')),
+        primary_source TEXT NOT NULL CHECK (primary_source = 'tencent'),
+        fallback_used INTEGER NOT NULL CHECK (fallback_used IN (0, 1)),
+        fallback_reason TEXT,
         fetched_at TEXT NOT NULL,
+        data_cutoff TEXT NOT NULL,
+        adjustment TEXT NOT NULL CHECK (adjustment IN ('none', 'qfq')),
         PRIMARY KEY (symbol, trade_date)
       );
       CREATE TABLE IF NOT EXISTS live_market_prices (
         symbol TEXT NOT NULL,
         trade_date TEXT NOT NULL,
         close REAL NOT NULL,
-        source TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('tencent', 'sina')),
+        primary_source TEXT NOT NULL CHECK (primary_source = 'tencent'),
+        fallback_used INTEGER NOT NULL CHECK (fallback_used IN (0, 1)),
+        fallback_reason TEXT,
         fetched_at TEXT NOT NULL,
+        data_cutoff TEXT NOT NULL,
+        adjustment TEXT NOT NULL CHECK (adjustment IN ('none', 'qfq')),
+        requested_from TEXT NOT NULL,
+        requested_through TEXT NOT NULL,
         PRIMARY KEY (symbol, trade_date)
       );
       CREATE TABLE IF NOT EXISTS corporate_actions (
@@ -484,7 +528,10 @@ export class LocalDatabase {
 
   private insertMarketData(entry: MarketDataCacheEntry): void {
     const insertPrice = this.database.prepare(
-      "INSERT OR REPLACE INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      `INSERT OR REPLACE INTO market_prices(
+         symbol, trade_date, close, source, primary_source, fallback_used,
+         fallback_reason, fetched_at, data_cutoff, adjustment
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertAction = this.database.prepare(
       "INSERT OR REPLACE INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
@@ -494,8 +541,13 @@ export class LocalDatabase {
         entry.symbol,
         row.date,
         row.close,
-        entry.source,
-        entry.fetchedAt,
+        entry.provenance.source,
+        entry.provenance.primarySource ?? "tencent",
+        entry.provenance.fallbackUsed ? 1 : 0,
+        entry.provenance.fallbackReason ?? null,
+        entry.provenance.fetchedAt,
+        entry.provenance.dataCutoff,
+        entry.provenance.adjustment,
       );
     }
     for (const event of entry.dividends) {
@@ -503,15 +555,13 @@ export class LocalDatabase {
     }
   }
 
-  saveMarketPriceSnapshots(entries: MarketDataCacheEntry[]): void {
-    this.database.transaction(() => {
-      for (const entry of entries) this.insertMarketData(entry);
-    })();
-  }
-
   saveLiveMarketPriceSnapshots(entries: MarketDataCacheEntry[]): void {
     const insertPrice = this.database.prepare(
-      "INSERT OR REPLACE INTO live_market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      `INSERT OR REPLACE INTO live_market_prices(
+         symbol, trade_date, close, source, primary_source, fallback_used,
+         fallback_reason, fetched_at, data_cutoff, adjustment,
+         requested_from, requested_through
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.database.transaction(() => {
       for (const entry of entries) {
@@ -520,8 +570,15 @@ export class LocalDatabase {
             entry.symbol,
             row.date,
             row.close,
-            entry.source,
-            entry.fetchedAt,
+            entry.provenance.source,
+            entry.provenance.primarySource ?? "tencent",
+            entry.provenance.fallbackUsed ? 1 : 0,
+            entry.provenance.fallbackReason ?? null,
+            entry.provenance.fetchedAt,
+            entry.provenance.dataCutoff,
+            entry.provenance.adjustment,
+            entry.requestedFrom ?? entry.prices[0]?.date ?? entry.provenance.dataCutoff,
+            entry.requestedThrough ?? entry.provenance.dataCutoff,
           );
         }
       }
@@ -539,10 +596,19 @@ export class LocalDatabase {
       trade_date: string;
       close: number;
       source: string;
+      primary_source: string;
+      fallback_used: number;
+      fallback_reason: string | null;
       fetched_at: string;
+      data_cutoff: string;
+      adjustment: "none" | "qfq";
+      requested_from: string;
+      requested_through: string;
     }>(
       this.database,
-      `SELECT symbol, trade_date, close, source, fetched_at
+      `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
+              fallback_reason, fetched_at, data_cutoff, adjustment,
+              requested_from, requested_through
        FROM live_market_prices
        ${where}
        ORDER BY symbol, trade_date`,
@@ -551,30 +617,25 @@ export class LocalDatabase {
       symbol: row.symbol,
       date: row.trade_date,
       close: row.close,
-      source: row.source,
+      source: row.source as "tencent" | "sina",
+      primarySource: row.primary_source as "tencent",
+      fallbackUsed: Boolean(row.fallback_used),
+      ...(row.fallback_reason
+        ? { fallbackReason: row.fallback_reason }
+        : {}),
       fetchedAt: row.fetched_at,
+      dataCutoff: row.data_cutoff,
+      adjustment: row.adjustment,
+      requestedFrom: row.requested_from,
+      requestedThrough: row.requested_through,
     }));
   }
 
-  latestLivePrices(): {
-    prices: Record<string, number>;
-    dataCutoff: string | null;
-  } {
-    const result = rows<{ symbol: string; trade_date: string; close: number }>(
+  listLiveMarketDates(): string[] {
+    return rows<{ trade_date: string }>(
       this.database,
-      `SELECT p.symbol, p.trade_date, p.close
-       FROM live_market_prices p
-       JOIN (
-         SELECT symbol, MAX(trade_date) AS max_date
-         FROM live_market_prices GROUP BY symbol
-       ) latest ON latest.symbol = p.symbol AND latest.max_date = p.trade_date`,
-    );
-    return {
-      prices: Object.fromEntries(result.map((row) => [row.symbol, row.close])),
-      dataCutoff: result.length
-        ? result.map((row) => row.trade_date).sort().at(-1)!
-        : null,
-    };
+      "SELECT DISTINCT trade_date FROM live_market_prices ORDER BY trade_date",
+    ).map((row) => row.trade_date);
   }
 
   listMarketPrices(symbols?: readonly string[]): StoredMarketPrice[] {
@@ -586,10 +647,16 @@ export class LocalDatabase {
         trade_date: string;
         close: number;
         source: string;
+        primary_source: string;
+        fallback_used: number;
+        fallback_reason: string | null;
         fetched_at: string;
+        data_cutoff: string;
+        adjustment: "none" | "qfq";
       }>(
         this.database,
-        `SELECT symbol, trade_date, close, source, fetched_at
+        `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
+                fallback_reason, fetched_at, data_cutoff, adjustment
          FROM market_prices
          WHERE symbol IN (${placeholders})
          ORDER BY symbol, trade_date`,
@@ -598,8 +665,15 @@ export class LocalDatabase {
         symbol: row.symbol,
         date: row.trade_date,
         close: row.close,
-        source: row.source,
+        source: row.source as "tencent" | "sina",
+        primarySource: row.primary_source as "tencent",
+        fallbackUsed: Boolean(row.fallback_used),
+        ...(row.fallback_reason
+          ? { fallbackReason: row.fallback_reason }
+          : {}),
         fetchedAt: row.fetched_at,
+        dataCutoff: row.data_cutoff,
+        adjustment: row.adjustment,
       }));
     }
     return rows<{
@@ -607,18 +681,31 @@ export class LocalDatabase {
       trade_date: string;
       close: number;
       source: string;
+      primary_source: string;
+      fallback_used: number;
+      fallback_reason: string | null;
       fetched_at: string;
+      data_cutoff: string;
+      adjustment: "none" | "qfq";
     }>(
       this.database,
-      `SELECT symbol, trade_date, close, source, fetched_at
+      `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
+              fallback_reason, fetched_at, data_cutoff, adjustment
        FROM market_prices
        ORDER BY symbol, trade_date`,
     ).map((row) => ({
       symbol: row.symbol,
       date: row.trade_date,
       close: row.close,
-      source: row.source,
+      source: row.source as "tencent" | "sina",
+      primarySource: row.primary_source as "tencent",
+      fallbackUsed: Boolean(row.fallback_used),
+      ...(row.fallback_reason
+        ? { fallbackReason: row.fallback_reason }
+        : {}),
       fetchedAt: row.fetched_at,
+      dataCutoff: row.data_cutoff,
+      adjustment: row.adjustment,
     }));
   }
 
@@ -651,11 +738,17 @@ export class LocalDatabase {
       ).map((summary) => this.getBacktestExperiment(summary.experimentId)!),
       marketPrices: rows(
         this.database,
-        "SELECT symbol, trade_date, close, source, fetched_at FROM market_prices ORDER BY symbol, trade_date",
+        `SELECT symbol, trade_date, close, source, primary_source,
+                fallback_used, fallback_reason, fetched_at, data_cutoff,
+                adjustment
+         FROM market_prices ORDER BY symbol, trade_date`,
       ),
       liveMarketPrices: rows(
         this.database,
-        "SELECT symbol, trade_date, close, source, fetched_at FROM live_market_prices ORDER BY symbol, trade_date",
+        `SELECT symbol, trade_date, close, source, primary_source,
+                fallback_used, fallback_reason, fetched_at, data_cutoff,
+                adjustment, requested_from, requested_through
+         FROM live_market_prices ORDER BY symbol, trade_date`,
       ),
       corporateActions: rows(
         this.database,
@@ -685,6 +778,32 @@ export class LocalDatabase {
       throw new Error("备份结构或 schema 版本不兼容");
     }
     const backup = payload as BackupPayload;
+    const allowedEntryTypes = new Set([
+      "buy",
+      "sell",
+      "dividend",
+      "adjustment",
+    ]);
+    if (
+      backup.ledgerEntries.some(
+        (entry) => !allowedEntryTypes.has(entry.type),
+      )
+    ) {
+      throw new Error("备份包含不属于 R1 的投资事实类型");
+    }
+    const invalidMarketRow = [
+      ...backup.marketPrices,
+      ...backup.liveMarketPrices,
+    ].some(
+      (row) =>
+        !["tencent", "sina"].includes(row.source) ||
+        row.primary_source !== "tencent" ||
+        ![0, 1].includes(row.fallback_used) ||
+        !["none", "qfq"].includes(row.adjustment),
+    );
+    if (invalidMarketRow) {
+      throw new Error("备份包含非法行情来源或复权口径");
+    }
     this.database.transaction(() => {
       this.database.exec(`
         DELETE FROM ledger_entries;
@@ -713,7 +832,10 @@ export class LocalDatabase {
         this.insertExperiment(experiment);
       }
       const insertPrice = this.database.prepare(
-        "INSERT INTO market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO market_prices(
+           symbol, trade_date, close, source, primary_source, fallback_used,
+           fallback_reason, fetched_at, data_cutoff, adjustment
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const row of backup.marketPrices) {
         insertPrice.run(
@@ -721,11 +843,20 @@ export class LocalDatabase {
           row.trade_date,
           row.close,
           row.source,
+          row.primary_source,
+          row.fallback_used,
+          row.fallback_reason,
           row.fetched_at,
+          row.data_cutoff,
+          row.adjustment,
         );
       }
       const insertLivePrice = this.database.prepare(
-        "INSERT INTO live_market_prices(symbol, trade_date, close, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO live_market_prices(
+           symbol, trade_date, close, source, primary_source, fallback_used,
+           fallback_reason, fetched_at, data_cutoff, adjustment,
+           requested_from, requested_through
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const row of backup.liveMarketPrices) {
         insertLivePrice.run(
@@ -733,7 +864,14 @@ export class LocalDatabase {
           row.trade_date,
           row.close,
           row.source,
+          row.primary_source,
+          row.fallback_used,
+          row.fallback_reason,
           row.fetched_at,
+          row.data_cutoff,
+          row.adjustment,
+          row.requested_from,
+          row.requested_through,
         );
       }
       const insertAction = this.database.prepare(

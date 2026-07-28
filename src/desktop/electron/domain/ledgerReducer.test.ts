@@ -24,7 +24,7 @@ function row(
   };
 }
 
-describe("唯一账本归约规则", () => {
+describe("投资事实归约", () => {
   it("同日按录入时间升序归约，所有消费者取得相同有效顺序", () => {
     const entries = [
       row("sell", "sell", "2026-07-02", "2026-07-02T10:00:00Z", {
@@ -38,57 +38,78 @@ describe("唯一账本归约规则", () => {
         quantity: 37,
       }),
     ];
-    const active = activeLedgerEntries(entries, "2026-07-02");
-    expect(active.effective.map((entry) => entry.id)).toEqual(["buy", "sell"]);
-    expect([...entries].sort(canonicalLedgerOrder).map((entry) => entry.id))
+    expect(activeLedgerEntries(entries, "2026-07-02").effective.map((item) => item.id))
+      .toEqual(["buy", "sell"]);
+    expect([...entries].sort(canonicalLedgerOrder).map((item) => item.id))
       .toEqual(["buy", "sell"]);
     expect(reduceLedger(entries, "2026-07-02").positions.get("601398")?.quantity)
       .toBe(0);
   });
 
-  it("截止日过滤未来事实，逆回购未到期只确认本金，到期才确认收益", () => {
+  it("仅凭买入、卖出和分红即可计算净投入", () => {
     const entries = [
-      row("cash", "transfer_in", "2026-07-01", "2026-07-01T01:00:00Z", {
-        amount: 2_000,
+      row("buy", "buy", "2026-07-01", "2026-07-01T01:00:00Z", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+        fee: 5,
       }),
-      row("repo", "reverse_repo", "2026-07-02", "2026-07-02T01:00:00Z", {
-        amount: 1_000,
-        maturityDate: "2026-07-10",
-        maturityAmount: 1_010,
+      row("dividend", "dividend", "2026-07-02", "2026-07-02T01:00:00Z", {
+        symbol: "601398",
+        amount: 20,
       }),
-      row("future", "transfer_out", "2026-07-20", "2026-07-02T02:00:00Z", {
-        amount: 500,
+      row("sell", "sell", "2026-07-03", "2026-07-03T01:00:00Z", {
+        symbol: "601398",
+        price: 6,
+        quantity: 40,
+        fee: 2,
       }),
     ];
-
-    expect(reduceLedger(entries, "2026-07-05")).toMatchObject({
-      cash: 1_000,
-      reverseRepoAsset: 1_000,
-      reverseRepoIncome: 0,
-      transferOut: 0,
+    const state = reduceLedger(entries, "2026-07-03");
+    expect(state).toMatchObject({
+      cumulativeBuySpend: 505,
+      cumulativeSellNetIncome: 238,
+      cumulativeDividend: 20,
+      netInvestment: 247,
     });
-    expect(reduceLedger(entries, "2026-07-10")).toMatchObject({
-      cash: 2_010,
-      reverseRepoAsset: 0,
-      reverseRepoIncome: 10,
-      transferOut: 0,
+    expect(state.positions.get("601398")).toMatchObject({
+      quantity: 60,
+      cost: 303,
+      realizedPnl: 36,
     });
   });
 
-  it("历史修正只在修正业务日生效，不会在此前时点重复应用替代记录", () => {
+  it("修正采用历史重述：历史月份和当前累计使用相同有效版本", () => {
     const entries = [
-      row("old", "transfer_in", "2026-07-01", "2026-07-01T01:00:00Z", {
-        amount: 1_000,
+      row("old", "buy", "2026-01-02", "2026-01-02T01:00:00Z", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
       }),
-      row("replacement", "transfer_in", "2026-07-01", "2026-07-10T01:00:01Z", {
-        amount: 2_000,
-        correctsEntryId: "old",
-      }),
-      row("adjust", "adjustment", "2026-07-10", "2026-07-10T01:00:00Z", {
+      row("adjust", "adjustment", "2026-01-02", "2026-07-10T01:00:00Z", {
+        correctedAt: "2026-07-10T01:00:00Z",
         reversesEntryId: "old",
       }),
+      row("replacement", "buy", "2026-01-02", "2026-07-10T01:00:01Z", {
+        correctedAt: "2026-07-10T01:00:00Z",
+        correctsEntryId: "old",
+        symbol: "601398",
+        price: 4,
+        quantity: 100,
+      }),
     ];
-    expect(reduceLedger(entries, "2026-07-09").cash).toBe(1_000);
-    expect(reduceLedger(entries, "2026-07-10").cash).toBe(2_000);
+    expect(reduceLedger(entries, "2026-01-31").cumulativeBuySpend).toBe(400);
+    expect(reduceLedger(entries, "2026-07-31").cumulativeBuySpend).toBe(400);
+  });
+
+  it("截止日只过滤有效投资事实，不让未来买入污染当前持仓", () => {
+    const entries = [
+      row("future", "buy", "2026-08-01", "2026-07-28T01:00:00Z", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+    ];
+    expect(reduceLedger(entries, "2026-07-28").positions.size).toBe(0);
   });
 });

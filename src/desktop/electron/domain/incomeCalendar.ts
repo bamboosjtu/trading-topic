@@ -49,6 +49,7 @@ export function buildIncomeCalendar(
   stocks: readonly StockInfo[],
   query: IncomeCalendarQuery,
   externalIssues: readonly string[] = [],
+  requestedCutoff = monthEnd(query.month),
 ): IncomeCalendarView {
   if (!/^\d{4}-\d{2}$/.test(query.month)) {
     throw new Error("收益月份必须使用 YYYY-MM 格式");
@@ -58,7 +59,7 @@ export function buildIncomeCalendar(
     prices,
     stocks,
     "history",
-    monthEnd(query.month),
+    requestedCutoff,
   );
   const names = namesMap(stocks, entries);
   const activeSymbols = new Set(
@@ -112,23 +113,16 @@ export function buildIncomeCalendar(
         0,
       ),
     );
-    // 逆回购属于账户级收益：当前持仓口径仍展示，单标的口径不分摊。
-    const reverseRepoIncome = query.symbol ? 0 : day.reverseRepoIncome;
-    const scopedTotalPnl =
-      totalPnl === null
-        ? null
-        : roundMoney(totalPnl + reverseRepoIncome);
     return {
       ...day,
-      totalPnl: scopedTotalPnl,
+      totalPnl,
       marketPricePnl,
       dividendPnl,
       tradingCostPnl,
-      reverseRepoIncome,
       capitalBase,
       returnRate:
-        scopedTotalPnl !== null && capitalBase > 0
-          ? scopedTotalPnl / capitalBase
+        totalPnl !== null && capitalBase > 0
+          ? totalPnl / capitalBase
           : null,
       contributions: selectedContributions,
       events: day.events.filter((event) =>
@@ -156,7 +150,6 @@ export function buildIncomeCalendar(
       marketPricePnl: day.marketPricePnl,
       dividendPnl: day.dividendPnl,
       tradingCostPnl: day.tradingCostPnl,
-      reverseRepoIncome: day.reverseRepoIncome,
       returnRate: day.returnRate,
       hasMarketData: day.hasMarketData,
       isPartial: day.isPartial,
@@ -168,7 +161,6 @@ export function buildIncomeCalendar(
           marketPricePnl: contribution.marketPricePnl,
           dividendPnl: contribution.dividendPnl,
           tradingCostPnl: contribution.tradingCostPnl,
-          reverseRepoIncome: contribution.reverseRepoIncome,
           totalPnl: contribution.totalPnl,
         }))
         .sort(
@@ -204,7 +196,11 @@ export function buildIncomeCalendar(
       monthDays.some((day) => day.isPartial)
         ? ["所选月份存在缺失行情，部分收益无法计算", ...externalIssues]
         : [...externalIssues],
+      // 已结束历史月份只判断所需区间是否完整，不因距今天较久标记过期。
+      query.month >= currentMarketDate().slice(0, 7),
     ),
+    provenance: model.provenance,
+    valuationSource: model.priceSource,
     month: query.month,
     scope: query.scope,
     symbol: query.symbol ?? null,
@@ -218,7 +214,6 @@ export function buildIncomeCalendar(
       marketPrice: monthMarketPrice,
       dividend: monthDividend,
       tradingCost: incomeMetric(monthDays, (day) => day.tradingCostPnl),
-      reverseRepo: incomeMetric(monthDays, (day) => day.reverseRepoIncome),
       cumulative: incomeMetric(throughMonth, (day) => day.totalPnl),
       yearToDate: incomeMetric(yearToDate, (day) => day.totalPnl),
     },

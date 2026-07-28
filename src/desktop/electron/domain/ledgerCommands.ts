@@ -4,18 +4,14 @@ import type {
   LedgerImpactPreview,
   LedgerImpactState,
 } from "../../shared/contracts";
-import { rebuildAccount } from "./ledger";
 import { roundMoney } from "./finance";
 import { currentMarketDate, validDate } from "./dateUtils";
-import { activeLedgerEntries } from "./ledgerReducer";
+import { reduceLedger } from "./ledgerReducer";
 
 const DIRECT_ENTRY_TYPES = new Set<LedgerEntryInput["type"]>([
-  "transfer_in",
   "buy",
   "sell",
   "dividend",
-  "reverse_repo",
-  "transfer_out",
 ]);
 
 function requireFinite(
@@ -33,8 +29,10 @@ function requireFinite(
   }
   if (
     options.decimals !== undefined &&
-    Math.abs(number * 10 ** options.decimals -
-      Math.round(number * 10 ** options.decimals)) > 1e-7
+    Math.abs(
+      number * 10 ** options.decimals -
+        Math.round(number * 10 ** options.decimals),
+    ) > 1e-7
   ) {
     throw new Error(`${label}最多保留 ${options.decimals} 位小数`);
   }
@@ -68,50 +66,42 @@ export function normalizeLedgerInput(
   if (input.businessDate > marketDate) {
     throw new Error(`业务日期不能晚于当前 A 股市场日期 ${marketDate}`);
   }
+  if (!input.symbol || !/^\d{6}$/.test(input.symbol)) {
+    throw new Error("请输入有效的 6 位证券代码");
+  }
   if (
     input.securityType !== undefined &&
     !["stock", "etf"].includes(input.securityType)
   ) {
     throw new Error("资产类型只支持股票或 ETF");
   }
-  const fee = optionalFinite(input.fee, "交易费用", 2) ?? 0;
   const normalized: LedgerEntryInput = {
     type: input.type,
     businessDate: input.businessDate,
+    symbol: input.symbol,
+    instrumentName: cleanText(input.instrumentName),
+    securityType: input.securityType ?? "stock",
     note: cleanText(input.note),
+    linkedGroupId: cleanText(input.linkedGroupId),
   };
 
-  if (["buy", "sell", "dividend"].includes(input.type)) {
-    if (!input.symbol || !/^\d{6}$/.test(input.symbol)) {
-      throw new Error("请输入有效的 6 位证券代码");
-    }
-    normalized.symbol = input.symbol;
-    normalized.instrumentName = cleanText(input.instrumentName);
-    normalized.securityType = input.securityType ?? "stock";
-  }
-
   if (input.type === "buy" || input.type === "sell") {
-    const price = requireFinite(input.price, "成交价格", {
+    normalized.price = requireFinite(input.price, "成交价格", {
       positive: true,
       decimals: 4,
     });
-    const quantity = requireFinite(input.quantity, "交易数量", {
+    normalized.quantity = requireFinite(input.quantity, "交易数量", {
       positive: true,
       integer: true,
     });
-    normalized.price = price;
-    normalized.quantity = quantity;
-    normalized.fee = fee;
-  }
-
-  if (["transfer_in", "transfer_out", "dividend"].includes(input.type)) {
-    normalized.amount = requireFinite(input.amount, "金额", {
-      positive: true,
-      decimals: 2,
-    });
+    normalized.fee = optionalFinite(input.fee, "交易费用", 2) ?? 0;
   }
 
   if (input.type === "dividend") {
+    normalized.amount = requireFinite(input.amount, "分红到账金额", {
+      positive: true,
+      decimals: 2,
+    });
     normalized.perShare = optionalFinite(input.perShare, "每股分红", 6);
     if (input.recordDate && !validDate(input.recordDate)) {
       throw new Error("登记日必须使用合法的 YYYY-MM-DD");
@@ -136,45 +126,6 @@ export function normalizeLedgerInput(
     normalized.paymentDate = input.paymentDate;
   }
 
-  if (input.type === "reverse_repo") {
-    const amount = requireFinite(input.amount, "逆回购本金", {
-      positive: true,
-      decimals: 2,
-    });
-    const annualRate = optionalFinite(
-      input.annualRate,
-      "成交年化收益率",
-      6,
-    );
-    const termDays =
-      input.termDays === undefined
-        ? undefined
-        : requireFinite(input.termDays, "名义期限", {
-            positive: true,
-            integer: true,
-          });
-    const repoCode = cleanText(input.repoCode);
-    if (!repoCode) throw new Error("逆回购代码或品种不能为空");
-    if (!input.maturityDate || !validDate(input.maturityDate)) {
-      throw new Error("逆回购到期日必须使用合法的 YYYY-MM-DD");
-    }
-    const maturityDate = input.maturityDate;
-    if (maturityDate < input.businessDate) {
-      throw new Error("逆回购到期日不能早于成交日");
-    }
-    const maturityAmount = requireFinite(input.maturityAmount, "实际到期金额", {
-      positive: true,
-      decimals: 2,
-    });
-    normalized.repoCode = repoCode;
-    normalized.amount = amount;
-    normalized.annualRate = annualRate;
-    normalized.termDays = termDays;
-    normalized.fee = fee;
-    normalized.maturityDate = maturityDate;
-    normalized.maturityAmount = maturityAmount;
-  }
-
   return normalized;
 }
 
@@ -190,28 +141,18 @@ function previewEntry(input: LedgerEntryInput): LedgerEntry {
 
 function reversalEntry(
   entryId: string,
-  businessDate: string,
+  correctedAt: string,
 ): LedgerEntry {
   return {
     id: `__reversal__${entryId}`,
     type: "adjustment",
-    businessDate,
-    recordedAt: "9999-12-31T23:59:59.998Z",
+    businessDate: currentMarketDate(new Date(correctedAt)),
+    recordedAt: correctedAt,
+    correctedAt,
     currency: "CNY",
     source: "system",
     reversesEntryId: entryId,
   };
-}
-
-function totalDividend(
-  entries: readonly LedgerEntry[],
-  asOf: string,
-): number {
-  return roundMoney(
-    activeLedgerEntries(entries, asOf).effective
-      .filter((entry) => entry.type === "dividend")
-      .reduce((sum, entry) => sum + (entry.amount ?? 0), 0),
-  );
 }
 
 function impactState(
@@ -219,16 +160,15 @@ function impactState(
   symbol: string | undefined,
   asOf: string,
 ): LedgerImpactState {
-  const summary = rebuildAccount([...entries], {}, asOf);
-  const position = symbol
-    ? summary.positions.find((item) => item.symbol === symbol)
-    : undefined;
+  const state = reduceLedger(entries, asOf);
+  const position = symbol ? state.positions.get(symbol) : undefined;
   return {
-    availableCash: summary.availableCash,
     holdingQuantity: position?.quantity ?? 0,
     holdingCost: position?.cost ?? 0,
-    cumulativeDividend: totalDividend(entries, asOf),
-    pendingReverseRepoAsset: summary.reverseRepoAsset,
+    cumulativeBuySpend: state.cumulativeBuySpend,
+    cumulativeSellNetIncome: state.cumulativeSellNetIncome,
+    cumulativeDividend: state.cumulativeDividend,
+    netInvestment: state.netInvestment,
   };
 }
 
@@ -251,12 +191,14 @@ export function previewLedgerMutation(
     throw new Error("该流水已经被冲正或修正");
   }
 
+  const correctedAt = new Date().toISOString();
   const afterEntries = replacingEntryId
     ? [
         ...entries,
-        reversalEntry(replacingEntryId, asOf),
+        reversalEntry(replacingEntryId, correctedAt),
         {
           ...previewEntry(normalizedInput),
+          correctedAt,
           correctsEntryId: replacingEntryId,
         },
       ]
@@ -269,17 +211,13 @@ export function previewLedgerMutation(
           (normalizedInput.price ?? 0) * (normalizedInput.quantity ?? 0),
         )
       : normalizedInput.amount ?? 0;
-  const warnings: string[] = [];
-  if (after.availableCash < 0) {
-    warnings.push("本次记录后可用现金为负，请确认是否遗漏资金转入流水。");
-  }
   return {
     normalizedInput,
     symbol: normalizedInput.symbol ?? null,
     tradeAmount,
     before,
     after,
-    warnings,
+    warnings: [],
   };
 }
 
@@ -294,5 +232,8 @@ export function assertLedgerReversal(
   if (entries.some((entry) => entry.reversesEntryId === entryId)) {
     throw new Error("该流水已经被冲正或修正");
   }
-  rebuildAccount([...entries, reversalEntry(entryId, asOf)], {}, asOf);
+  reduceLedger(
+    [...entries, reversalEntry(entryId, new Date().toISOString())],
+    asOf,
+  );
 }

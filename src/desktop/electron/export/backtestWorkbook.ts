@@ -88,9 +88,17 @@ function addSummarySheet(
     { header: "最大回撤", key: "maxDrawdown", width: 12 },
     { header: "累计分红", key: "totalDividend", width: 16 },
     { header: "期末现金", key: "endingCash", width: 14 },
+    { header: "行情实际来源", key: "marketSource", width: 16 },
+    { header: "主行情源", key: "primarySource", width: 14 },
+    { header: "备用源切换原因", key: "fallbackReason", width: 34 },
+    { header: "行情截止", key: "marketCutoff", width: 14 },
+    { header: "复权方式", key: "adjustment", width: 12 },
     { header: "告警与口径说明", key: "warnings", width: 48 },
   ];
   for (const result of results) {
+    const market = result.provenance.find((item) =>
+      ["tencent", "sina"].includes(item.source),
+    );
     worksheet.addRow({
       symbol: result.symbol,
       name: result.name,
@@ -108,6 +116,16 @@ function addSummarySheet(
       maxDrawdown: result.metrics.maxDrawdown,
       totalDividend: result.metrics.totalDividend,
       endingCash: result.metrics.endingCash,
+      marketSource: market?.source ?? "—",
+      primarySource: market?.primarySource ?? "—",
+      fallbackReason: market?.fallbackReason ?? "—",
+      marketCutoff: market?.dataCutoff ?? "—",
+      adjustment:
+        market?.adjustment === "qfq"
+          ? "前复权"
+          : market
+            ? "不复权"
+            : "—",
       warnings: result.warnings.join("\n"),
     });
   }

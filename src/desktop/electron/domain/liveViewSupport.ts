@@ -4,7 +4,15 @@ import type {
   SecurityType,
   StockInfo,
 } from "../../shared/contracts";
-import { ledgerEntryAmount } from "./ledgerReducer";
+import { activeLedgerEntries, ledgerEntryAmount } from "./ledgerReducer";
+
+function recordedOrder(left: LedgerEntry, right: LedgerEntry): number {
+  return (
+    left.recordedAt.localeCompare(right.recordedAt) ||
+    left.businessDate.localeCompare(right.businessDate) ||
+    left.id.localeCompare(right.id)
+  );
+}
 
 export function inferSecurityType(
   symbol: string,
@@ -23,23 +31,29 @@ export function namesMap(
   stocks: readonly StockInfo[],
   entries: readonly LedgerEntry[] = [],
 ): Map<string, string> {
-  const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
-  for (const entry of entries) {
+  const names = new Map<string, string>();
+  for (const entry of activeLedgerEntries(entries).effective.sort(recordedOrder)) {
     if (entry.symbol && entry.instrumentName) {
       names.set(entry.symbol, entry.instrumentName);
     }
   }
+  // 完整证券目录是事实标准，优先级高于用户历史输入。
+  for (const stock of stocks) names.set(stock.symbol, stock.name);
   return names;
 }
 
 export function securityTypesMap(
+  stocks: readonly StockInfo[],
   entries: readonly LedgerEntry[],
 ): Map<string, SecurityType> {
   const result = new Map<string, SecurityType>();
-  for (const entry of entries) {
+  for (const entry of activeLedgerEntries(entries).effective.sort(recordedOrder)) {
     if (entry.symbol && entry.securityType) {
       result.set(entry.symbol, entry.securityType);
     }
+  }
+  for (const stock of stocks) {
+    result.set(stock.symbol, inferSecurityType(stock.symbol, stock.name));
   }
   return result;
 }
@@ -47,6 +61,7 @@ export function securityTypesMap(
 export function toLedgerRecord(
   entry: LedgerEntry,
   names: Map<string, string>,
+  securityTypes: Map<string, SecurityType>,
   reversedIds: Set<string>,
 ): LedgerRecordView {
   return {
@@ -56,7 +71,8 @@ export function toLedgerRecord(
     symbol: entry.symbol ?? null,
     name: entry.symbol ? (names.get(entry.symbol) ?? entry.symbol) : null,
     securityType: entry.symbol
-      ? entry.securityType ??
+      ? securityTypes.get(entry.symbol) ??
+        entry.securityType ??
         inferSecurityType(entry.symbol, names.get(entry.symbol))
       : null,
     quantity: entry.quantity ?? null,
@@ -68,14 +84,12 @@ export function toLedgerRecord(
         : null),
     fee: entry.fee ?? 0,
     note: entry.note ?? null,
-    repoCode: entry.repoCode ?? null,
-    annualRate: entry.annualRate ?? null,
-    termDays: entry.termDays ?? null,
-    maturityAmount: entry.maturityAmount ?? null,
-    maturityDate: entry.maturityDate ?? null,
     perShare: entry.perShare ?? null,
     recordDate: entry.recordDate ?? null,
     paymentDate: entry.paymentDate ?? null,
+    recordedAt: entry.recordedAt,
+    correctedAt: entry.correctedAt ?? null,
+    linkedGroupId: entry.linkedGroupId ?? null,
     isReversed: reversedIds.has(entry.id),
     reversesEntryId: entry.reversesEntryId ?? null,
     correctsEntryId: entry.correctsEntryId ?? null,

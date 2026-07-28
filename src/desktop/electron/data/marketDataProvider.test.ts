@@ -1,0 +1,119 @@
+import { describe, expect, it, vi } from "vitest";
+import type { MarketDataProvider } from "./marketDataProvider";
+import {
+  assertCrossProviderConsistency,
+  fetchWithProviderFallback,
+  validateAdjustedBars,
+} from "./marketDataProvider";
+
+function provider(
+  source: "tencent" | "sina",
+  close: number,
+): MarketDataProvider {
+  return {
+    source,
+    fetchPrices: vi.fn(async () => [
+      { date: "2026-07-27", close },
+      { date: "2026-07-28", close: close + 0.1 },
+    ]),
+    fetchAdjustedBars: vi.fn(async () => [
+      {
+        date: "2026-07-28",
+        open: close,
+        high: close + 0.2,
+        low: close - 0.1,
+        close: close + 0.1,
+        volume: 100,
+        adjustment: "qfq" as const,
+      },
+    ]),
+  };
+}
+
+describe("腾讯主源与新浪整段兜底", () => {
+  it("腾讯 HTTP 失败时由新浪获取同一完整区间并记录原因", async () => {
+    const primary = provider("tencent", 5);
+    vi.mocked(primary.fetchPrices).mockRejectedValueOnce(
+      new Error("HTTP 503"),
+    );
+    const fallback = provider("sina", 5);
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-27",
+      "2026-07-28",
+      primary,
+      fallback,
+      new Date("2026-07-28T08:00:00Z"),
+    );
+    expect(result.provenance).toMatchObject({
+      source: "sina",
+      primarySource: "tencent",
+      fallbackUsed: true,
+      fallbackReason: "HTTP 503",
+      dataCutoff: "2026-07-28",
+    });
+    expect(fallback.fetchPrices).toHaveBeenCalledWith(
+      "601398",
+      "2026-07-27",
+      "2026-07-28",
+    );
+  });
+
+  it("跨源重叠收盘价明显冲突时阻断计算", () => {
+    expect(() =>
+      assertCrossProviderConsistency(
+        [{ date: "2026-07-28", close: 5 }],
+        [{ date: "2026-07-28", close: 6 }],
+      ),
+    ).toThrow("腾讯与新浪行情结果不一致");
+  });
+
+  it("前复权 K 线兜底也执行跨源收盘价一致性校验", async () => {
+    const primary = provider("tencent", 5);
+    vi.mocked(primary.fetchAdjustedBars).mockImplementationOnce(async () => [
+      {
+        date: "2026-07-28",
+        open: 5,
+        high: 5.2,
+        low: 4.9,
+        close: 5.1,
+        volume: -1,
+        adjustment: "qfq",
+      },
+    ]);
+    const fallback = provider("sina", 6);
+
+    await expect(
+      fetchWithProviderFallback(
+        "bars",
+        "601398",
+        "2026-07-27",
+        "2026-07-28",
+        primary,
+        fallback,
+        new Date("2026-07-28T08:00:00Z"),
+      ),
+    ).rejects.toThrow("腾讯与新浪行情结果不一致");
+  });
+
+  it("严格校验 OHLC 关系和成交量", () => {
+    expect(() =>
+      validateAdjustedBars(
+        [
+          {
+            date: "2026-07-28",
+            open: 5,
+            high: 4.9,
+            low: 4.8,
+            close: 5.1,
+            volume: 100,
+            adjustment: "qfq",
+          },
+        ],
+        "601398",
+        "新浪",
+      ),
+    ).toThrow("OHLCV");
+  });
+});

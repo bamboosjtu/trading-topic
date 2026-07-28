@@ -162,7 +162,7 @@ export function IncomeCalendarPage() {
     <div className="live-page income-page">
       <LivePageHeader
         title="收益日历"
-        description="按日查看市场价格、现金分红、交易影响与逆回购收益；累计指标由领域层统一计算。"
+        description="按日查看市场价格收益、分红收益与交易影响；外部投入不被当作收益。"
         actions={
           <>
             <Button icon={<ArrowLeftOutlined />} aria-label="上一个月" onClick={() => moveMonth(-1)} />
@@ -221,7 +221,12 @@ export function IncomeCalendarPage() {
         </div>
         <div className="income-scope-note">
           <CalendarOutlined />
-          <span>{calendar.data?.scopeLabel ?? "全部历史持仓"} · {month}</span>
+          <span>
+            {calendar.data?.scopeLabel ?? "全部历史持仓"} · {month}
+            {calendar.data
+              ? ` · 截止 ${calendar.data.quality.dataCutoff ?? "—"} · ${calendar.data.valuationSource}`
+              : ""}
+          </span>
         </div>
       </section>
       {calendar.isLoading ? (
@@ -281,7 +286,6 @@ export function IncomeCalendarPage() {
                               价变 {money(day.marketPricePnl, true)}
                               {day.dividendPnl ? ` · 分红 ${money(day.dividendPnl)}` : ""}
                               {day.tradingCostPnl ? ` · 交易 ${money(day.tradingCostPnl, true)}` : ""}
-                              {day.reverseRepoIncome ? ` · 逆回购 ${money(day.reverseRepoIncome, true)}` : ""}
                             </small>
                             <i className={`calendar-heat ${direction} level-${level}`} />
                             {day.dividendPnl > 0 ? <b className="dividend-dot" title="当日有现金分红" /> : null}
@@ -323,10 +327,6 @@ export function IncomeCalendarPage() {
                         <span>交易影响</span>
                         <strong className={pnlClass(selectedDay.tradingCostPnl)}>{money(selectedDay.tradingCostPnl, true)}</strong>
                       </div>
-                      <div>
-                        <span>逆回购收益</span>
-                        <strong className={pnlClass(selectedDay.reverseRepoIncome)}>{money(selectedDay.reverseRepoIncome, true)}</strong>
-                      </div>
                     </div>
                     <h3>标的贡献</h3>
                     {selectedDay.contributions.length ? (
@@ -339,7 +339,7 @@ export function IncomeCalendarPage() {
                         pagination={false}
                       />
                     ) : (
-                      <LiveEmpty title="当日无标的贡献" description="可能是非交易日或仅有账户资金记录。" />
+                      <LiveEmpty title="当日无标的贡献" description="可能是非交易日或当日没有投资事实。" />
                     )}
                     <h3>当日事件</h3>
                     {selectedDay.events.length ? (
@@ -357,16 +357,16 @@ export function IncomeCalendarPage() {
                               )
                             }
                           >
-                            <Tag color={event.type === "reverse_repo_maturity" ? "purple" : ENTRY_TYPE_TONES[event.type]}>
-                              {event.type === "reverse_repo_maturity" ? "逆回购到期" : ENTRY_TYPE_LABELS[event.type]}
+                            <Tag color={ENTRY_TYPE_TONES[event.type]}>
+                              {ENTRY_TYPE_LABELS[event.type]}
                             </Tag>
-                            <span>{event.name ?? "账户资金"}</span>
+                            <span>{event.name ?? "审计记录"}</span>
                             <strong>{money(event.amount)}</strong>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <div className="day-no-events">当日无资金或分红事件</div>
+                      <div className="day-no-events">当日无交易或分红事件</div>
                     )}
                   </>
                 ) : (

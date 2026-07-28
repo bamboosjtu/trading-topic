@@ -20,7 +20,6 @@ import {
   SearchOutlined,
   SwapOutlined,
   TransactionOutlined,
-  WalletOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { type Dayjs } from "dayjs";
@@ -49,21 +48,22 @@ import {
   numberValue,
 } from "./live/liveFormat";
 import { LedgerEntryModal } from "./live/LedgerEntryModal";
+import { DividendReinvestmentModal } from "./live/DividendReinvestmentModal";
 
 const { RangePicker } = DatePicker;
 type LedgerPageSize = (typeof LIVE_LEDGER_PAGE_SIZES)[number];
 
 function amountClass(type: EntryType): string {
-  if (["sell", "dividend", "transfer_in"].includes(type)) return "finance-profit";
-  if (["buy", "transfer_out"].includes(type)) return "finance-loss";
+  if (["sell", "dividend"].includes(type)) return "finance-profit";
+  if (type === "buy") return "finance-loss";
   return "finance-flat";
 }
 
 function signedAmount(row: LedgerRecordView): string {
   const value = row.amount;
   if (value === null) return "—";
-  if (["sell", "dividend", "transfer_in"].includes(row.type)) return money(value, true);
-  if (["buy", "transfer_out"].includes(row.type)) return money(-value);
+  if (["sell", "dividend"].includes(row.type)) return money(value, true);
+  if (row.type === "buy") return money(-value);
   return money(value);
 }
 
@@ -83,6 +83,7 @@ export function TradesPage() {
   const [pageSize, setPageSize] = useState<LedgerPageSize>(20);
   const [detail, setDetail] = useState<LedgerRecordView | null>(null);
   const [entryModalOpen, setEntryModalOpen] = useState(false);
+  const [reinvestmentOpen, setReinvestmentOpen] = useState(false);
   const [correctionTarget, setCorrectionTarget] =
     useState<LedgerRecordView | null>(null);
   const query: LedgerQuery = useMemo(
@@ -149,7 +150,7 @@ export function TradesPage() {
             <span>{row.symbol}</span>
           </div>
         ) : (
-          <span className="finance-flat">账户资金</span>
+          <span className="finance-flat">审计记录</span>
         ),
     },
     {
@@ -219,7 +220,7 @@ export function TradesPage() {
     <div className="live-page trades-page">
       <LivePageHeader
         title="交易流水"
-        description="手工记录资金与证券事实；持仓、现金和收益均由追加式账本重建。"
+        description="手工记录股票与 ETF 的买入、卖出和分红事实；投资收益由统一现金流口径重建。"
         actions={
           <>
             <span className="live-cutoff">
@@ -234,6 +235,12 @@ export function TradesPage() {
               onClick={() => exportData.mutate()}
             >
               导出流水
+            </Button>
+            <Button
+              icon={<GiftOutlined />}
+              onClick={() => setReinvestmentOpen(true)}
+            >
+              分红并再投入
             </Button>
             <Button
               type="primary"
@@ -356,7 +363,7 @@ export function TradesPage() {
               showIcon
               type="error"
               className="live-quality-alert"
-              message="账户重建失败"
+              message="投资事实重建失败"
               description={`${ledger.data.integrityError}。事实流水仍完整保留，请从原记录详情追加修正或冲正。`}
             />
           ) : null}
@@ -364,10 +371,10 @@ export function TradesPage() {
           <LiveMetricStrip
             items={[
               { label: "流水记录", value: `${ledger.data.metrics.recordCount} 条`, helper: "当前筛选范围", icon: <TransactionOutlined />, tone: "blue" },
-              { label: "买入金额", value: money(ledger.data.metrics.totalBuy), helper: "含交易费用", icon: <SwapOutlined />, tone: "red" },
-              { label: "卖出金额", value: money(ledger.data.metrics.totalSell), helper: "扣除交易费用", icon: <SwapOutlined />, tone: "green" },
-              { label: "现金分红", value: money(ledger.data.metrics.totalDividend), helper: "到账金额合计", icon: <GiftOutlined />, tone: "orange" },
-              { label: "净资金转入", value: money(ledger.data.metrics.netTransferIn, true), helper: "转入减转出", icon: <WalletOutlined />, tone: "indigo" },
+              { label: "累计买入支出", value: money(ledger.data.metrics.cumulativeBuySpend), helper: "成交金额 + 费用", icon: <SwapOutlined />, tone: "red" },
+              { label: "累计卖出净收入", value: money(ledger.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 费用", icon: <SwapOutlined />, tone: "green" },
+              { label: "累计分红", value: money(ledger.data.metrics.cumulativeDividend), helper: "到账金额合计", icon: <GiftOutlined />, tone: "orange" },
+              { label: "累计净投入", value: money(ledger.data.metrics.netInvestment), helper: "买入支出 − 卖出净收入 − 分红", icon: <TransactionOutlined />, tone: "indigo" },
             ]}
           />
           <section className="workspace-panel live-table-panel">
@@ -399,7 +406,7 @@ export function TradesPage() {
             ) : (
               <LiveEmpty
                 title={ledger.data.quality.status === "empty" ? "暂无交易流水" : "没有匹配的流水"}
-                description={ledger.data.quality.status === "empty" ? "从第一笔资金或证券事实开始建立本地账本。" : "请调整筛选条件后重试。"}
+                description={ledger.data.quality.status === "empty" ? "从第一笔买入、卖出或分红事实开始建立本地投资记录。" : "请调整筛选条件后重试。"}
                 action={
                   ledger.data.quality.status === "empty" ? (
                     <Button
@@ -419,7 +426,7 @@ export function TradesPage() {
           </section>
           <div className="live-source-note">
             <CalendarOutlined />
-            <span>本地手工录入是唯一事实源；业务日期是事实口径，修正与冲正只追加记录、不覆盖原记录。</span>
+            <span>本地手工录入是唯一事实源；修正采用历史重述，分析按修正后的业务事实重算，完整审计链始终保留。</span>
           </div>
         </>
       ) : null}
@@ -471,18 +478,16 @@ export function TradesPage() {
               <span>{detail.businessDate}</span>
             </div>
             <dl>
-              <div><dt>证券标的</dt><dd>{detail.symbol ? `${detail.name} ${detail.symbol}` : "账户资金"}</dd></div>
+              <div><dt>证券标的</dt><dd>{detail.symbol ? `${detail.name} ${detail.symbol}` : "审计记录"}</dd></div>
               <div><dt>数量</dt><dd>{numberValue(detail.quantity)}</dd></div>
               <div><dt>成交价格</dt><dd>{numberValue(detail.price, 3)}</dd></div>
               <div><dt>交易费用</dt><dd>{money(detail.fee)}</dd></div>
               <div><dt>每股分红</dt><dd>{numberValue(detail.perShare, 4)}</dd></div>
               <div><dt>登记日</dt><dd>{detail.recordDate ?? "—"}</dd></div>
               <div><dt>到账日</dt><dd>{detail.paymentDate ?? "—"}</dd></div>
-              <div><dt>逆回购到期日</dt><dd>{detail.maturityDate ?? "—"}</dd></div>
-              <div><dt>逆回购代码</dt><dd>{detail.repoCode ?? "—"}</dd></div>
-              <div><dt>成交年化收益率</dt><dd>{detail.annualRate === null ? "—" : `${(detail.annualRate * 100).toFixed(4)}%`}</dd></div>
-              <div><dt>逆回购期限</dt><dd>{detail.termDays === null ? "—" : `${detail.termDays} 天`}</dd></div>
-              <div><dt>逆回购到期金额</dt><dd>{money(detail.maturityAmount)}</dd></div>
+              <div><dt>录入时间</dt><dd>{dayjs(detail.recordedAt).format("YYYY-MM-DD HH:mm:ss")}</dd></div>
+              <div><dt>修正时间</dt><dd>{detail.correctedAt ? dayjs(detail.correctedAt).format("YYYY-MM-DD HH:mm:ss") : "—"}</dd></div>
+              <div><dt>关联分组</dt><dd>{detail.linkedGroupId ?? "—"}</dd></div>
               <div><dt>备注</dt><dd>{detail.note ?? "—"}</dd></div>
               <div><dt>记录状态</dt><dd>{detail.isReversed ? "已冲正" : detail.correctsEntryId ? "修正后的有效记录" : detail.type === "adjustment" ? "冲正 / 修正记录" : "有效"}</dd></div>
             </dl>
@@ -501,6 +506,12 @@ export function TradesPage() {
           setDetail(null);
           refreshLivePages();
         }}
+      />
+      <DividendReinvestmentModal
+        open={reinvestmentOpen}
+        stocks={stocks.data ?? []}
+        onClose={() => setReinvestmentOpen(false)}
+        onSaved={refreshLivePages}
       />
     </div>
   );

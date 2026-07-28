@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type {
   BacktestRequest,
   DividendEvent,
-  LedgerEntry,
   PricePoint,
 } from "../../shared/contracts";
 import {
@@ -11,7 +10,6 @@ import {
   simulateBacktest,
 } from "./analysis";
 import { xirr } from "./finance";
-import { rebuildAccount } from "./ledger";
 
 /**
  * 测试辅助：直接驱动 production 实现 simulateBacktest + backtestResultToSimpleResult，
@@ -152,7 +150,7 @@ describe("simulateBacktest", () => {
   });
 });
 
-describe("finance and ledger", () => {
+describe("finance", () => {
   it("可计算不规则日期现金流的年化收益率", () => {
     const value = xirr([
       { date: "2023-01-01", amount: -1_000 },
@@ -162,99 +160,9 @@ describe("finance and ledger", () => {
     expect(value!).toBeCloseTo(0.1, 3);
   });
 
-  it("从有效流水重建现金、持仓和逆回购资产", () => {
-    const base = {
-      recordedAt: "2024-01-01T00:00:00Z",
-      currency: "CNY" as const,
-      source: "user" as const,
-    };
-    const entries: LedgerEntry[] = [
-      {
-        ...base,
-        id: "in",
-        type: "transfer_in",
-        businessDate: "2024-01-01",
-        amount: 10_000,
-      },
-      {
-        ...base,
-        id: "buy",
-        type: "buy",
-        businessDate: "2024-01-02",
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-        fee: 5,
-      },
-      {
-        ...base,
-        id: "dividend",
-        type: "dividend",
-        businessDate: "2024-02-01",
-        symbol: "601398",
-        amount: 100,
-      },
-      {
-        ...base,
-        id: "repo",
-        type: "reverse_repo",
-        businessDate: "2024-02-02",
-        amount: 1_000,
-        maturityAmount: 1_010,
-        maturityDate: "2024-12-31",
-      },
-    ];
-    const result = rebuildAccount(entries, { "601398": 12 }, "2024-03-01");
-    expect(result.availableCash).toBe(8_095);
-    expect(result.reverseRepoAsset).toBe(1_000);
-    expect(result.marketValue).toBe(1_200);
-    expect(result.totalAsset).toBe(10_295);
-    expect(result.positions[0].quantity).toBe(100);
-  });
-
-  it("冲正通过追加记录排除原流水", () => {
-    const entries: LedgerEntry[] = [
-      {
-        id: "in",
-        type: "transfer_in",
-        businessDate: "2024-01-01",
-        recordedAt: "2024-01-01T00:00:00Z",
-        currency: "CNY",
-        source: "user",
-        amount: 1_000,
-      },
-      {
-        id: "reverse",
-        type: "adjustment",
-        businessDate: "2024-01-02",
-        recordedAt: "2024-01-02T00:00:00Z",
-        currency: "CNY",
-        source: "user",
-        reversesEntryId: "in",
-      },
-    ];
-    expect(rebuildAccount(entries, {}, "2024-01-02").availableCash).toBe(0);
-  });
-
-  it("估值截止日不截断显式账户截止日前的流水事实", () => {
-    const entries: LedgerEntry[] = [
-      {
-        id: "cash",
-        type: "transfer_in",
-        businessDate: "2024-01-02",
-        recordedAt: "2024-01-02T00:00:00Z",
-        currency: "CNY",
-        source: "user",
-        amount: 1_000,
-      },
-    ];
-    expect(
-      rebuildAccount(entries, {}, "2024-01-01", "2024-01-02").availableCash,
-    ).toBe(1_000);
-  });
 });
 
-// P0-2：最大回撤基于标的总收益净值（nav），而非每日账户总资产。
+// 最大回撤基于剔除后续投入影响的标的总收益净值（nav）。
 // 外部每月投入会不断抬高总资产序列，掩盖真实跌幅；nav 剔除外部现金流。
 describe("P0-2 最大回撤口径（基于 nav）", () => {
   it("nav 剔除外部投入，回撤反映标的真实跌幅", () => {

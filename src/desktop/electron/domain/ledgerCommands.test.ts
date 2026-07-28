@@ -19,16 +19,10 @@ function entry(
   };
 }
 
-describe("实盘流水命令", () => {
-  it("由领域层返回买入对现金、持仓数量和成本的影响", () => {
+describe("投资事实命令", () => {
+  it("领域层返回买入对持仓、累计买入和净投入的影响", () => {
     const preview = previewLedgerMutation(
-      [
-        entry("cash", {
-          type: "transfer_in",
-          businessDate: "2026-01-01",
-          amount: 10_000,
-        }),
-      ],
+      [],
       {
         type: "buy",
         businessDate: "2026-01-02",
@@ -42,27 +36,22 @@ describe("实盘流水命令", () => {
       undefined,
       "2026-01-02",
     );
-
     expect(preview.tradeAmount).toBe(5_000);
     expect(preview.before).toMatchObject({
-      availableCash: 10_000,
       holdingQuantity: 0,
       holdingCost: 0,
+      netInvestment: 0,
     });
     expect(preview.after).toMatchObject({
-      availableCash: 4_995,
       holdingQuantity: 1_000,
       holdingCost: 5_005,
+      cumulativeBuySpend: 5_005,
+      netInvestment: 5_005,
     });
   });
 
-  it("追加修正按撤销原记录再加入新记录计算，不覆盖原事实", () => {
+  it("追加修正按历史重述替换原事实且不修改输入数组", () => {
     const rows = [
-      entry("cash", {
-        type: "transfer_in",
-        businessDate: "2026-01-01",
-        amount: 10_000,
-      }),
       entry("buy", {
         type: "buy",
         businessDate: "2026-01-02",
@@ -78,23 +67,20 @@ describe("实盘流水命令", () => {
         type: "buy",
         businessDate: "2026-01-02",
         symbol: "601398",
-        instrumentName: "工商银行",
-        securityType: "stock",
         price: 4,
         quantity: 100,
         fee: 1,
       },
       "buy",
-      "2026-01-02",
+      "2026-07-28",
     );
-
     expect(preview.before.holdingQuantity).toBe(1_000);
     expect(preview.after.holdingQuantity).toBe(100);
     expect(preview.after.holdingCost).toBe(401);
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
   });
 
-  it("拒绝会造成历史时点卖空的录入和冲正", () => {
+  it("拒绝会造成历史卖空的录入和冲正", () => {
     const rows = [
       entry("buy", {
         type: "buy",
@@ -111,7 +97,6 @@ describe("实盘流水命令", () => {
         quantity: 100,
       }),
     ];
-
     expect(() =>
       previewLedgerMutation(rows, {
         type: "sell",
@@ -126,58 +111,39 @@ describe("实盘流水命令", () => {
     );
   });
 
-  it("逆回购必须录入实际到期日与实际到期金额，不根据名义期限推导事实", () => {
-    expect(() =>
+  it("普通录入只允许买入、卖出、分红，且拒绝未来业务日期", () => {
+    expect(
       normalizeLedgerInput(
         {
-          type: "reverse_repo",
+          type: "sell",
           businessDate: "2026-07-27",
-          repoCode: "204001",
-          amount: 100_000,
-          annualRate: 0.02,
-          termDays: 1,
-          maturityDate: "2026-07-29",
+          symbol: "601398",
+          price: 5,
+          quantity: 37,
         },
-        "2026-07-27",
-      ),
-    ).toThrow("实际到期金额");
-    const normalized = normalizeLedgerInput({
-      type: "reverse_repo",
-      businessDate: "2026-07-27",
-      repoCode: "204001",
-      amount: 100_000,
-      annualRate: 0.02,
-      termDays: 1,
-      fee: 1,
-      maturityDate: "2026-07-29",
-      maturityAmount: 100_004.32,
-    }, "2026-07-27");
-
-    expect(normalized.maturityDate).toBe("2026-07-29");
-    expect(normalized.maturityAmount).toBe(100_004.32);
-  });
-
-  it("允许零股事实并拒绝未来普通业务日期", () => {
-    const normalized = normalizeLedgerInput(
-      {
-        type: "sell",
-        businessDate: "2026-07-27",
-        symbol: "601398",
-        price: 5,
-        quantity: 37,
-      },
-      "2026-07-28",
-    );
-    expect(normalized.quantity).toBe(37);
+        "2026-07-28",
+      ).quantity,
+    ).toBe(37);
     expect(() =>
       normalizeLedgerInput(
         {
-          type: "transfer_in",
+          type: "buy",
           businessDate: "2026-07-29",
-          amount: 1_000,
+          symbol: "601398",
+          price: 5,
+          quantity: 100,
         },
         "2026-07-28",
       ),
     ).toThrow("不能晚于当前 A 股市场日期");
+    expect(() =>
+      normalizeLedgerInput(
+        {
+          type: "adjustment",
+          businessDate: "2026-07-28",
+        },
+        "2026-07-28",
+      ),
+    ).toThrow("只能从原流水详情发起");
   });
 });

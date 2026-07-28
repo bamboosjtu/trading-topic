@@ -6,6 +6,7 @@ import type {
   BacktestRequest,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
+  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
 } from "../shared/contracts";
@@ -190,6 +191,11 @@ function registerIpc(): void {
     service.addLedger(input),
   );
   ipcMain.handle(
+    "ledger:dividend-reinvestment:add",
+    (_event, input: DividendReinvestmentInput) =>
+      service.addDividendReinvestment(input),
+  );
+  ipcMain.handle(
     "ledger:correct",
     (_event, entryId: string, input: LedgerEntryInput) =>
       service.correctLedger(entryId, input),
@@ -199,7 +205,6 @@ function registerIpc(): void {
     (_event, entryId: string, reason: string) =>
       service.reverseLedger(entryId, reason),
   );
-  ipcMain.handle("account:summary", () => service.accountSummary());
   ipcMain.handle("settings:get", () => database.getSettings());
 
   ipcMain.handle("backup:export", async () => {

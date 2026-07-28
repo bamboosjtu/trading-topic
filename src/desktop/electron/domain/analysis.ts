@@ -345,7 +345,7 @@ export function simulateBacktest(
   const last = prices.at(-1)!;
   const endingAsset = equityCurve.at(-1)!.asset;
   cashflows.push({ date: last.date, amount: endingAsset });
-  // P0-2：最大回撤基于标的总收益净值（nav），而非每日账户总资产。
+  // 最大回撤基于剔除后续投入影响的标的总收益净值（nav）。
   // 外部每月投入会不断抬高总资产序列，掩盖真实跌幅；nav 剔除外部现金流，
   // 该口径不会被后续外部投入人为抬高。
   const drawdown = drawdownProfile(

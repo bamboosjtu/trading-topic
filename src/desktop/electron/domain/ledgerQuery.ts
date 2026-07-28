@@ -69,11 +69,13 @@ export function queryLedgerRecords(
     throw new Error("流水开始日期不能晚于结束日期");
   }
   const names = namesMap(stocks, entries);
-  const securityTypes = securityTypesMap(entries);
+  const securityTypes = securityTypesMap(stocks, entries);
   const { effective, reversedIds } = activeLedgerEntries(entries);
   const allRows = [...entries]
     .sort(canonicalLedgerOrderDescending)
-    .map((entry) => toLedgerRecord(entry, names, reversedIds))
+    .map((entry) =>
+      toLedgerRecord(entry, names, securityTypes, reversedIds),
+    )
     .filter((row) => matchesQuery(row, query));
   const effectiveIds = new Set(effective.map((entry) => entry.id));
   const aggregateRows = allRows.filter(
@@ -88,7 +90,7 @@ export function queryLedgerRecords(
     dataCutoff: null,
     updatedAt:
       entries.map((entry) => entry.recordedAt).sort().at(-1) ?? null,
-    issues: integrityError ? [`账户完整性校验失败：${integrityError}`] : [],
+    issues: integrityError ? [`投资事实完整性校验失败：${integrityError}`] : [],
     missingSymbols: [],
     missingDates: [],
   };
@@ -97,34 +99,30 @@ export function queryLedgerRecords(
     integrityError,
     metrics: {
       recordCount: allRows.length,
-      totalBuy: roundMoney(
+      cumulativeBuySpend: roundMoney(
         aggregateRows
           .filter((row) => row.type === "buy")
           .reduce((sum, row) => sum + (row.amount ?? 0) + row.fee, 0),
       ),
-      totalSell: roundMoney(
+      cumulativeSellNetIncome: roundMoney(
         aggregateRows
           .filter((row) => row.type === "sell")
           .reduce((sum, row) => sum + (row.amount ?? 0) - row.fee, 0),
       ),
-      totalDividend: roundMoney(
+      cumulativeDividend: roundMoney(
         aggregateRows
           .filter((row) => row.type === "dividend")
           .reduce((sum, row) => sum + (row.amount ?? 0), 0),
       ),
-      netTransferIn: roundMoney(
+      netInvestment: roundMoney(
         aggregateRows
-          .filter(
-            (row) =>
-              row.type === "transfer_in" || row.type === "transfer_out",
-          )
-          .reduce(
-            (sum, row) =>
-              sum +
-              (row.type === "transfer_in" ? 1 : -1) *
-                (row.amount ?? 0),
-            0,
-          ),
+          .filter((row) => row.type !== "adjustment")
+          .reduce((sum, row) => {
+            if (row.type === "buy") return sum + (row.amount ?? 0) + row.fee;
+            if (row.type === "sell") return sum - (row.amount ?? 0) + row.fee;
+            if (row.type === "dividend") return sum - (row.amount ?? 0);
+            return sum;
+          }, 0),
       ),
     },
     rows: allRows.slice(offset, offset + pageSize),

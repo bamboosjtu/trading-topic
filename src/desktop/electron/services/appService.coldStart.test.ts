@@ -8,18 +8,24 @@ import {
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
 import {
-  fetchAdjustedBars,
   fetchCorporateActions,
-  fetchUnadjustedPrices,
 } from "../data/tencent";
+import {
+  fetchMarketAdjustedBars,
+  fetchMarketPrices,
+} from "../data/marketDataProvider";
 import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
 vi.mock("../data/tencent", () => ({
-  fetchAdjustedBars: vi.fn(),
   fetchCorporateActions: vi.fn(),
-  fetchUnadjustedPrices: vi.fn(),
 }));
+vi.mock("../data/marketDataProvider", () => ({
+  fetchMarketAdjustedBars: vi.fn(),
+  fetchMarketPrices: vi.fn(),
+}));
+const fetchUnadjustedPrices = fetchMarketPrices;
+const fetchAdjustedBars = fetchMarketAdjustedBars;
 
 const temporaryDirectories: string[] = [];
 const openDatabases: LocalDatabase[] = [];
@@ -76,7 +82,9 @@ describe("AppService 冷启动恢复", () => {
           { date: "2024-03-01", close: 5.3 + offset },
         ],
         provenance: {
-          source: `cold-start-price-${symbol}`,
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
           fetchedAt: "2026-07-27T00:00:00Z",
           dataCutoff: "2024-03-01",
           adjustment: "none",
@@ -117,7 +125,9 @@ describe("AppService 冷启动恢复", () => {
           },
         ],
         provenance: {
-          source: `cold-start-qfq-${symbol}`,
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
           fetchedAt: "2026-07-27T00:00:00Z",
           dataCutoff: "2024-03-01",
           adjustment: "qfq",

@@ -45,11 +45,15 @@ export async function buildPositionsWorkbook(
     { header: "成本价", key: "averageCost", width: 12 },
     { header: "最新价", key: "lastPrice", width: 12 },
     { header: "持仓市值", key: "marketValue", width: 16 },
-    { header: "累计投入", key: "cumulativeInvestment", width: 16 },
-    { header: "浮动盈亏", key: "unrealizedPnl", width: 16 },
+    { header: "累计买入支出", key: "cumulativeBuySpend", width: 18 },
+    { header: "累计卖出净收入", key: "cumulativeSellNetIncome", width: 18 },
+    { header: "累计净投入", key: "netInvestment", width: 16 },
+    { header: "未实现收益", key: "unrealizedPnl", width: 16 },
     { header: "已实现盈亏", key: "realizedPnl", width: 16 },
     { header: "累计分红", key: "cumulativeDividend", width: 16 },
-    { header: "总收益", key: "totalReturn", width: 16 },
+    { header: "投资总收益", key: "totalReturn", width: 16 },
+    { header: "投资总收益率", key: "totalReturnRate", width: 16 },
+    { header: "XIRR", key: "xirr", width: 14 },
     { header: "数据截止", key: "dataCutoff", width: 14 },
     { header: "数据状态", key: "quality", width: 12 },
   ];
@@ -64,7 +68,9 @@ export async function buildPositionsWorkbook(
   for (const key of [
     "cost",
     "marketValue",
-    "cumulativeInvestment",
+    "cumulativeBuySpend",
+    "cumulativeSellNetIncome",
+    "netInvestment",
     "unrealizedPnl",
     "realizedPnl",
     "cumulativeDividend",
@@ -76,7 +82,29 @@ export async function buildPositionsWorkbook(
     sheet.getColumn(key).numFmt = "0.000";
   }
   sheet.getColumn("quantity").numFmt = "#,##0.00";
+  sheet.getColumn("totalReturnRate").numFmt = "0.00%;[Green]-0.00%";
+  sheet.getColumn("xirr").numFmt = "0.00%;[Green]-0.00%";
   styleWorksheet(sheet);
+  const provenance = workbook.addWorksheet("行情来源");
+  provenance.columns = [
+    { header: "实际来源", key: "source", width: 14 },
+    { header: "主来源", key: "primarySource", width: 14 },
+    { header: "是否兜底", key: "fallbackUsed", width: 12 },
+    { header: "切换原因", key: "fallbackReason", width: 60 },
+    { header: "获取时间", key: "fetchedAt", width: 26 },
+    { header: "数据截止", key: "dataCutoff", width: 14 },
+    { header: "复权方式", key: "adjustment", width: 12 },
+  ];
+  for (const row of overview.provenance) {
+    provenance.addRow({
+      ...row,
+      source: row.source === "tencent" ? "腾讯" : "新浪",
+      primarySource: "腾讯",
+      fallbackUsed: row.fallbackUsed ? "是" : "否",
+      adjustment: row.adjustment === "qfq" ? "前复权" : "不复权",
+    });
+  }
+  styleWorksheet(provenance);
   return toBuffer(workbook);
 }
 
@@ -94,7 +122,6 @@ export async function buildIncomeCalendarWorkbook(
     { header: "市场价格收益", key: "marketPricePnl", width: 18 },
     { header: "分红收益", key: "dividendPnl", width: 16 },
     { header: "交易影响", key: "tradingCostPnl", width: 16 },
-    { header: "逆回购收益", key: "reverseRepoIncome", width: 16 },
     { header: "当日收益率", key: "returnRate", width: 14 },
     { header: "行情状态", key: "marketStatus", width: 14 },
     { header: "事件数", key: "eventCount", width: 10 },
@@ -116,7 +143,6 @@ export async function buildIncomeCalendarWorkbook(
     "marketPricePnl",
     "dividendPnl",
     "tradingCostPnl",
-    "reverseRepoIncome",
   ]) {
     days.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
   }
@@ -149,6 +175,26 @@ export async function buildIncomeCalendarWorkbook(
       '¥#,##0.00;[Red]-¥#,##0.00';
   }
   styleWorksheet(contributions);
+  const provenance = workbook.addWorksheet("行情来源");
+  provenance.columns = [
+    { header: "实际来源", key: "source", width: 14 },
+    { header: "主来源", key: "primarySource", width: 14 },
+    { header: "是否兜底", key: "fallbackUsed", width: 12 },
+    { header: "切换原因", key: "fallbackReason", width: 60 },
+    { header: "获取时间", key: "fetchedAt", width: 26 },
+    { header: "数据截止", key: "dataCutoff", width: 14 },
+    { header: "复权方式", key: "adjustment", width: 12 },
+  ];
+  for (const row of view.provenance) {
+    provenance.addRow({
+      ...row,
+      source: row.source === "tencent" ? "腾讯" : "新浪",
+      primarySource: "腾讯",
+      fallbackUsed: row.fallbackUsed ? "是" : "否",
+      adjustment: row.adjustment === "qfq" ? "前复权" : "不复权",
+    });
+  }
+  styleWorksheet(provenance);
   return toBuffer(workbook);
 }
 
@@ -175,11 +221,9 @@ export async function buildLedgerWorkbook(
     { header: "每股分红", key: "perShare", width: 14 },
     { header: "登记日", key: "recordDate", width: 14 },
     { header: "到账日", key: "paymentDate", width: 14 },
-    { header: "逆回购品种", key: "repoCode", width: 16 },
-    { header: "成交年化收益率", key: "annualRate", width: 16 },
-    { header: "期限（天）", key: "termDays", width: 12 },
-    { header: "到期日", key: "maturityDate", width: 14 },
-    { header: "到期金额", key: "maturityAmount", width: 16 },
+    { header: "录入时间", key: "recordedAt", width: 26 },
+    { header: "修正时间", key: "correctedAt", width: 26 },
+    { header: "关联分组", key: "linkedGroupId", width: 38 },
   ];
   for (const row of result.rows) {
     sheet.addRow({
@@ -194,11 +238,10 @@ export async function buildLedgerWorkbook(
       isCorrection: row.correctsEntryId ? "是" : "否",
     });
   }
-  for (const key of ["amount", "fee", "perShare", "maturityAmount"]) {
+  for (const key of ["amount", "fee", "perShare"]) {
     sheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
   }
   sheet.getColumn("price").numFmt = "0.000";
-  sheet.getColumn("annualRate").numFmt = "0.0000%";
   sheet.getColumn("quantity").numFmt = "#,##0.00";
   styleWorksheet(sheet);
   return toBuffer(workbook);

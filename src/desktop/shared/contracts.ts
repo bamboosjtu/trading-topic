@@ -1,18 +1,28 @@
 export type EntryType =
-  | "transfer_in"
   | "buy"
   | "sell"
   | "dividend"
-  | "reverse_repo"
-  | "transfer_out"
   | "adjustment";
 
 export interface DataProvenance {
   source: string;
+  primarySource?: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
   fetchedAt: string;
   dataCutoff: string;
   adjustment: "none" | "qfq";
   caliberVersion: string;
+}
+
+export interface MarketDataProvenance {
+  source: "tencent" | "sina";
+  primarySource: "tencent";
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  fetchedAt: string;
+  dataCutoff: string;
+  adjustment: "none" | "qfq";
 }
 
 export interface PricePoint {
@@ -252,45 +262,20 @@ export interface LedgerEntryInput {
   perShare?: number;
   recordDate?: string;
   paymentDate?: string;
-  repoCode?: string;
-  annualRate?: number;
-  termDays?: number;
-  maturityAmount?: number;
-  maturityDate?: string;
   note?: string;
   reversesEntryId?: string;
   correctsEntryId?: string;
+  /** 同一次“分红并再投入”写入的事实共享同一个分组编号。 */
+  linkedGroupId?: string;
 }
 
 export interface LedgerEntry extends LedgerEntryInput {
   id: string;
   recordedAt: string;
+  /** 修正操作发生时间；仅用于审计，不决定投资事实生效日期。 */
+  correctedAt?: string;
   currency: "CNY";
   source: "user" | "system" | "restore";
-}
-
-export interface PositionSummary {
-  symbol: string;
-  quantity: number;
-  cost: number;
-  averageCost: number;
-  lastPrice: number | null;
-  marketValue: number;
-  pnl: number;
-}
-
-export interface AccountSummary {
-  positions: PositionSummary[];
-  availableCash: number;
-  marketValue: number;
-  reverseRepoAsset: number;
-  totalAsset: number;
-  totalContribution: number;
-  totalWithdrawal: number;
-  totalPnl: number;
-  xirr: number | null;
-  valuationSource: string;
-  dataCutoff: string | null;
 }
 
 export type LiveDataStatus = "ready" | "empty" | "stale" | "partial";
@@ -323,11 +308,15 @@ export interface PositionView {
   averageCost: number;
   lastPrice: number | null;
   marketValue: number | null;
-  cumulativeInvestment: number;
+  cumulativeBuySpend: number;
+  cumulativeSellNetIncome: number;
+  netInvestment: number;
   unrealizedPnl: number | null;
   realizedPnl: number;
   cumulativeDividend: number;
   totalReturn: number | null;
+  totalReturnRate: number | null;
+  xirr: number | null;
   periodPerformance: PeriodPerformance;
   recentEntries: LedgerRecordView[];
 }
@@ -336,16 +325,21 @@ export interface PositionsOverview {
   quality: LiveDataQuality;
   hasLedgerEntries: boolean;
   metrics: {
-    totalAsset: number | null;
     marketValue: number | null;
-    totalPnl: number | null;
+    cumulativeBuySpend: number;
+    cumulativeSellNetIncome: number;
+    netInvestment: number;
+    unrealizedPnl: number | null;
+    realizedPnl: number;
+    cumulativeDividend: number;
+    totalReturn: number | null;
     totalReturnRate: number | null;
-    availableCash: number;
-    positionRatio: number | null;
+    xirr: number | null;
   };
   portfolioPerformance: PeriodPerformance;
   positions: PositionView[];
   valuationSource: string;
+  provenance: MarketDataProvenance[];
 }
 
 export interface LedgerQuery {
@@ -371,25 +365,24 @@ export interface LedgerRecordView {
   amount: number | null;
   fee: number;
   note: string | null;
-  repoCode: string | null;
-  annualRate: number | null;
-  termDays: number | null;
-  maturityAmount: number | null;
-  maturityDate: string | null;
   perShare: number | null;
   recordDate: string | null;
   paymentDate: string | null;
+  recordedAt: string;
+  correctedAt: string | null;
+  linkedGroupId: string | null;
   isReversed: boolean;
   reversesEntryId: string | null;
   correctsEntryId: string | null;
 }
 
 export interface LedgerImpactState {
-  availableCash: number;
   holdingQuantity: number;
   holdingCost: number;
+  cumulativeBuySpend: number;
+  cumulativeSellNetIncome: number;
   cumulativeDividend: number;
-  pendingReverseRepoAsset: number;
+  netInvestment: number;
 }
 
 export interface LedgerImpactPreview {
@@ -406,10 +399,10 @@ export interface LedgerQueryResult {
   integrityError: string | null;
   metrics: {
     recordCount: number;
-    totalBuy: number;
-    totalSell: number;
-    totalDividend: number;
-    netTransferIn: number;
+    cumulativeBuySpend: number;
+    cumulativeSellNetIncome: number;
+    cumulativeDividend: number;
+    netInvestment: number;
   };
   rows: LedgerRecordView[];
   total: number;
@@ -438,13 +431,11 @@ export interface IncomeContribution {
   dividendPnl: number;
   /** 成交价与当日估值价之差及手续费；费用、不利成交为负。 */
   tradingCostPnl: number;
-  /** 单标的贡献固定为 0；逆回购收益只归属于账户。 */
-  reverseRepoIncome: number;
   totalPnl: number | null;
 }
 
 export interface IncomeCalendarEvent {
-  type: EntryType | "reverse_repo_maturity";
+  type: EntryType;
   symbol: string | null;
   name: string | null;
   quantity: number | null;
@@ -459,7 +450,6 @@ export interface IncomeCalendarDay {
   marketPricePnl: number | null;
   dividendPnl: number;
   tradingCostPnl: number;
-  reverseRepoIncome: number;
   returnRate: number | null;
   hasMarketData: boolean;
   isPartial: boolean;
@@ -474,6 +464,8 @@ export interface IncomeMetric {
 
 export interface IncomeCalendarView {
   quality: LiveDataQuality;
+  provenance: MarketDataProvenance[];
+  valuationSource: string;
   month: string;
   scope: IncomeCalendarScope;
   symbol: string | null;
@@ -483,7 +475,6 @@ export interface IncomeCalendarView {
     marketPrice: IncomeMetric;
     dividend: IncomeMetric;
     tradingCost: IncomeMetric;
-    reverseRepo: IncomeMetric;
     cumulative: IncomeMetric;
     yearToDate: IncomeMetric;
   };
@@ -496,11 +487,32 @@ export interface IncomeCalendarView {
 }
 
 export interface AppSettings {
-  priceSource: "tencent";
+  priceSource: "tencent_sina";
   dividendSource: "eastmoney";
   commissionRate: number;
   minimumCommission: number;
   caliberVersion: string;
+}
+
+export interface DividendReinvestmentInput {
+  symbol: string;
+  instrumentName?: string;
+  securityType?: SecurityType;
+  dividendDate: string;
+  dividendAmount: number;
+  perShare?: number;
+  recordDate?: string;
+  reinvestmentDate: string;
+  buyPrice: number;
+  buyQuantity: number;
+  fee?: number;
+  note?: string;
+}
+
+export interface DividendReinvestmentResult {
+  linkedGroupId: string;
+  dividend: LedgerEntry;
+  buy: LedgerEntry;
 }
 
 export interface HealthResponse {
@@ -581,12 +593,14 @@ export interface DesktopApi {
     replacingEntryId?: string,
   ): Promise<LedgerImpactPreview>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
+  addDividendReinvestment(
+    input: DividendReinvestmentInput,
+  ): Promise<DividendReinvestmentResult>;
   correctLedger(
     entryId: string,
     input: LedgerEntryInput,
   ): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;
-  accountSummary(): Promise<AccountSummary>;
   getSettings(): Promise<AppSettings>;
   exportBackup(): Promise<ExportResult>;
   restoreBackup(): Promise<RestoreResult>;

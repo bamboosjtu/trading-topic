@@ -122,18 +122,58 @@ afterEach(() => {
 });
 
 describe("LocalDatabase", () => {
-  it("导出并恢复 schema v6 的不可变回测试验、流水与独立实盘行情", async () => {
+  it("组合投资事实任一写入失败时整体回滚", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-ledger-atomic-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const duplicateId = "linked-entry";
+    expect(() =>
+      database.addLedgerEntries([
+        {
+          id: duplicateId,
+          type: "dividend",
+          businessDate: "2026-07-10",
+          recordedAt: "2026-07-10T01:00:00Z",
+          currency: "CNY",
+          source: "user",
+          symbol: "601398",
+          amount: 300,
+          linkedGroupId: "group-1",
+        },
+        {
+          id: duplicateId,
+          type: "buy",
+          businessDate: "2026-07-11",
+          recordedAt: "2026-07-11T01:00:00Z",
+          currency: "CNY",
+          source: "user",
+          symbol: "601398",
+          price: 6,
+          quantity: 60,
+          linkedGroupId: "group-1",
+        },
+      ]),
+    ).toThrow();
+    expect(database.listLedger()).toEqual([]);
+  });
+
+  it("导出并恢复 schema v8 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
     database.addLedger({
       id: "entry-1",
-      type: "transfer_in",
+      type: "buy",
       businessDate: "2024-01-01",
       recordedAt: "2024-01-01T00:00:00Z",
       currency: "CNY",
       source: "user",
-      amount: 1_000,
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 200,
+      fee: 5,
     });
     database.saveBacktestExperiment(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
@@ -143,13 +183,20 @@ describe("LocalDatabase", () => {
         symbol: "601398",
         prices: [{ date: "2026-07-24", close: 7.2 }],
         dividends: [],
-        source: "test-live",
-        fetchedAt: "2026-07-24T08:00:00Z",
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-24T08:00:00Z",
+          dataCutoff: "2026-07-24",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
       },
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(6);
+    expect(backup.schemaVersion).toBe(8);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
 
@@ -164,7 +211,11 @@ describe("LocalDatabase", () => {
     expect(restored.listLiveMarketPrices(["601398"])[0]).toMatchObject({
       date: "2026-07-24",
       close: 7.2,
-      source: "test-live",
+      source: "tencent",
+      primarySource: "tencent",
+      fallbackUsed: false,
+      dataCutoff: "2026-07-24",
+      adjustment: "none",
     });
   });
 
@@ -214,8 +265,15 @@ describe("LocalDatabase", () => {
           symbol: "601398",
           prices: [{ date: "2026-07-24", close: 5 }],
           dividends: [],
-          source: "test",
-          fetchedAt: "2026-07-24T00:00:00Z",
+          provenance: {
+            source: "tencent",
+            primarySource: "tencent",
+            fallbackUsed: false,
+            fetchedAt: "2026-07-24T00:00:00Z",
+            dataCutoff: "2026-07-24",
+            adjustment: "none",
+            caliberVersion: BACKTEST_CALIBER_VERSION,
+          },
         },
       ]),
     ).toThrow();

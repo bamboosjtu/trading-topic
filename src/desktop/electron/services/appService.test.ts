@@ -9,10 +9,12 @@ import {
 } from "../../shared/constants";
 import { fetchAStockUniverse } from "../data/stockUniverse";
 import {
-  fetchAdjustedBars,
   fetchCorporateActions,
-  fetchUnadjustedPrices,
 } from "../data/tencent";
+import {
+  fetchMarketAdjustedBars,
+  fetchMarketPrices,
+} from "../data/marketDataProvider";
 import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
@@ -20,10 +22,14 @@ vi.mock("../data/stockUniverse", () => ({
   fetchAStockUniverse: vi.fn(),
 }));
 vi.mock("../data/tencent", () => ({
-  fetchAdjustedBars: vi.fn(),
   fetchCorporateActions: vi.fn(),
-  fetchUnadjustedPrices: vi.fn(),
 }));
+vi.mock("../data/marketDataProvider", () => ({
+  fetchMarketAdjustedBars: vi.fn(),
+  fetchMarketPrices: vi.fn(),
+}));
+const fetchUnadjustedPrices = fetchMarketPrices;
+const fetchAdjustedBars = fetchMarketAdjustedBars;
 
 const temporaryDirectories: string[] = [];
 const openDatabases: LocalDatabase[] = [];
@@ -161,7 +167,9 @@ describe("AppService 回测试验", () => {
         { date: "2024-02-01", close: 5.2 },
       ],
       provenance: {
-        source: "test-price",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "none",
@@ -190,7 +198,9 @@ describe("AppService 回测试验", () => {
         },
       ],
       provenance: {
-        source: "test-qfq",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "qfq",
@@ -247,7 +257,7 @@ describe("AppService 回测试验", () => {
     });
     expect(first.results[0].provenance).toContainEqual(
       expect.objectContaining({
-        source: "test-qfq",
+        source: "tencent",
         adjustment: "qfq",
       }),
     );
@@ -334,7 +344,9 @@ describe("AppService 回测试验", () => {
               { date: "2024-02-01", close: 2.6 },
             ],
       provenance: {
-        source: "test-price",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-02-01",
         adjustment: "none",
@@ -356,7 +368,9 @@ describe("AppService 回测试验", () => {
           },
         ],
         provenance: {
-          source: "test-qfq",
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
           fetchedAt: "2026-07-26T00:00:00Z",
           dataCutoff: "2024-02-01",
           adjustment: "qfq",
@@ -439,7 +453,9 @@ describe("AppService 回测试验", () => {
       .mockResolvedValueOnce({
         rows: [{ date: "2024-01-02", close: 5 }],
         provenance: {
-          source: "test-price",
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
           fetchedAt: "2026-07-26T00:00:00Z",
           dataCutoff: "2024-01-02",
           adjustment: "none",
@@ -460,7 +476,9 @@ describe("AppService 回测试验", () => {
         },
       ],
       provenance: {
-        source: "test-qfq",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
         fetchedAt: "2026-07-26T00:00:00Z",
         dataCutoff: "2024-01-02",
         adjustment: "qfq",
@@ -497,13 +515,58 @@ describe("AppService 回测试验", () => {
 });
 
 describe("AppService 实盘流水", () => {
+  it("分红并再投入在一个事务中写入两条可独立审计且有关联的事实", async () => {
+    const { service, database } = await serviceWithDatabase();
+
+    const result = service.addDividendReinvestment({
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      dividendDate: "2026-07-10",
+      dividendAmount: 300,
+      reinvestmentDate: "2026-07-11",
+      buyPrice: 6,
+      buyQuantity: 60,
+      fee: 1,
+    });
+
+    expect(database.listLedger()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: result.dividend.id,
+          type: "dividend",
+          amount: 300,
+          linkedGroupId: result.linkedGroupId,
+        }),
+        expect.objectContaining({
+          id: result.buy.id,
+          type: "buy",
+          quantity: 60,
+          linkedGroupId: result.linkedGroupId,
+        }),
+      ]),
+    );
+    expect(service.getPositionsOverview().metrics).toMatchObject({
+      cumulativeDividend: 300,
+      cumulativeBuySpend: 361,
+      netInvestment: 61,
+    });
+
+    const replacement = service.correctLedger(result.buy.id, {
+      type: "buy",
+      businessDate: "2026-07-11",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5.9,
+      quantity: 60,
+      fee: 1,
+    });
+    expect(replacement.linkedGroupId).toBe(result.linkedGroupId);
+  });
+
   it("追加修正原子保留原记录、冲正记录与修正后记录", async () => {
     const { service, database } = await serviceWithDatabase();
-    service.addLedger({
-      type: "transfer_in",
-      businessDate: "2026-01-01",
-      amount: 10_000,
-    });
     const original = service.addLedger({
       type: "buy",
       businessDate: "2026-01-02",
@@ -527,7 +590,7 @@ describe("AppService 实盘流水", () => {
     });
     const rows = database.listLedger();
 
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
     expect(rows.find((row) => row.id === original.id)).toBeDefined();
     expect(rows).toContainEqual(
       expect.objectContaining({
@@ -540,7 +603,7 @@ describe("AppService 实盘流水", () => {
       quantity: 100,
       price: 4,
     });
-    expect(service.accountSummary().positions[0]).toMatchObject({
+    expect(service.getPositionsOverview().positions[0]).toMatchObject({
       symbol: "601398",
       quantity: 100,
       cost: 401,
@@ -550,9 +613,11 @@ describe("AppService 实盘流水", () => {
   it("已冲正流水不能重复冲正或修正", async () => {
     const { service } = await serviceWithDatabase();
     const original = service.addLedger({
-      type: "transfer_in",
+      type: "buy",
       businessDate: "2026-01-01",
-      amount: 10_000,
+      symbol: "601398",
+      price: 5,
+      quantity: 100,
     });
     service.reverseLedger(original.id, "测试冲正");
 
@@ -561,9 +626,11 @@ describe("AppService 实盘流水", () => {
     );
     expect(() =>
       service.correctLedger(original.id, {
-        type: "transfer_in",
+        type: "buy",
         businessDate: "2026-01-01",
-        amount: 9_000,
+        symbol: "601398",
+        price: 4.9,
+        quantity: 100,
       }),
     ).toThrow("已经被冲正或修正");
   });
@@ -616,7 +683,9 @@ describe("AppService 实盘流水", () => {
           { date: endDate, close: symbol === "601398" ? 5.2 : 7.2 },
         ],
         provenance: {
-          source: "腾讯财经 live-test",
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
           fetchedAt: "2026-07-28T01:00:00Z",
           dataCutoff: endDate,
           adjustment: "none",
@@ -659,6 +728,49 @@ describe("AppService 实盘流水", () => {
       month: "2026-07",
       scope: "all",
     });
+    expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+  });
+
+  it("历史月份以月内最后有效交易日作为实际数据截止", async () => {
+    const { service } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-05-04",
+      symbol: "601398",
+      price: 5,
+      quantity: 100,
+    });
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [
+        { date: "2026-05-04", close: 5 },
+        { date: "2026-05-29", close: 5.2 },
+      ],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-06-01T01:00:00Z",
+        dataCutoff: "2026-05-29",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const view = await service.getIncomeCalendar({
+      month: "2026-05",
+      scope: "all",
+    });
+
+    expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
+      "601398",
+      "2026-05-04",
+      "2026-05-31",
+    );
+    expect(view.quality.dataCutoff).toBe("2026-05-29");
+    expect(view.quality.status).toBe("ready");
+
+    vi.mocked(fetchUnadjustedPrices).mockClear();
+    await service.getIncomeCalendar({ month: "2026-05", scope: "all" });
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 });

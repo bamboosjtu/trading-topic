@@ -283,7 +283,12 @@ export function BacktestDetailModal({
             <div className="detail-source-meta">
               <strong>数据来源：</strong>
               <span>
-                {result.provenance.map((item) => item.source).join(" · ")}
+                {result.provenance
+                  .map(
+                    (item) =>
+                      `${item.source}${item.fallbackUsed ? `（切换原因：${item.fallbackReason ?? "未知"}）` : ""} / ${item.adjustment === "qfq" ? "前复权" : "不复权"} / 截止 ${item.dataCutoff}`,
+                  )
+                  .join(" · ")}
               </span>
               <i />
               <strong>更新时间：</strong>
