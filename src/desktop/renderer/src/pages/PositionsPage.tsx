@@ -239,7 +239,7 @@ export function PositionsPage() {
               { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "持仓市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
               { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出净收入 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
               { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
-              { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: "按实际现金流日期年化", icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
+              { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: overview.data.metrics.xirr === null ? "样本期不足 30 天，暂不展示" : "按实际现金流日期年化", icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
             ]}
           />
           <section className="workspace-panel live-performance-panel">
@@ -260,7 +260,9 @@ export function PositionsPage() {
                 return (
                   <div key={period}>
                     <span>{PERIOD_LABELS[period]}</span>
-                    <strong className={`tabular-nums ${pnlClass(value)}`}>{percent(value, true)}</strong>
+                    <strong className={`tabular-nums ${pnlClass(value)}`}>
+                      {value === null ? "数据不足" : percent(value, true)}
+                    </strong>
                   </div>
                 );
               })}
@@ -362,14 +364,17 @@ export function PositionsPage() {
             </div>
             <h3>区间表现</h3>
             <div className="drawer-performance">
-              {(Object.keys(PERIOD_LABELS) as PerformancePeriod[]).map((period) => (
-                <div key={period}>
-                  <span>{PERIOD_LABELS[period]}</span>
-                  <strong className={pnlClass(detail.periodPerformance[period])}>
-                    {percent(detail.periodPerformance[period], true)}
-                  </strong>
-                </div>
-              ))}
+              {(Object.keys(PERIOD_LABELS) as PerformancePeriod[]).map((period) => {
+                const value = detail.periodPerformance[period];
+                return (
+                  <div key={period}>
+                    <span>{PERIOD_LABELS[period]}</span>
+                    <strong className={pnlClass(value)}>
+                      {value === null ? "数据不足" : percent(value, true)}
+                    </strong>
+                  </div>
+                );
+              })}
             </div>
             <div className="drawer-section-heading">
               <h3>最近流水</h3>

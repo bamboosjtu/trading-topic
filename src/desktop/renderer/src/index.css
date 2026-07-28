@@ -1951,6 +1951,21 @@ a:focus-visible,
   height: 50px;
 }
 
+/* 已冲正流水整行视觉降级：保留可读性，但明确表达"不再参与计算"。 */
+.ledger-table .ant-table-tbody > tr.ledger-row-reversed > td {
+  color: #9aa7b8;
+  background: #fafbfd;
+}
+
+.ledger-table .ant-table-tbody > tr.ledger-row-reversed > td .ant-tag {
+  opacity: 0.7;
+}
+
+.ledger-table .ant-table-tbody > tr.ledger-row-reversed > td strong {
+  color: #9aa7b8;
+  font-weight: 400;
+}
+
 .live-source-note,
 .calendar-legend {
   display: flex;
@@ -2126,6 +2141,18 @@ a:focus-visible,
   margin-left: auto;
   color: #60738f;
   font-size: 11px;
+}
+
+/* 累计收益归因解释行：明确展示收益来源构成，避免被误读为重复展示。 */
+.income-cumulative-breakdown {
+  margin: -4px 16px 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f5f8fc;
+  border: 1px solid #e3ecf6;
+  color: #5a6b80;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .income-calendar-panel {

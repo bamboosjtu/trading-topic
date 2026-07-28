@@ -253,9 +253,15 @@ function periodPerformance(
   symbol?: string,
 ): PeriodPerformance {
   if (!cutoff) return emptyPeriodPerformance();
+  const earliestDay = daily.length ? daily[0].date : null;
   const result = emptyPeriodPerformance();
   for (const period of PERFORMANCE_PERIODS) {
     const start = addDays(cutoff, -LIVE_PERFORMANCE_PERIOD_DAYS[period] + 1);
+    // 区间起点早于账户最早可用日期时，样本不完整，不返回该周期收益。
+    if (earliestDay && earliestDay > start) {
+      result[period] = null;
+      continue;
+    }
     const selected = daily
       .filter((day) => day.date >= start && day.date <= cutoff)
       .map((day) => {
@@ -300,7 +306,13 @@ function investmentXirr(
     if (!endingDate) return null;
     cashflows.push({ date: endingDate, amount: endingValue });
   }
-  return xirr(cashflows.sort((a, b) => a.date.localeCompare(b.date)));
+  cashflows.sort((a, b) => a.date.localeCompare(b.date));
+  // 短期样本年化会产生极端 XIRR（例如 7 天 5.6% 年化为 ~1600%），
+  // 直接展示会误导用户。样本期不足 30 天时不返回 XIRR。
+  if (cashflows.length < 2) return null;
+  const sampleDays = daysBetween(cashflows[0].date, cashflows[cashflows.length - 1].date);
+  if (sampleDays < 30) return null;
+  return xirr(cashflows);
 }
 
 export function buildPositionsOverview(
@@ -353,7 +365,8 @@ export function buildPositionsOverview(
         securityTypes.get(symbol) ?? inferSecurityType(symbol, names.get(symbol)),
       quantity: position.quantity,
       cost: position.cost,
-      averageCost: roundMoney(position.cost / position.quantity),
+      // 保留原始精度，避免展示值反算后无法对账累计买入支出。
+      averageCost: position.cost / position.quantity,
       lastPrice: quote?.close ?? null,
       marketValue,
       cumulativeBuySpend: position.cumulativeBuySpend,

@@ -245,6 +245,11 @@ export function IncomeCalendarPage() {
               { label: "年内收益", value: money(calendar.data.metrics.yearToDate.amount, true), helper: percent(calendar.data.metrics.yearToDate.rate, true), icon: <StockOutlined />, tone: "violet", valueClass: pnlClass(calendar.data.metrics.yearToDate.amount) },
             ]}
           />
+          {calendar.data.metrics.cumulative.amount !== null ? (
+            <div className="income-cumulative-breakdown">
+              累计收益 = 市场价格 {money(calendar.data.metrics.marketPrice.amount, true)} + 分红 {money(calendar.data.metrics.dividend.amount)} + 交易影响 {money(calendar.data.metrics.tradingCost.amount, true)}
+            </div>
+          ) : null}
           {calendar.data.quality.status === "empty" ? (
             <section className="workspace-panel">
               <LiveEmpty title="暂无收益记录" description="收益日历只读取本地实盘流水与行情，不提供交易录入或流水导入。" />

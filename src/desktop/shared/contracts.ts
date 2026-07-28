@@ -400,7 +400,12 @@ export interface LedgerQueryResult {
   quality: LiveDataQuality;
   integrityError: string | null;
   metrics: {
+    /** 当前筛选范围内可见的全部记录条数，含已冲正与审计事件。 */
     recordCount: number;
+    /** 当前有效业务流水条数（不含 adjustment 与已冲正记录）。 */
+    effectiveCount: number;
+    /** 已冲正流水条数。 */
+    reversedCount: number;
     cumulativeBuySpend: number;
     cumulativeSellNetIncome: number;
     cumulativeDividend: number;

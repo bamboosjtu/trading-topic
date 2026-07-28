@@ -138,11 +138,15 @@ export function queryLedgerRecords(
     missingSymbols: [],
     missingDates: [],
   };
+  const reversedCount = allRows.filter((row) => row.isReversed).length;
+  const effectiveCount = aggregateRows.length;
   return {
     quality,
     integrityError,
     metrics: {
       recordCount: allRows.length,
+      effectiveCount,
+      reversedCount,
       cumulativeBuySpend: roundMoney(
         aggregateRows
           .filter((row) => row.type === "buy")

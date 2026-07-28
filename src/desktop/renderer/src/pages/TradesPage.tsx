@@ -53,12 +53,8 @@ import { DividendReinvestmentModal } from "./live/DividendReinvestmentModal";
 const { RangePicker } = DatePicker;
 type LedgerPageSize = (typeof LIVE_LEDGER_PAGE_SIZES)[number];
 
-function amountClass(type: EntryType): string {
-  if (["sell", "dividend"].includes(type)) return "finance-profit";
-  if (type === "buy") return "finance-loss";
-  return "finance-flat";
-}
-
+// 现金流方向（买入支出/卖出收入/分红到账）不使用红涨绿跌配色，
+// 避免 A 股语境下"绿色=亏损"的误解；统一用深色正文 + 正负号表达方向。
 function signedAmount(row: LedgerRecordView): string {
   const value = row.amount;
   if (value === null) return "—";
@@ -183,7 +179,7 @@ export function TradesPage() {
       width: 140,
       align: "right",
       render: (_, row) => (
-        <strong className={`tabular-nums ${amountClass(row.type)}`}>{signedAmount(row)}</strong>
+        <strong className="tabular-nums finance-flat">{signedAmount(row)}</strong>
       ),
     },
     {
@@ -370,7 +366,7 @@ export function TradesPage() {
           <QualityNotice quality={ledger.data.quality} />
           <LiveMetricStrip
             items={[
-              { label: "流水记录", value: `${ledger.data.metrics.recordCount} 条`, helper: "当前筛选范围", icon: <TransactionOutlined />, tone: "blue" },
+              { label: "有效流水", value: `${ledger.data.metrics.effectiveCount} 笔`, helper: ledger.data.metrics.reversedCount ? `另已冲正 ${ledger.data.metrics.reversedCount} 笔` : "当前筛选范围", icon: <TransactionOutlined />, tone: "blue" },
               { label: "累计买入支出", value: money(ledger.data.metrics.cumulativeBuySpend), helper: "成交金额 + 费用", icon: <SwapOutlined />, tone: "red" },
               { label: "累计卖出净收入", value: money(ledger.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 费用", icon: <SwapOutlined />, tone: "green" },
               { label: "累计分红", value: money(ledger.data.metrics.cumulativeDividend), helper: "到账金额合计", icon: <GiftOutlined />, tone: "orange" },
@@ -401,6 +397,9 @@ export function TradesPage() {
                   pageSizeOptions: [...LIVE_LEDGER_PAGE_SIZES],
                   showTotal: (total) => `共 ${total} 条`,
                 }}
+                rowClassName={(row) =>
+                  row.isReversed ? "ledger-row-reversed" : ""
+                }
                 onChange={handleTableChange}
               />
             ) : (
@@ -474,7 +473,7 @@ export function TradesPage() {
           <div className="ledger-detail">
             <div className="ledger-detail-hero">
               <Tag color={ENTRY_TYPE_TONES[detail.type]}>{ENTRY_TYPE_LABELS[detail.type]}</Tag>
-              <strong className={`tabular-nums ${amountClass(detail.type)}`}>{signedAmount(detail)}</strong>
+              <strong className="tabular-nums finance-flat">{signedAmount(detail)}</strong>
               <span>{detail.businessDate}</span>
             </div>
             <dl>

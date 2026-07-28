@@ -354,6 +354,8 @@ describe("投资收益视图", () => {
     );
     expect(result.metrics).toEqual({
       recordCount: 3,
+      effectiveCount: 3,
+      reversedCount: 0,
       cumulativeBuySpend: 505,
       cumulativeSellNetIncome: 238,
       cumulativeDividend: 20,
