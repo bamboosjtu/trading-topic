@@ -32,6 +32,7 @@ import {
   type LedgerRecordView,
   type SecurityType,
 } from "../api/client";
+import { LIVE_LEDGER_PAGE_SIZES } from "../../../shared/constants";
 import {
   ENTRY_TYPE_LABELS,
   ENTRY_TYPE_OPTIONS,
@@ -50,7 +51,7 @@ import {
 import { LedgerEntryModal } from "./live/LedgerEntryModal";
 
 const { RangePicker } = DatePicker;
-type LedgerPageSize = 20 | 50 | 100;
+type LedgerPageSize = (typeof LIVE_LEDGER_PAGE_SIZES)[number];
 
 function amountClass(type: EntryType): string {
   if (["sell", "dividend", "transfer_in"].includes(type)) return "finance-profit";
@@ -390,7 +391,7 @@ export function TradesPage() {
                   pageSize: ledger.data.pageSize,
                   total: ledger.data.total,
                   showSizeChanger: true,
-                  pageSizeOptions: [20, 50, 100],
+                  pageSizeOptions: [...LIVE_LEDGER_PAGE_SIZES],
                   showTotal: (total) => `共 ${total} 条`,
                 }}
                 onChange={handleTableChange}

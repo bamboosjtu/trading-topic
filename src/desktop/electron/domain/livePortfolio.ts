@@ -20,6 +20,7 @@ import {
 } from "../../shared/constants";
 import type { StoredMarketPrice } from "../storage/database";
 import { roundMoney } from "./finance";
+import { addDays, daysBetween, validDate } from "./dateUtils";
 
 const PERFORMANCE_PERIODS = Object.keys(
   LIVE_PERFORMANCE_PERIOD_DAYS,
@@ -72,25 +73,6 @@ interface LiveModel {
   pricesBySymbol: Map<string, StoredMarketPrice[]>;
   latestPrices: Map<string, StoredMarketPrice>;
   daily: DailyAttribution[];
-}
-
-function validDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
-}
-
-function addDays(value: string, amount: number): string {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + amount);
-  return date.toISOString().slice(0, 10);
-}
-
-function daysBetween(left: string, right: string): number {
-  return Math.floor(
-    (Date.parse(`${right}T00:00:00Z`) - Date.parse(`${left}T00:00:00Z`)) /
-      86_400_000,
-  );
 }
 
 function inferSecurityType(symbol: string, name = ""): SecurityType {

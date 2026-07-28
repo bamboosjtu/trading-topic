@@ -1554,12 +1554,13 @@ a:focus-visible,
   gap: 5px;
 }
 
-.live-empty .ant-empty-description strong {
+/* 直接子选择器：只匹配 LiveEmpty 模板里的标题/说明，避免命中按钮内部的 <span>。 */
+.live-empty .ant-empty-description > div > strong {
   color: #203957;
   font-size: 13px;
 }
 
-.live-empty .ant-empty-description span {
+.live-empty .ant-empty-description > div > span {
   color: #74859a;
   font-size: 11px;
 }

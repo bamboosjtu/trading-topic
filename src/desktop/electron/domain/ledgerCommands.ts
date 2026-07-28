@@ -7,6 +7,7 @@ import type {
 import { rebuildAccount } from "./ledger";
 import { activeLedgerEntries } from "./livePortfolio";
 import { roundMoney } from "./finance";
+import { addDays, validDate } from "./dateUtils";
 
 const DIRECT_ENTRY_TYPES = new Set<LedgerEntryInput["type"]>([
   "transfer_in",
@@ -16,21 +17,6 @@ const DIRECT_ENTRY_TYPES = new Set<LedgerEntryInput["type"]>([
   "reverse_repo",
   "transfer_out",
 ]);
-
-function validDate(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return (
-    Number.isFinite(date.valueOf()) &&
-    date.toISOString().slice(0, 10) === value
-  );
-}
-
-function addDays(value: string, days: number): string {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 function requireFinite(
   value: number | undefined,
