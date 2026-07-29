@@ -16,6 +16,7 @@ import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
 } from "../data/marketDataProvider";
+import { latestWeekdayCandidate } from "../domain/marketCalendar";
 import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
@@ -287,6 +288,24 @@ describe("AppService 回测试验", () => {
     ).rejects.toThrow("回测标的不能重复");
     expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+  });
+
+  it("在获取回测行情前拒绝 ETF 标的", async () => {
+    const { service } = await serviceWithDatabase();
+
+    await expect(
+      service.runBacktest({
+        symbols: ["510300"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-01",
+        monthlyAmount: 3000,
+        buyDay: 1,
+      }),
+    ).rejects.toThrow("历史回测只支持A股股票");
+    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
+    expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+    expect(fetchAdjustedBars).not.toHaveBeenCalled();
+    expect(fetchCorporateActions).not.toHaveBeenCalled();
   });
 
   const invalidRuntimeRequests: Array<
@@ -748,6 +767,7 @@ describe("AppService 实盘流水", () => {
       }),
     );
 
+    const expectedCurrentCutoff = latestWeekdayCandidate(new Date());
     const view = await service.getIncomeCalendar({
       month: "2026-07",
       scope: "all",
@@ -761,7 +781,7 @@ describe("AppService 实盘流水", () => {
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601939",
       "2026-07-01",
-      "2026-07-28",
+      expectedCurrentCutoff,
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601398",
@@ -775,7 +795,7 @@ describe("AppService 实盘流水", () => {
     );
     expect(database.listMarketPrices()).toHaveLength(0);
     expect(database.listLiveMarketPrices()).toHaveLength(6);
-    expect(view.quality.dataCutoff).toBe("2026-07-28");
+    expect(view.quality.dataCutoff).toBe(expectedCurrentCutoff);
 
     vi.mocked(fetchUnadjustedPrices).mockClear();
     await service.getIncomeCalendar({
@@ -826,5 +846,62 @@ describe("AppService 实盘流水", () => {
     vi.mocked(fetchUnadjustedPrices).mockClear();
     await service.getIncomeCalendar({ month: "2026-05", scope: "all" });
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
+  });
+
+  it("非空覆盖只覆盖到实际数据截止日并继续补齐请求尾部", async () => {
+    const { service, database } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-01",
+      symbol: "601398",
+      price: 5,
+      quantity: 100,
+    });
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-06-01", close: 5 },
+          { date: "2026-06-29", close: 5.1 },
+        ],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-06-29T08:00:00Z",
+          dataCutoff: "2026-06-29",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-06-01",
+        requestedThrough: "2026-06-30",
+      },
+    ]);
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [{ date: "2026-06-30", close: 5.2 }],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-06-30T08:00:00Z",
+        dataCutoff: "2026-06-30",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const view = await service.getIncomeCalendar({
+      month: "2026-06",
+      scope: "all",
+    });
+
+    expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
+      "601398",
+      "2026-06-30",
+      "2026-06-30",
+    );
+    expect(view.quality.dataCutoff).toBe("2026-06-30");
+    expect(view.quality.status).toBe("ready");
   });
 });

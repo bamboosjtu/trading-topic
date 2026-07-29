@@ -187,6 +187,102 @@ describe("投资收益视图", () => {
     expect(tradeDay?.events).toHaveLength(1);
   });
 
+  it("多标的估值要求每个当前持仓都具有截止日精确收盘价", () => {
+    const entries = [
+      entry("buy-a", "buy", "2026-07-01", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("buy-b", "buy", "2026-07-01", {
+        symbol: "510300",
+        securityType: "etf",
+        price: 4,
+        quantity: 100,
+      }),
+    ];
+    const overview = buildPositionsOverview(
+      entries,
+      [
+        price("601398", "2026-07-01", 5),
+        price("601398", "2026-07-28", 5.5),
+        price("510300", "2026-07-01", 4),
+        price("510300", "2026-07-27", 4.2),
+      ],
+      stocks,
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-28",
+      },
+    );
+
+    expect(
+      overview.positions.find((position) => position.symbol === "601398"),
+    ).toMatchObject({
+      lastPrice: 5.5,
+      marketValue: 550,
+    });
+    expect(
+      overview.positions.find((position) => position.symbol === "510300"),
+    ).toMatchObject({
+      lastPrice: null,
+      marketValue: null,
+      totalReturn: null,
+    });
+    expect(overview.metrics.marketValue).toBeNull();
+    expect(overview.metrics.totalReturn).toBeNull();
+    expect(overview.quality.status).toBe("partial");
+    expect(overview.quality.missingSymbols).toContain("510300");
+    expect(overview.quality.missingDates).toContain("2026-07-28");
+  });
+
+  it("历史已清仓标的的较新行情不能替代当前持仓的截止日估值", () => {
+    const entries = [
+      entry("old-buy", "buy", "2026-01-05", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("old-sell", "sell", "2026-02-05", {
+        symbol: "601398",
+        price: 5.2,
+        quantity: 100,
+      }),
+      entry("current-buy", "buy", "2026-07-01", {
+        symbol: "510300",
+        securityType: "etf",
+        price: 4,
+        quantity: 100,
+      }),
+    ];
+    const overview = buildPositionsOverview(
+      entries,
+      [
+        price("601398", "2026-01-05", 5),
+        price("601398", "2026-02-05", 5.2),
+        price("601398", "2026-07-28", 5.6),
+        price("510300", "2026-07-01", 4),
+        price("510300", "2026-07-27", 4.2),
+      ],
+      stocks,
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-28",
+      },
+    );
+
+    expect(overview.positions).toHaveLength(1);
+    expect(overview.positions[0]).toMatchObject({
+      symbol: "510300",
+      lastPrice: null,
+      marketValue: null,
+      totalReturn: null,
+    });
+    expect(overview.quality.status).toBe("partial");
+    expect(overview.quality.missingSymbols).toEqual(["510300"]);
+    expect(overview.quality.missingDates).toContain("2026-07-28");
+  });
+
   it("收益日历不因买入前缓存行情生成大量零收益日期", () => {
     const entries = [
       entry("new-buy", "buy", "2026-07-10", {

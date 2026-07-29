@@ -367,6 +367,14 @@ export class LocalDatabase {
           "ALTER TABLE live_market_coverage ADD COLUMN empty_evidence TEXT CHECK (empty_evidence IS NULL OR empty_evidence IN ('exchange_calendar', 'outside_listing'))",
         );
       }
+      // Schema 9 的空覆盖没有独立证据字段，旧写入路径可能把数据源临时
+      // 异常误记成“无交易数据”。这些记录不能在升级后继续阻止行情补齐；
+      // 删除后由新路径重新请求，并只在交易日历或存续期证据充分时重建。
+      this.database.exec(`
+        DELETE FROM live_market_coverage
+        WHERE result_status = 'empty'
+          AND empty_evidence IS NULL
+      `);
     }
     if (currentVersion < 9 && retainedLedgerEntries.length) {
       const insertLedger = this.database.prepare(
@@ -768,6 +776,26 @@ export class LocalDatabase {
             "空行情覆盖缺少独立交易日历或证券存续期证据，拒绝持久化",
           );
         }
+        if (
+          !entry.prices.length &&
+          entry.provenance.dataCutoff !== null
+        ) {
+          throw new Error("空行情覆盖不能包含实际数据截止日");
+        }
+        const actualDataCutoff = entry.prices
+          .map((row) => row.date)
+          .sort()
+          .at(-1) ?? null;
+        if (
+          entry.prices.length &&
+          (entry.provenance.emptyEvidence ||
+            !actualDataCutoff ||
+            entry.provenance.dataCutoff !== actualDataCutoff)
+        ) {
+          throw new Error(
+            "非空行情覆盖的实际数据截止日或空区间证据不一致",
+          );
+        }
         insertCoverage.run(
           entry.symbol,
           requestedFrom,
@@ -777,7 +805,7 @@ export class LocalDatabase {
           entry.provenance.fallbackUsed ? 1 : 0,
           entry.provenance.fallbackReason ?? null,
           entry.provenance.fetchedAt,
-          entry.provenance.dataCutoff,
+          actualDataCutoff,
           entry.provenance.adjustment,
           entry.provenance.emptyEvidence ?? null,
           entry.prices.length ? "data" : "empty",
@@ -1089,7 +1117,16 @@ export class LocalDatabase {
           !["data", "empty"].includes(row.result_status) ||
           !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_from) ||
           !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_through) ||
-          row.requested_from > row.requested_through,
+          row.requested_from > row.requested_through ||
+          (row.result_status === "empty" &&
+            (!["exchange_calendar", "outside_listing"].includes(
+              row.empty_evidence ?? "",
+            ) ||
+              row.data_cutoff !== null)) ||
+          (row.result_status === "data" &&
+            (row.empty_evidence !== null ||
+              !row.data_cutoff ||
+              !/^\d{4}-\d{2}-\d{2}$/.test(row.data_cutoff))),
       )
     ) {
       throw new Error("备份包含非法行情覆盖记录");

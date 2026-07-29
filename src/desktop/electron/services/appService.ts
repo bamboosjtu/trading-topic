@@ -21,6 +21,7 @@ import type {
   LedgerRecordView,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
+import { securityTypeForInstrument } from "../../shared/instruments";
 import {
   BACKTEST_CALIBER_VERSION,
   DATA_SOURCE_THROTTLE_MS,
@@ -54,6 +55,7 @@ import {
 import {
   LocalDatabase,
   type MarketDataCacheEntry,
+  type StoredMarketCoverage,
 } from "../storage/database";
 import {
   addDays,
@@ -66,6 +68,7 @@ import {
   reduceLedger,
 } from "../domain/ledgerReducer";
 import {
+  isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   latestWeekdayCandidate,
@@ -83,6 +86,24 @@ function isCompleteInstrumentUniverse(stocks: readonly StockInfo[]): boolean {
     stockCount >= STOCK_UNIVERSE_MIN_SIZE &&
     etfCount >= ETF_UNIVERSE_MIN_SIZE
   );
+}
+
+function confirmedCoverageThrough(
+  coverage: StoredMarketCoverage,
+): string | null {
+  if (coverage.resultStatus === "empty") {
+    return coverage.emptyEvidence ? coverage.requestedThrough : null;
+  }
+  if (!coverage.dataCutoff) return null;
+  if (coverage.dataCutoff >= coverage.requestedThrough) {
+    return coverage.requestedThrough;
+  }
+  return isConfirmedMarketClosureRange(
+    addDays(coverage.dataCutoff, 1),
+    coverage.requestedThrough,
+  )
+    ? coverage.requestedThrough
+    : coverage.dataCutoff;
 }
 
 interface LivePriceRange {
@@ -211,7 +232,32 @@ export class AppService {
     // 在任何外部请求或缓存写入之前完成领域校验，避免重复标的等无效请求
     // 消耗数据源配额，或最终才由数据库唯一约束报错。
     assertBacktestRequest(canonicalRequest);
+    const cachedInstrumentMap = new Map(
+      this.localStockUniverse().map((instrument) => [
+        instrument.symbol,
+        instrument,
+      ]),
+    );
+    for (const symbol of canonicalRequest.symbols) {
+      const cachedInstrument = cachedInstrumentMap.get(symbol);
+      if (
+        securityTypeForInstrument(
+          cachedInstrument ?? { symbol, name: "" },
+        ) !== "stock"
+      ) {
+        throw new Error("历史回测只支持A股股票");
+      }
+    }
     const stocks = await this.listStocks();
+    const instrumentMap = new Map(
+      stocks.map((instrument) => [instrument.symbol, instrument]),
+    );
+    for (const symbol of canonicalRequest.symbols) {
+      const instrument = instrumentMap.get(symbol);
+      if (!instrument || instrument.securityType !== "stock") {
+        throw new Error("历史回测只支持A股股票");
+      }
+    }
     const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
     const marketData: Array<{
       symbol: string;
@@ -437,7 +483,8 @@ export class AppService {
       const missing: LivePriceRange[] = [];
       let cursor = range.startDate;
       for (const item of coverage) {
-        if (item.requestedThrough < cursor) continue;
+        const coveredThrough = confirmedCoverageThrough(item);
+        if (!coveredThrough || coveredThrough < cursor) continue;
         if (item.requestedFrom > range.endDate) break;
         if (item.requestedFrom > cursor) {
           missing.push({
@@ -446,8 +493,8 @@ export class AppService {
             endDate: addDays(item.requestedFrom, -1),
           });
         }
-        if (item.requestedThrough >= cursor) {
-          cursor = addDays(item.requestedThrough, 1);
+        if (coveredThrough >= cursor) {
+          cursor = addDays(coveredThrough, 1);
         }
         if (cursor > range.endDate) break;
       }

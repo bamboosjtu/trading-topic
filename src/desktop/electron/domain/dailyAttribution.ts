@@ -140,6 +140,21 @@ export function buildDailyAttribution(
   for (const entry of entries) {
     if (entry.businessDate <= factAsOfDate) dates.add(entry.businessDate);
   }
+  if (
+    valuationCutoff &&
+    valuationCutoff <= factAsOfDate &&
+    [...holdingIntervals.values()].some((intervals) =>
+      intervals.some(
+        (interval) =>
+          interval.startDate <= valuationCutoff &&
+          interval.endDate >= valuationCutoff,
+      ),
+    )
+  ) {
+    // 估值截止日本身也是必须解释的业务日期。即使缓存中只有其他标的或
+    // 更早日期，也要生成该日归因，让缺少精确收盘价的持仓明确变为 partial。
+    dates.add(valuationCutoff);
+  }
   const orderedDates = [...dates].filter(validDate).sort();
   if (!orderedDates.length) return [];
 

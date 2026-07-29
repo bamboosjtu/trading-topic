@@ -285,13 +285,62 @@ describe("LocalDatabase", () => {
     ]);
 
     const restored = await openDatabase(join(directory, "restored.sqlite"));
-    restored.restoreBackup(database.exportBackup());
+    const validBackup = database.exportBackup();
+    restored.restoreBackup(validBackup);
     expect(restored.listLiveMarketCoverage(["601398"])[0]).toMatchObject({
       requestedFrom: "2026-02-15",
       requestedThrough: "2026-02-23",
       emptyEvidence: "exchange_calendar",
       resultStatus: "empty",
     });
+
+    const invalidEmptyBackup = structuredClone(validBackup);
+    invalidEmptyBackup.liveMarketCoverage[0].empty_evidence = null;
+    expect(() => restored.restoreBackup(invalidEmptyBackup)).toThrow(
+      "备份包含非法行情覆盖记录",
+    );
+
+    invalidEmptyBackup.liveMarketCoverage[0].empty_evidence =
+      "exchange_calendar";
+    invalidEmptyBackup.liveMarketCoverage[0].data_cutoff = "2026-02-23";
+    expect(() => restored.restoreBackup(invalidEmptyBackup)).toThrow(
+      "备份包含非法行情覆盖记录",
+    );
+  });
+
+  it("恢复备份时要求非空行情覆盖具有实际截止日且不带空区间证据", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-data-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [{ date: "2026-07-28", close: 7.2 }],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-28T08:00:00Z",
+          dataCutoff: "2026-07-28",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      },
+    ]);
+    const restored = await openDatabase(join(directory, "restored.sqlite"));
+    const missingCutoff = structuredClone(database.exportBackup());
+    missingCutoff.liveMarketCoverage[0].data_cutoff = null;
+    expect(() => restored.restoreBackup(missingCutoff)).toThrow(
+      "备份包含非法行情覆盖记录",
+    );
+
+    const unexpectedEvidence = structuredClone(database.exportBackup());
+    unexpectedEvidence.liveMarketCoverage[0].empty_evidence =
+      "exchange_calendar";
+    expect(() => restored.restoreBackup(unexpectedEvidence)).toThrow(
+      "备份包含非法行情覆盖记录",
+    );
   });
 
   it("schema 7 升级显式保留买入卖出分红和审计链，丢弃退出 R1 的账户事实", async () => {
@@ -389,6 +438,50 @@ describe("LocalDatabase", () => {
       "paymentDate" in rows.find((row) => row.id === "dividend-old")!,
     ).toBe(false);
     expect(migrated.exportBackup().schemaVersion).toBe(10);
+  });
+
+  it("schema 9 的无证据空覆盖升级后恢复为待请求区间", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-migrate-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "legacy.sqlite");
+    const legacy = new BetterSqlite3(filePath);
+    legacy.exec(`
+      CREATE TABLE live_market_coverage (
+        symbol TEXT NOT NULL,
+        requested_from TEXT NOT NULL,
+        requested_through TEXT NOT NULL,
+        source TEXT NOT NULL,
+        primary_source TEXT NOT NULL,
+        fallback_used INTEGER NOT NULL,
+        fallback_reason TEXT,
+        fetched_at TEXT NOT NULL,
+        data_cutoff TEXT,
+        adjustment TEXT NOT NULL,
+        result_status TEXT NOT NULL,
+        PRIMARY KEY (symbol, requested_from, requested_through, adjustment)
+      );
+      INSERT INTO live_market_coverage VALUES (
+        '601398', '2026-07-01', '2026-07-28', 'sina', 'tencent', 1,
+        '腾讯失败、备用源临时空响应', '2026-07-28T08:00:00Z', NULL,
+        'none', 'empty'
+      );
+      INSERT INTO live_market_coverage VALUES (
+        '601939', '2026-07-01', '2026-07-27', 'tencent', 'tencent', 0,
+        NULL, '2026-07-27T08:00:00Z', '2026-07-27',
+        'none', 'data'
+      );
+    `);
+    legacy.pragma("user_version = 9");
+    legacy.close();
+
+    const migrated = await openDatabase(filePath);
+    expect(migrated.listLiveMarketCoverage(["601398"])).toEqual([]);
+    expect(migrated.listLiveMarketCoverage(["601939"])).toEqual([
+      expect.objectContaining({
+        resultStatus: "data",
+        dataCutoff: "2026-07-27",
+      }),
+    ]);
   });
 
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {

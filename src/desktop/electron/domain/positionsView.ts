@@ -29,7 +29,6 @@ import {
 } from "./ledgerReducer";
 import {
   buildDailyAttribution,
-  priceOnOrBefore,
   rowsBySymbol,
   type DailyAttribution,
 } from "./dailyAttribution";
@@ -132,9 +131,25 @@ export function buildLiveModel(
       : availableCutoffs.length === symbols.length && symbols.length
         ? availableCutoffs.sort()[0]
         : null;
-  const missingSymbols = symbols.filter(
+  const symbolsWithoutPrices = symbols.filter(
     (symbol) => !(pricesBySymbol.get(symbol)?.length),
   );
+  const valuationSymbols = cutoff
+    ? [...reduceLedger(effective, cutoff).positions.entries()]
+        .filter(([, position]) => position.quantity > 1e-8)
+        .map(([symbol]) => symbol)
+    : heldSymbols;
+  const symbolsWithoutCutoffPrice = cutoff
+    ? valuationSymbols.filter(
+        (symbol) =>
+          !pricesBySymbol
+            .get(symbol)
+            ?.some((row) => row.date === cutoff),
+      )
+    : valuationSymbols;
+  const missingSymbols = [
+    ...new Set([...symbolsWithoutPrices, ...symbolsWithoutCutoffPrice]),
+  ];
   const unvaluedTradeSymbols = cutoff
     ? symbols.filter((symbol) =>
         effective.some(
@@ -152,8 +167,13 @@ export function buildLiveModel(
         ),
       );
   const issues = [
-    ...(missingSymbols.length
-      ? [`缺少 ${missingSymbols.length} 个标的的本地正式收盘行情`]
+    ...(symbolsWithoutPrices.length
+      ? [`缺少 ${symbolsWithoutPrices.length} 个标的的本地正式收盘行情`]
+      : []),
+    ...(symbolsWithoutCutoffPrice.length
+      ? [
+          `${symbolsWithoutCutoffPrice.length} 个标的缺少估值截止日 ${cutoff ?? "未知"} 的精确正式收盘价，未使用更早价格代替`,
+        ]
       : []),
     ...(unvaluedTradeSymbols.length
       ? [
@@ -164,7 +184,9 @@ export function buildLiveModel(
   const latestPrices = new Map<string, StoredMarketPrice>();
   if (cutoff) {
     for (const symbol of symbols) {
-      const row = priceOnOrBefore(pricesBySymbol.get(symbol) ?? [], cutoff);
+      const row = pricesBySymbol
+        .get(symbol)
+        ?.find((item) => item.date === cutoff);
       if (row) latestPrices.set(symbol, row);
     }
   }
