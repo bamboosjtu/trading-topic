@@ -12,6 +12,10 @@ export const RECENT_BACKTEST_EXPERIMENT_LIMIT = 500;
 export const STOCK_UNIVERSE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 /** 低于该数量的目录视为不完整，不能冒充全 A 股快照。 */
 export const STOCK_UNIVERSE_MIN_SIZE = 1_000;
+/** 境内交易所 ETF 目录过小时视为接口降级或字段变化。 */
+// 东财境内交易所 ETF 目录在 2026-07 实际约 1,500 只；低于 1,000
+// 通常意味着只取得了接口单页（默认最多 100 条），不能覆盖完整快照。
+export const ETF_UNIVERSE_MIN_SIZE = 1_000;
 export const DATA_SOURCE_THROTTLE_MS = 1_200;
 export const LIVE_PRICE_STALE_AFTER_DAYS = 5;
 export const LIVE_PRICE_REFRESH_LOOKBACK_MONTHS = 13;

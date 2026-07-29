@@ -25,7 +25,12 @@ import {
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api, type PerformancePeriod, type PositionView } from "../api/client";
+import {
+  api,
+  type PerformancePeriod,
+  type PositionView,
+  type XirrStatus,
+} from "../api/client";
 import {
   LiveEmpty,
   LiveLoading,
@@ -50,6 +55,14 @@ const PERIOD_LABELS: Record<PerformancePeriod, string> = {
 
 type AssetFilter = "all" | "stock" | "etf";
 type PositionSort = "marketValue" | "totalReturn" | "symbol";
+
+const XIRR_STATUS_TEXT: Record<XirrStatus, string> = {
+  ready: "按实际现金流日期年化",
+  short_sample: "样本期不足 30 天，暂不展示",
+  missing_valuation: "缺少正式期末估值，暂不可计算",
+  insufficient_cashflows: "现金流数量或方向不足，暂不可计算",
+  no_solution: "当前现金流无法求得有效 XIRR",
+};
 
 export function PositionsPage() {
   const { message } = App.useApp();
@@ -239,7 +252,7 @@ export function PositionsPage() {
               { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "持仓市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
               { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出净收入 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
               { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
-              { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: overview.data.metrics.xirr === null ? "样本期不足 30 天，暂不展示" : "按实际现金流日期年化", icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
+              { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: XIRR_STATUS_TEXT[overview.data.metrics.xirrStatus], icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
             ]}
           />
           <section className="workspace-panel live-performance-panel">
@@ -360,7 +373,13 @@ export function PositionsPage() {
               <div><span>累计买入支出</span><strong>{money(detail.cumulativeBuySpend)}</strong></div>
               <div><span>累计卖出净收入</span><strong>{money(detail.cumulativeSellNetIncome)}</strong></div>
               <div><span>累计净投入</span><strong>{money(detail.netInvestment)}</strong></div>
-              <div><span>XIRR</span><strong className={pnlClass(detail.xirr)}>{percent(detail.xirr, true)}</strong></div>
+              <div>
+                <span>XIRR</span>
+                <strong className={pnlClass(detail.xirr)}>
+                  {percent(detail.xirr, true)}
+                </strong>
+                <small>{XIRR_STATUS_TEXT[detail.xirrStatus]}</small>
+              </div>
             </div>
             <h3>区间表现</h3>
             <div className="drawer-performance">

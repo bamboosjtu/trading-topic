@@ -3,7 +3,8 @@ out/
 dist/
 .vite/
 .userData/
-artifacts/
+artifacts/*
+!artifacts/market-data-smoke.json
 *.log
 .DS_Store
 

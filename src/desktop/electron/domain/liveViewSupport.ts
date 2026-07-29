@@ -5,6 +5,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 import { activeLedgerEntries, ledgerEntryAmount } from "./ledgerReducer";
+import { securityTypeForInstrument } from "../../shared/instruments";
 
 function recordedOrder(left: LedgerEntry, right: LedgerEntry): number {
   return (
@@ -18,13 +19,7 @@ export function inferSecurityType(
   symbol: string,
   name = "",
 ): SecurityType {
-  if (
-    name.toUpperCase().includes("ETF") ||
-    /^(15|16|50|51|52|56|58)/.test(symbol)
-  ) {
-    return "etf";
-  }
-  return "stock";
+  return securityTypeForInstrument({ symbol, name });
 }
 
 export function namesMap(
@@ -53,7 +48,7 @@ export function securityTypesMap(
     }
   }
   for (const stock of stocks) {
-    result.set(stock.symbol, inferSecurityType(stock.symbol, stock.name));
+    result.set(stock.symbol, securityTypeForInstrument(stock));
   }
   return result;
 }

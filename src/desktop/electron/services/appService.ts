@@ -24,11 +24,12 @@ import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
   BACKTEST_CALIBER_VERSION,
   DATA_SOURCE_THROTTLE_MS,
+  ETF_UNIVERSE_MIN_SIZE,
   LIVE_PRICE_REFRESH_LOOKBACK_MONTHS,
   STOCK_UNIVERSE_CACHE_MAX_AGE_MS,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
-import { fetchAStockUniverse } from "../data/stockUniverse";
+import { fetchInstrumentUniverse } from "../data/stockUniverse";
 import { fetchCorporateActions } from "../data/tencent";
 import {
   fetchMarketAdjustedBars,
@@ -71,8 +72,17 @@ import {
   type TradeDateContext,
 } from "../domain/marketCalendar";
 
-function isCompleteStockUniverse(stocks: readonly StockInfo[]): boolean {
-  return stocks.length >= STOCK_UNIVERSE_MIN_SIZE;
+function isCompleteInstrumentUniverse(stocks: readonly StockInfo[]): boolean {
+  const stockCount = stocks.filter(
+    (item) => item.securityType !== "etf",
+  ).length;
+  const etfCount = stocks.filter(
+    (item) => item.securityType === "etf",
+  ).length;
+  return (
+    stockCount >= STOCK_UNIVERSE_MIN_SIZE &&
+    etfCount >= ETF_UNIVERSE_MIN_SIZE
+  );
 }
 
 interface LivePriceRange {
@@ -148,7 +158,7 @@ export class AppService {
   async listStocks(): Promise<StockInfo[]> {
     const cached = this.database.listStockUniverse();
     const fetchedAt = cached[0]?.fetchedAt;
-    const cachedIsComplete = isCompleteStockUniverse(cached);
+    const cachedIsComplete = isCompleteInstrumentUniverse(cached);
     const cacheIsFresh =
       cachedIsComplete &&
       fetchedAt !== undefined &&
@@ -157,10 +167,10 @@ export class AppService {
     if (cacheIsFresh) return cached;
 
     try {
-      const response = await fetchAStockUniverse();
-      if (!isCompleteStockUniverse(response.rows)) {
+      const response = await fetchInstrumentUniverse();
+      if (!isCompleteInstrumentUniverse(response.rows)) {
         throw new Error(
-          `A 股代码表不完整：仅返回 ${response.rows.length} 个标的`,
+          `证券目录不完整：仅返回 ${response.rows.length} 个标的`,
         );
       }
       this.database.replaceStockUniverse(
@@ -170,7 +180,7 @@ export class AppService {
       );
       this.database.log(
         "info",
-        `已刷新 A 股代码表：${response.rows.length} 个标的`,
+        `已刷新 A 股与 ETF 代码表：${response.rows.length} 个标的`,
       );
       return response.rows;
     } catch (error) {
@@ -178,15 +188,15 @@ export class AppService {
       if (cachedIsComplete) {
         this.database.log(
           "warn",
-          `刷新 A 股代码表失败，使用上次完整快照：${message}`,
+          `刷新证券目录失败，使用上次完整快照：${message}`,
         );
         return cached;
       }
       this.database.log(
         "error",
-        `加载全 A 股代码表失败，且没有可用的完整快照：${message}`,
+        `加载 A 股与 ETF 代码表失败，且没有可用的完整快照：${message}`,
       );
-      throw new Error(`无法加载完整的全 A 股代码表：${message}`);
+      throw new Error(`无法加载完整的 A 股与 ETF 代码表：${message}`);
     }
   }
 
@@ -456,13 +466,6 @@ export class AppService {
       knownTradingDates: this.database
         .listLiveMarketPrices([symbol])
         .map((row) => row.date),
-      coveredRanges: this.database
-        .listLiveMarketCoverage([symbol])
-        .filter((row) => row.adjustment === "none")
-        .map((row) => ({
-          startDate: row.requestedFrom,
-          endDate: row.requestedThrough,
-        })),
     };
   }
 

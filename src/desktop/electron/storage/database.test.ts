@@ -158,7 +158,7 @@ describe("LocalDatabase", () => {
     expect(database.listLedger()).toEqual([]);
   });
 
-  it("导出并恢复 schema v9 的不可变回测试验、投资事实与行情来源", async () => {
+  it("导出并恢复 schema v10 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -197,7 +197,7 @@ describe("LocalDatabase", () => {
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(9);
+    expect(backup.schemaVersion).toBe(10);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -230,6 +230,29 @@ describe("LocalDatabase", () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
+    expect(() =>
+      database.saveLiveMarketPriceSnapshots([
+        {
+          symbol: "601398",
+          prices: [],
+          dividends: [],
+          provenance: {
+            source: "sina",
+            primarySource: "tencent",
+            fallbackUsed: true,
+            fallbackReason: "腾讯 HTTP 503，新浪空响应",
+            fetchedAt: "2026-02-24T07:59:00Z",
+            dataCutoff: null,
+            adjustment: "none",
+            caliberVersion: BACKTEST_CALIBER_VERSION,
+          },
+          requestedFrom: "2026-01-01",
+          requestedThrough: "2026-07-28",
+        },
+      ]),
+    ).toThrow("空行情覆盖缺少");
+    expect(database.listLiveMarketCoverage(["601398"])).toEqual([]);
+
     database.saveLiveMarketPriceSnapshots([
       {
         symbol: "601398",
@@ -243,6 +266,7 @@ describe("LocalDatabase", () => {
           dataCutoff: null,
           adjustment: "none",
           caliberVersion: BACKTEST_CALIBER_VERSION,
+          emptyEvidence: "exchange_calendar",
         },
         requestedFrom: "2026-02-15",
         requestedThrough: "2026-02-23",
@@ -255,6 +279,7 @@ describe("LocalDatabase", () => {
         requestedFrom: "2026-02-15",
         requestedThrough: "2026-02-23",
         dataCutoff: null,
+        emptyEvidence: "exchange_calendar",
         resultStatus: "empty",
       }),
     ]);
@@ -264,6 +289,7 @@ describe("LocalDatabase", () => {
     expect(restored.listLiveMarketCoverage(["601398"])[0]).toMatchObject({
       requestedFrom: "2026-02-15",
       requestedThrough: "2026-02-23",
+      emptyEvidence: "exchange_calendar",
       resultStatus: "empty",
     });
   });
@@ -362,7 +388,7 @@ describe("LocalDatabase", () => {
     expect(
       "paymentDate" in rows.find((row) => row.id === "dividend-old")!,
     ).toBe(false);
-    expect(migrated.exportBackup().schemaVersion).toBe(9);
+    expect(migrated.exportBackup().schemaVersion).toBe(10);
   });
 
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {
@@ -453,8 +479,8 @@ describe("LocalDatabase", () => {
     const database = await openDatabase(filePath);
     database.replaceStockUniverse(
       [
-        { symbol: "000001", name: "平安银行" },
-        { symbol: "601398", name: "工商银行" },
+        { symbol: "000001", name: "平安银行", securityType: "stock" },
+        { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
       ],
       "test-source",
       "2026-07-24T00:00:00Z",
@@ -468,12 +494,14 @@ describe("LocalDatabase", () => {
       {
         symbol: "000001",
         name: "平安银行",
+        securityType: "stock",
         source: "test-source",
         fetchedAt: "2026-07-24T00:00:00Z",
       },
       {
-        symbol: "601398",
-        name: "工商银行",
+        symbol: "510300",
+        name: "沪深300ETF",
+        securityType: "etf",
         source: "test-source",
         fetchedAt: "2026-07-24T00:00:00Z",
       },

@@ -1877,6 +1877,12 @@ a:focus-visible,
   font-size: 14px;
 }
 
+.drawer-fact-grid small {
+  color: #8a99ac;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .drawer-performance {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

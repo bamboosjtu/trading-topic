@@ -1,0 +1,99 @@
+{
+  "executedAt": "2026-07-29T05:38:59.480Z",
+  "requestRange": {
+    "startDate": "2026-07-20",
+    "endDate": "2026-07-24"
+  },
+  "instrumentCatalog": {
+    "etfCount": 1549,
+    "verifiedSymbols": [
+      "510300",
+      "159915"
+    ]
+  },
+  "checks": [
+    {
+      "label": "沪市股票",
+      "symbol": "600519",
+      "source": "tencent",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "沪市股票",
+      "symbol": "600519",
+      "source": "sina",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "深市股票",
+      "symbol": "000001",
+      "source": "tencent",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "深市股票",
+      "symbol": "000001",
+      "source": "sina",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "北交所股票",
+      "symbol": "920002",
+      "source": "tencent",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "北交所股票",
+      "symbol": "920002",
+      "source": "sina",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "境内交易所 ETF",
+      "symbol": "510300",
+      "source": "tencent",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "境内交易所 ETF",
+      "symbol": "510300",
+      "source": "sina",
+      "unadjustedRows": 5,
+      "qfqRows": 5,
+      "dataCutoff": "2026-07-24"
+    },
+    {
+      "label": "沪市股票长历史",
+      "symbol": "600519",
+      "source": "sina",
+      "startDate": "2011-07-25",
+      "dataCutoff": "2026-07-24",
+      "unadjustedRows": 3640,
+      "qfqRows": 3640
+    }
+  ],
+  "fallback": {
+    "source": "sina",
+    "primarySource": "tencent",
+    "fallbackUsed": true,
+    "fallbackReason": "受控冒烟模拟腾讯故障",
+    "fetchedAt": "2026-07-25T08:00:00.000Z",
+    "dataCutoff": "2026-07-24",
+    "adjustment": "none"
+  },
+  "persistence": "passed"
+}

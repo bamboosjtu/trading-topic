@@ -93,4 +93,5 @@ export type {
   SimpleBacktestResult,
   SimpleBacktestRow,
   StockInfo,
+  XirrStatus,
 } from "../../../shared/contracts";

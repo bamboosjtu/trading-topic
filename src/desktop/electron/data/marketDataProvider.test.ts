@@ -50,7 +50,66 @@ describe("腾讯主源与新浪整段兜底", () => {
       source: "tencent",
       fallbackUsed: false,
       dataCutoff: null,
+      emptyEvidence: "exchange_calendar",
     });
+  });
+
+  it("腾讯 HTTP 失败且新浪返回空时拒绝生成永久空覆盖", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(primary.fetchPrices).mockRejectedValueOnce(
+      new Error("HTTP 503"),
+    );
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    await expect(
+      fetchWithProviderFallback(
+        "prices",
+        "601398",
+        "2026-01-01",
+        "2026-07-28",
+        primary,
+        fallback,
+        new Date("2026-07-28T08:00:00Z"),
+      ),
+    ).rejects.toThrow("无法证明请求区间没有交易数据");
+  });
+
+  it("腾讯结构异常且新浪返回空时拒绝生成永久空覆盖", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([
+      { date: "not-a-date", close: 5 },
+    ]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    await expect(
+      fetchWithProviderFallback(
+        "prices",
+        "601398",
+        "2026-07-27",
+        "2026-07-28",
+        primary,
+        fallback,
+        new Date("2026-07-28T08:00:00Z"),
+      ),
+    ).rejects.toThrow("无法证明请求区间没有交易数据");
+  });
+
+  it("两源均空但区间包含正常交易日时保持待重试而不是确认休市", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    await expect(
+      fetchWithProviderFallback(
+        "prices",
+        "601398",
+        "2026-07-27",
+        "2026-07-28",
+        primary,
+        fallback,
+        new Date("2026-07-28T08:00:00Z"),
+      ),
+    ).rejects.toThrow("独立交易日历不能确认");
   });
 
   it("异常候选行情不能被备用源空结果掩盖为合法休市区间", async () => {

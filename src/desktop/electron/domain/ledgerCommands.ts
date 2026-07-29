@@ -226,7 +226,7 @@ export function previewLedgerMutation(
       tradeDateStatus(normalizedInput.businessDate, tradeDateContext) ===
         "unknown"
         ? [
-            "本地行情尚未覆盖该业务日期，无法确认是否为休市或停牌日；请核对成交凭证。",
+            "该标的当日无本地行情，可能停牌或行情缺失；如有真实成交凭证可继续保存，系统会将该日标记为待补齐行情。",
           ]
         : [],
   };

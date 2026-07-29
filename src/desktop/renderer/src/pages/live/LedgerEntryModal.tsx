@@ -22,6 +22,7 @@ import type {
 } from "../../api/client";
 import { api } from "../../api/client";
 import { currentMarketDate } from "../../../../shared/marketDate";
+import { securityTypeForInstrument } from "../../../../shared/instruments";
 import { DIRECT_ENTRY_TYPE_OPTIONS } from "./liveConstants";
 import { money, numberValue } from "./liveFormat";
 
@@ -112,6 +113,7 @@ export function LedgerEntryModal({
   const { message } = App.useApp();
   const [form] = Form.useForm<LedgerFormValues>();
   const entryType = Form.useWatch("type", form);
+  const securityType = Form.useWatch("securityType", form);
   const [preview, setPreview] = useState<LedgerImpactPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -123,11 +125,17 @@ export function LedgerEntryModal({
   );
   const symbolOptions = useMemo(
     () =>
-      stocks.map((stock) => ({
-        value: stock.symbol,
-        label: `${stock.name} ${stock.symbol}`,
-      })),
-    [stocks],
+      stocks
+        .filter(
+          (stock) =>
+            !securityType ||
+            securityTypeForInstrument(stock) === securityType,
+        )
+        .map((stock) => ({
+          value: stock.symbol,
+          label: `${stock.name} ${stock.symbol}`,
+        })),
+    [securityType, stocks],
   );
 
   useEffect(() => {
@@ -266,6 +274,10 @@ export function LedgerEntryModal({
                     { label: "A 股股票", value: "stock" },
                     { label: "ETF", value: "etf" },
                   ]}
+                  onChange={() => {
+                    form.setFieldValue("symbol", undefined);
+                    form.setFieldValue("instrumentName", undefined);
+                  }}
                 />
               </Form.Item>
               <Form.Item
@@ -275,7 +287,7 @@ export function LedgerEntryModal({
                   { required: true, message: "请输入证券代码" },
                   { pattern: /^\d{6}$/, message: "请输入 6 位证券代码" },
                 ]}
-                extra="A 股可从完整代码表搜索；ETF 或未缓存标的可直接输入代码。"
+                extra="A 股股票与境内交易所 ETF 均可从完整目录搜索；未缓存标的仍可直接输入代码。"
               >
                 <AutoComplete
                   options={symbolOptions}
@@ -288,14 +300,20 @@ export function LedgerEntryModal({
                     const stock = stockBySymbol.get(value);
                     if (stock) {
                       form.setFieldValue("instrumentName", stock.name);
-                      form.setFieldValue("securityType", "stock");
+                      form.setFieldValue(
+                        "securityType",
+                        securityTypeForInstrument(stock),
+                      );
                     }
                   }}
                   onChange={(value) => {
                     const stock = stockBySymbol.get(value);
                     if (stock) {
                       form.setFieldValue("instrumentName", stock.name);
-                      form.setFieldValue("securityType", "stock");
+                      form.setFieldValue(
+                        "securityType",
+                        securityTypeForInstrument(stock),
+                      );
                     }
                   }}
                 />

@@ -20,6 +20,7 @@ import type {
 } from "../../api/client";
 import { api } from "../../api/client";
 import { currentMarketDate } from "../../../../shared/marketDate";
+import { securityTypeForInstrument } from "../../../../shared/instruments";
 import { money, numberValue } from "./liveFormat";
 
 interface Values {
@@ -51,6 +52,7 @@ export function DividendReinvestmentModal({
   const { message } = App.useApp();
   const [form] = Form.useForm<Values>();
   const dividendDate = Form.useWatch("dividendDate", form);
+  const securityType = Form.useWatch("securityType", form);
   const [preview, setPreview] =
     useState<DividendReinvestmentPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -61,11 +63,17 @@ export function DividendReinvestmentModal({
   );
   const symbolOptions = useMemo(
     () =>
-      stocks.map((stock) => ({
-        value: stock.symbol,
-        label: `${stock.name} ${stock.symbol}`,
-      })),
-    [stocks],
+      stocks
+        .filter(
+          (stock) =>
+            !securityType ||
+            securityTypeForInstrument(stock) === securityType,
+        )
+        .map((stock) => ({
+          value: stock.symbol,
+          label: `${stock.name} ${stock.symbol}`,
+        })),
+    [securityType, stocks],
   );
 
   useEffect(() => {
@@ -194,7 +202,10 @@ export function DividendReinvestmentModal({
                 const stock = stockBySymbol.get(value);
                 if (stock) {
                   form.setFieldValue("instrumentName", stock.name);
-                  form.setFieldValue("securityType", "stock");
+                  form.setFieldValue(
+                    "securityType",
+                    securityTypeForInstrument(stock),
+                  );
                 }
               }}
             />
@@ -216,6 +227,10 @@ export function DividendReinvestmentModal({
                 { label: "A 股股票", value: "stock" },
                 { label: "ETF", value: "etf" },
               ]}
+              onChange={() => {
+                form.setFieldValue("symbol", undefined);
+                form.setFieldValue("instrumentName", undefined);
+              }}
             />
           </Form.Item>
           <Form.Item

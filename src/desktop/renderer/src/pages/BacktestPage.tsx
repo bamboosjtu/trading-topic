@@ -23,6 +23,7 @@ import type { BacktestRangePreset } from "./backtest/dateUtils";
 import { useActiveExperiment } from "./backtest/useActiveExperiment";
 import { useBacktestWorkspace } from "./backtest/useBacktestWorkspace";
 import { useMarketBars } from "./backtest/useMarketBars";
+import { securityTypeForInstrument } from "../../../shared/instruments";
 
 export function BacktestPage() {
   const { message } = App.useApp();
@@ -84,11 +85,13 @@ export function BacktestPage() {
 
   const stockOptions = useMemo(
     () =>
-      (stocks.data ?? []).map(({ symbol, name }) => ({
-        value: symbol,
-        label: name,
-        searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
-      })),
+      (stocks.data ?? [])
+        .filter((stock) => securityTypeForInstrument(stock) === "stock")
+        .map(({ symbol, name }) => ({
+          value: symbol,
+          label: name,
+          searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
+        })),
     [stocks.data],
   );
 

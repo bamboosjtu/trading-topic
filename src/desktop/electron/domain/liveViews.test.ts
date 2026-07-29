@@ -258,6 +258,119 @@ describe("投资收益视图", () => {
     expect(view.quality.status).toBe("stale");
   });
 
+  it("第二个月的本月归因只与本月收益相等，不冒充累计收益等式", () => {
+    const entries = [
+      entry("buy", "buy", "2026-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+    ];
+    const view = buildIncomeCalendar(
+      entries,
+      [
+        price("601398", "2026-01-02", 5),
+        price("601398", "2026-01-30", 6),
+        price("601398", "2026-02-27", 7),
+      ],
+      stocks,
+      { month: "2026-02", scope: "all" },
+      [],
+      {
+        factAsOfDate: "2026-02-28",
+        valuationCutoff: "2026-02-27",
+      },
+    );
+    expect(view.metrics.month.amount).toBe(100);
+    expect(view.metrics.marketPrice.amount).toBe(100);
+    expect(view.metrics.dividend.amount).toBe(0);
+    expect(view.metrics.tradingCost.amount).toBe(0);
+    expect(view.metrics.cumulative.amount).toBe(200);
+  });
+
+  it("单标的区间表现按自身首次敞口判断，不把十天收益标成一年收益", () => {
+    const entries = [
+      entry("old-buy", "buy", "2025-07-28", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("new-etf-buy", "buy", "2026-07-18", {
+        symbol: "510300",
+        instrumentName: "沪深300ETF",
+        securityType: "etf",
+        price: 4,
+        quantity: 100,
+      }),
+    ];
+    const overview = buildPositionsOverview(
+      entries,
+      [
+        price("601398", "2025-07-28", 5),
+        price("601398", "2026-07-18", 5.8),
+        price("601398", "2026-07-28", 6),
+        price("510300", "2026-07-18", 4),
+        price("510300", "2026-07-28", 4.2),
+      ],
+      stocks,
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-28",
+      },
+    );
+    const oldStock = overview.positions.find(
+      (position) => position.symbol === "601398",
+    )!;
+    const newEtf = overview.positions.find(
+      (position) => position.symbol === "510300",
+    )!;
+    expect(overview.portfolioPerformance.year).not.toBeNull();
+    expect(oldStock.periodPerformance.year).not.toBeNull();
+    expect(newEtf.periodPerformance.week).not.toBeNull();
+    expect(newEtf.periodPerformance.month).toBeNull();
+    expect(newEtf.periodPerformance.year).toBeNull();
+  });
+
+  it("XIRR 返回不可计算的真实原因", () => {
+    const shortSample = buildPositionsOverview(
+      [
+        entry("buy", "buy", "2026-07-01", {
+          symbol: "601398",
+          price: 5,
+          quantity: 100,
+        }),
+      ],
+      [
+        price("601398", "2026-07-01", 5),
+        price("601398", "2026-07-20", 5.2),
+      ],
+      stocks,
+      {
+        factAsOfDate: "2026-07-20",
+        valuationCutoff: "2026-07-20",
+      },
+    );
+    expect(shortSample.metrics.xirr).toBeNull();
+    expect(shortSample.metrics.xirrStatus).toBe("short_sample");
+
+    const missingValuation = buildPositionsOverview(
+      [
+        entry("buy", "buy", "2026-01-02", {
+          symbol: "601398",
+          price: 5,
+          quantity: 100,
+        }),
+      ],
+      [],
+      stocks,
+      {
+        factAsOfDate: "2026-07-20",
+        valuationCutoff: "2026-07-18",
+      },
+    );
+    expect(missingValuation.metrics.xirrStatus).toBe("missing_valuation");
+  });
+
   it("已结束历史月份不会仅因距今天久而标记 stale", () => {
     const entries = [
       entry("buy", "buy", "2024-01-02", {

@@ -25,7 +25,7 @@ describe("投资事实命令", () => {
       [],
       {
         type: "buy",
-        businessDate: "2026-01-02",
+        businessDate: "2026-01-05",
         symbol: "601398",
         instrumentName: "工商银行",
         securityType: "stock",
@@ -34,7 +34,7 @@ describe("投资事实命令", () => {
         fee: 5,
       },
       undefined,
-      "2026-01-02",
+      "2026-01-05",
     );
     expect(preview.tradeAmount).toBe(5_000);
     expect(preview.before).toMatchObject({
@@ -54,7 +54,7 @@ describe("投资事实命令", () => {
     const rows = [
       entry("buy", {
         type: "buy",
-        businessDate: "2026-01-02",
+        businessDate: "2026-01-05",
         symbol: "601398",
         price: 5,
         quantity: 1_000,
@@ -65,7 +65,7 @@ describe("投资事实命令", () => {
       rows,
       {
         type: "buy",
-        businessDate: "2026-01-02",
+        businessDate: "2026-01-05",
         symbol: "601398",
         price: 4,
         quantity: 100,
@@ -194,7 +194,7 @@ describe("投资事实命令", () => {
       { knownTradingDates: [], coveredRanges: [] },
     );
     expect(preview.warnings).toContain(
-      "本地行情尚未覆盖该业务日期，无法确认是否为休市或停牌日；请核对成交凭证。",
+      "该标的当日无本地行情，可能停牌或行情缺失；如有真实成交凭证可继续保存，系统会将该日标记为待补齐行情。",
     );
 
     expect(

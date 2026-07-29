@@ -24,6 +24,8 @@ export interface MarketDataProvenance {
   /** 本次响应最后一个正式交易日；合法空区间为 null。 */
   dataCutoff: string | null;
   adjustment: "none" | "qfq";
+  /** 空结果只有获得独立证据后才允许持久化。 */
+  emptyEvidence?: "exchange_calendar" | "outside_listing";
 }
 
 export interface PricePoint {
@@ -298,6 +300,12 @@ export interface LiveDataQuality {
 }
 
 export type PeriodPerformance = Record<PerformancePeriod, number | null>;
+export type XirrStatus =
+  | "ready"
+  | "short_sample"
+  | "missing_valuation"
+  | "insufficient_cashflows"
+  | "no_solution";
 
 export interface PositionView {
   symbol: string;
@@ -316,6 +324,7 @@ export interface PositionView {
   cumulativeDividend: number;
   totalReturn: number | null;
   xirr: number | null;
+  xirrStatus: XirrStatus;
   periodPerformance: PeriodPerformance;
   recentEntries: LedgerRecordView[];
 }
@@ -333,6 +342,7 @@ export interface PositionsOverview {
     cumulativeDividend: number;
     totalReturn: number | null;
     xirr: number | null;
+    xirrStatus: XirrStatus;
   };
   portfolioPerformance: PeriodPerformance;
   positions: PositionView[];
@@ -550,6 +560,8 @@ export interface RestoreResult extends ExportResult {
 export interface StockInfo {
   symbol: string;
   name: string;
+  /** 旧快照缺失时按代码和名称保守推断；新目录必须显式写入。 */
+  securityType?: SecurityType;
 }
 
 export type BacktestChartMetric = "kline" | "return" | "drawdown";

@@ -1,12 +1,17 @@
 import ExcelJS from "exceljs";
 import type { StockInfo } from "../../shared/contracts";
-import { STOCK_UNIVERSE_MIN_SIZE } from "../../shared/constants";
+import {
+  ETF_UNIVERSE_MIN_SIZE,
+  STOCK_UNIVERSE_MIN_SIZE,
+} from "../../shared/constants";
 
 const SSE_STOCK_LIST_URL =
   "https://query.sse.com.cn/sseQuery/commonQuery.do";
 const SZSE_STOCK_LIST_URL = "https://www.szse.cn/api/report/ShowReport";
 const BSE_STOCK_LIST_URL =
   "https://www.bse.cn/nqxxController/nqxxCnzq.do";
+const EASTMONEY_ETF_LIST_URL =
+  "https://push2.eastmoney.com/api/qt/clist/get";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 interface ShanghaiStockListResponse {
@@ -25,6 +30,17 @@ interface BeijingStockListPage {
         xxzqjc?: string;
       }
   >;
+}
+
+interface EastmoneyEtfListResponse {
+  rc?: number;
+  data?: {
+    total?: number | string;
+    diff?: Array<{ f12?: string | number; f14?: string }> | Record<
+      string,
+      { f12?: string | number; f14?: string }
+    >;
+  } | null;
 }
 
 function normalizeStockCode(value: string | number | undefined): string {
@@ -83,6 +99,7 @@ export function parseShanghaiStocks(payload: unknown): StockInfo[] {
     .map((row) => ({
       symbol: normalizeStockCode(row.A_STOCK_CODE),
       name: String(row.SEC_NAME_CN ?? "").trim(),
+      securityType: "stock" as const,
     }))
     .filter(isAStock);
 }
@@ -121,7 +138,7 @@ export async function parseShenzhenStocks(
       worksheet.getCell(rowNumber, codeColumn).text,
     );
     const name = worksheet.getCell(rowNumber, nameColumn).text.trim();
-    const stock = { symbol, name };
+    const stock = { symbol, name, securityType: "stock" as const };
     if (isAStock(stock)) stocks.push(stock);
   }
   return stocks;
@@ -151,6 +168,7 @@ export function parseBeijingStockPage(payload: string): {
       return {
         symbol: normalizeStockCode(symbol as string | number | undefined),
         name: String(name ?? "").trim(),
+        securityType: "stock" as const,
       };
     })
     .filter(isAStock);
@@ -173,6 +191,24 @@ export function mergeAStockUniverse(
     );
   }
   return rows;
+}
+
+export function parseDomesticEtfs(payload: unknown): StockInfo[] {
+  const diff = (payload as EastmoneyEtfListResponse | null)?.data?.diff;
+  if (!Array.isArray(diff) && (!diff || typeof diff !== "object")) {
+    throw new Error("境内 ETF 代码表响应格式已变化");
+  }
+  const items = Array.isArray(diff) ? diff : Object.values(diff);
+  const unique = new Map<string, StockInfo>();
+  for (const row of items) {
+    const symbol = normalizeStockCode(row.f12);
+    const name = String(row.f14 ?? "").trim();
+    if (!/^\d{6}$/.test(symbol) || !name || name === "-") continue;
+    unique.set(symbol, { symbol, name, securityType: "etf" });
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
 }
 
 async function fetchShanghaiStocks(stockType: "1" | "8"): Promise<StockInfo[]> {
@@ -277,6 +313,79 @@ async function fetchBeijingStocks(): Promise<StockInfo[]> {
   return rows;
 }
 
+export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
+  const pageSize = 100;
+  const fetchPage = async (page: number): Promise<{
+    rows: StockInfo[];
+    total: number;
+  }> => {
+    const url = new URL(EASTMONEY_ETF_LIST_URL);
+    const parameters: Record<string, string> = {
+      pn: String(page),
+      pz: String(pageSize),
+      po: "1",
+      np: "1",
+      fltt: "2",
+      invt: "2",
+      fid: "f12",
+      fs: "b:MK0021,b:MK0022,b:MK0023,b:MK0024",
+      fields: "f12,f14",
+    };
+    Object.entries(parameters).forEach(([key, value]) =>
+      url.searchParams.set(key, value),
+    );
+    const response = await request(url, `境内 ETF 代码表第 ${page} 页`, {
+      headers: {
+        Referer: "https://quote.eastmoney.com/center/gridlist.html",
+      },
+    });
+    const payload = (await response.json()) as EastmoneyEtfListResponse;
+    const total = Number(payload.data?.total);
+    if (
+      payload.rc !== 0 ||
+      !Number.isInteger(total) ||
+      total < ETF_UNIVERSE_MIN_SIZE
+    ) {
+      throw new Error("境内 ETF 代码表缺少有效总数或返回错误状态");
+    }
+    return { rows: parseDomesticEtfs(payload), total };
+  };
+
+  const first = await fetchPage(1);
+  const groups = [first.rows];
+  const totalPages = Math.ceil(first.total / pageSize);
+  // 接口单页上限为 100；分批并发以兼顾启动速度和数据源限流风险。
+  for (let start = 2; start <= totalPages; start += 4) {
+    groups.push(
+      ...(await Promise.all(
+        Array.from(
+          { length: Math.min(4, totalPages - start + 1) },
+          (_, index) => fetchPage(start + index).then((page) => page.rows),
+        ),
+      )),
+    );
+  }
+  const rows = parseDomesticEtfs({
+    data: {
+      diff: groups.flat().map(({ symbol, name }) => ({
+        f12: symbol,
+        f14: name,
+      })),
+    },
+  });
+  if (rows.length < ETF_UNIVERSE_MIN_SIZE) {
+    throw new Error(
+      `境内 ETF 代码表不完整：仅返回 ${rows.length} 个标的，拒绝覆盖本地完整快照`,
+    );
+  }
+  if (rows.length !== first.total) {
+    throw new Error(
+      `境内 ETF 代码表分页不完整：期望 ${first.total} 个，实际 ${rows.length} 个`,
+    );
+  }
+  return rows;
+}
+
 /**
  * 获取与 AkShare `stock_info_a_code_name()` 相同范围的沪深京 A 股代码/名称目录。
  *
@@ -298,5 +407,30 @@ export async function fetchAStockUniverse(): Promise<{
     rows: mergeAStockUniverse([shMain, shStar, shenzhen, beijing]),
     fetchedAt: new Date().toISOString(),
     source: "上交所、深交所、北交所 A 股代码表（产品域独立适配）",
+  };
+}
+
+/**
+ * 产品证券目录：回测只消费其中的 A 股，实盘记录可按资产类型消费 A 股或
+ * 境内交易所 ETF。两个目录都通过完整性校验后才允许替换 SQLite 快照。
+ */
+export async function fetchInstrumentUniverse(): Promise<{
+  rows: StockInfo[];
+  fetchedAt: string;
+  source: string;
+}> {
+  const [stocks, etfs] = await Promise.all([
+    fetchAStockUniverse(),
+    fetchDomesticEtfUniverse(),
+  ]);
+  const unique = new Map<string, StockInfo>();
+  for (const row of [...stocks.rows, ...etfs]) unique.set(row.symbol, row);
+  return {
+    rows: [...unique.values()].sort((left, right) =>
+      left.symbol.localeCompare(right.symbol),
+    ),
+    fetchedAt: new Date().toISOString(),
+    source:
+      "上交所、深交所、北交所 A 股代码表 + 境内交易所 ETF 代码表（产品域独立适配）",
   };
 }

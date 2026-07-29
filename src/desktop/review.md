@@ -11,11 +11,12 @@
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
 | 类型检查 | `npm run typecheck` | PASS |
-| 单元测试 | `npm test` | 110/110 PASS（1 smoke test 预期 skipped） |
+| 离线单元测试 | `npm test` | 119/119 PASS（受控联网 smoke 预期 skipped） |
+| 真实联网冒烟 | `npm run smoke:market-data` | PASS；ETF 目录 1549 条，沪深京股票与 ETF 的腾讯/新浪不复权及前复权行情、整段兜底和来源落库均通过 |
 | 构建 | `npm run build` | PASS（main / preload / renderer 三入口） |
-| 测试文件 | — | 16 passed / 1 skipped，覆盖领域、适配器、存储、服务、导出、冷启动恢复 |
+| 测试文件 | — | 离线 16 passed / 1 skipped；联网 smoke 单独 1 passed，覆盖领域、适配器、存储、服务、导出、冷启动恢复 |
 
-构建产物体积（参考）：renderer `index-3gemjD6y.js` 968.09 kB、`BacktestPage` chunk 2.61 MB（含 ECharts）、CSS 43.68 kB。
+构建产物体积（参考）：renderer 主包 968.09 kB、`BacktestPage` chunk 2.61 MB（含 ECharts）、CSS 44.36 kB。
 
 ## 2. 死代码与无效资产梳理
 
@@ -134,35 +135,38 @@
 
 | # | 问题 | 修复位置 | 修复方式 |
 | --- | --- | --- | --- |
-| 1 | XIRR 短期年化产生极端值（7 天 5.6% 年化为 ~1620%） | [positionsView.ts:309-314](electron/domain/positionsView.ts#L309-L314) | 样本期不足 30 天时 `investmentXirr` 返回 `null`；前端 helper 改为"样本期不足 30 天，暂不展示" |
-| 2 | 区间收益（近一月/三月/六月/一年）用成立以来收益填充 | [positionsView.ts:256-264](electron/domain/positionsView.ts#L256-L264) | `periodPerformance` 检测区间起点早于账户最早可用日期时返回 `null`；前端显示"数据不足" |
+| 1 | XIRR 空值原因被统一解释为短样本 | [positionsView.ts](electron/domain/positionsView.ts) | 领域层返回 `ready / short_sample / missing_valuation / insufficient_cashflows / no_solution`；指标带和详情按真实原因显示 |
+| 2 | 单标的区间收益借用组合最早日期，可能把 10 天收益标成一年 | [positionsView.ts](electron/domain/positionsView.ts) | 组合与每个标的分别按自身首次形成投资敞口判断区间完整性；数据不足返回 `null` |
 | 3 | 持仓成本价展示精度丢失，与累计买入支出无法对账 | [positionsView.ts:369](electron/domain/positionsView.ts#L369) | `averageCost = position.cost / position.quantity` 不再 `roundMoney`，保留原始精度；表格统一显示 3 位小数 |
 | 4 | 现金流金额用红涨绿跌配色，A 股语境下会被误解 | [TradesPage.tsx:56-64](renderer/src/pages/TradesPage.tsx#L56-L64) | 移除 `amountClass`，所有发生金额统一 `finance-flat`，方向由正负号 + 文字表达 |
 | 5 | 已冲正流水与有效流水视觉无区分 | [TradesPage.tsx:400-402](renderer/src/pages/TradesPage.tsx#L400-L402) + [index.css:1954-1967](renderer/src/index.css#L1954-L1967) | 表格 `rowClassName` 应用 `ledger-row-reversed`，CSS 整行降级为灰色 + 浅底 + tag 半透明 |
 | 6 | "流水记录 N 条"含审计事件，无法区分有效/冲正 | [ledgerQuery.ts](electron/domain/ledgerQuery.ts) + [contracts.ts:402-408](shared/contracts.ts#L402-L408) + [TradesPage.tsx:367-375](renderer/src/pages/TradesPage.tsx#L367-L375) | `LedgerQueryResult.metrics` 新增 `effectiveCount` / `reversedCount`；顶部指标改为"有效流水 N 笔"，helper 显示"另已冲正 N 笔" |
-| 7 | 收益日历累计收益与本月/年内数值相同，被误读为重复展示 | [IncomeCalendarPage.tsx:248-252](renderer/src/pages/IncomeCalendarPage.tsx#L248-L252) + [index.css:2146-2156](renderer/src/index.css#L2146-L2156) | 累计收益下方追加归因解释行"累计收益 = 市场价格 + 分红 + 交易影响"，明确收益来源构成 |
+| 7 | 用本月三个分项解释历史累计收益，等式从第二个月起不成立 | [IncomeCalendarPage.tsx](renderer/src/pages/IncomeCalendarPage.tsx) | 改为“本月收益 = 本月市场价格 + 本月分红 + 本月交易影响”；累计收益不再与月度分项混写 |
 
 ### 7.2 验证结果
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
 | 类型检查 | `npm run typecheck` | PASS |
-| 单元测试 | `npm test -- --run` | 110/110 PASS（1 smoke 预期 skipped） |
-| 构建 | `npm run build` | PASS（renderer CSS 44.28 kB，新增归因样式约 0.6 kB） |
+| 离线单元测试 | `npm test` | 119/119 PASS（1 smoke 预期 skipped） |
+| 真实联网冒烟 | `npm run smoke:market-data` | 1/1 PASS，证据保存在 `artifacts/market-data-smoke.json` |
+| 构建 | `npm run build` | PASS（main / preload / renderer，CSS 44.36 kB） |
 
 测试新增覆盖：[liveViews.test.ts:355-364](electron/domain/liveViews.test.ts#L355-L364) 验证 `effectiveCount` / `reversedCount` 在含修正流水的场景下正确计数。
 
-### 7.3 评审报告中暂未处理项（建议后续排期）
+### 7.3 后续定位说明
 
-评审报告还提出了若干需要新建功能或较大改动的建议，本轮按"先收紧核算口径、再加功能"的原则未一并处理，登记如下供后续排期：
+旧评审中“补回现金账户、资金转入转出和逆回购”的建议已被后续产品定位明确
+否决：R1 是股票与境内交易所 ETF 的投资研究记录工具，不是证券账户记账系统。
+当前契约只保留买入、卖出、现金分红以及审计用修正事实。
 
-| 类别 | 待办 | 优先级建议 |
-| --- | --- | --- |
-| 现金账户闭环 | 当前指标只覆盖累计买入/卖出/分红/净投入，缺少当前现金余额、可用现金、外部转入/转出、总资产 = 持仓市值 + 现金余额 等口径 | 高（评审报告第五节"必须立即修改"第 5 项） |
-| 时间口径统一 | 三页同时出现"行情更新 / 数据截止 / 数据截点 / 最近记录"四个相似但不同的概念，用户难推断 | 中 |
-| 持仓页增加持仓占比、当日盈亏列 | 当前缺这两列，对组合管理价值高于"累计买入支出"逐行重复 | 中 |
-| 收益日历选中日期视觉状态 | 7 月 28 日格子同时出现蓝色选择边框和红色底部线条，视觉上像两个状态叠加 | 低 |
-| 持仓页指标名称精确化 | "累计投入"当前定义为 买入 − 卖出 − 分红，分红属于账户内部收益，不应等同撤回本金 | 中（涉及口径重定义） |
-| 交易流水筛选栏密度优化 | 当前 5 个字段占满一行，MVP 阶段可收缩为 日期 \| 类型 \| 搜索 \| 查询 + 更多筛选 | 低 |
+## 8. 证券目录、空覆盖与交易日复核
 
-**本轮修复结论**：评审报告中"必须立即修改"的第 1～4 项已完成，第 5 项（现金账户闭环）属于新功能建设，已登记待排期；其余二、三、四、五节的优化建议均不影响核算严谨性，按优先级登记后续处理。
+| 问题 | 结论与处理 |
+| --- | --- |
+| ETF 资产类型仍显示股票目录 | 属实。证券目录改为 A 股与境内 ETF 两套完整源目录，ETF 按总数分页；SQLite Schema 10 保存显式资产类型，录入弹窗按类型过滤。 |
+| 腾讯失败、备用源空响应被永久写成空覆盖 | 属实。该组合现在直接失败；只有双源均明确为空且独立交易日历确认整段休市才允许保存，数据库再次校验证据并持久化 `emptyEvidence`。 |
+| 累计收益由本月分项解释 | 属实。界面改为本月收益等式，并新增跨两个月测试。 |
+| 新标的短期收益冒充一年收益 | 属实。区间完整性改为组合和单标的各自判断，新增老标的一年、新 ETF 十天的组合测试。 |
+| 标的无行情等同市场休市 | 属实。仅周末与官方市场日历确认的休市日阻断；其他缺行情给出成交凭证告警，后续收益质量标为 `partial`。 |
+| 联网冒烟缺少证据 | 属实。`artifacts/market-data-smoke.json` 退出通用忽略规则，发布前命令验证 1549 只 ETF 目录、沪深京与 ETF 双源行情、长历史、兜底和来源落库。 |

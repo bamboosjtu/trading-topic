@@ -5,9 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BacktestRequest, StockInfo } from "../../shared/contracts";
 import {
   BACKTEST_CALIBER_VERSION,
+  ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
-import { fetchAStockUniverse } from "../data/stockUniverse";
+import { fetchInstrumentUniverse } from "../data/stockUniverse";
 import {
   fetchCorporateActions,
 } from "../data/tencent";
@@ -19,7 +20,7 @@ import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
 vi.mock("../data/stockUniverse", () => ({
-  fetchAStockUniverse: vi.fn(),
+  fetchInstrumentUniverse: vi.fn(),
 }));
 vi.mock("../data/tencent", () => ({
   fetchCorporateActions: vi.fn(),
@@ -54,10 +55,18 @@ async function serviceWithDatabase(): Promise<{
 }
 
 function completeStockUniverse(overrides: StockInfo[] = []): StockInfo[] {
-  const stocks = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
+  const stocks: StockInfo[] = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
     symbol: String(600000 + index),
     name: `沪市股票${index}`,
+    securityType: "stock" as const,
   }));
+  stocks.push(
+    ...Array.from({ length: ETF_UNIVERSE_MIN_SIZE }, (_, index) => ({
+      symbol: String(510000 + index),
+      name: `ETF示例${index}`,
+      securityType: "etf" as const,
+    })),
+  );
   const unique = new Map(stocks.map((stock) => [stock.symbol, stock]));
   for (const stock of overrides) unique.set(stock.symbol, stock);
   return [...unique.values()];
@@ -82,7 +91,7 @@ describe("AppService 股票目录", () => {
       source: "cached",
       fetchedAt: expect.any(String),
     });
-    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
   });
 
   it("不把新鲜的 7 条旧缓存当成全 A 股目录，并立即重新拉取", async () => {
@@ -98,7 +107,7 @@ describe("AppService 股票目录", () => {
     const refreshed = completeStockUniverse([
       { symbol: "000001", name: "平安银行" },
     ]);
-    vi.mocked(fetchAStockUniverse).mockResolvedValue({
+    vi.mocked(fetchInstrumentUniverse).mockResolvedValue({
       rows: refreshed,
       source: "official-exchanges",
       fetchedAt: "2026-07-26T00:00:00Z",
@@ -106,7 +115,7 @@ describe("AppService 股票目录", () => {
 
     const result = await service.listStocks();
 
-    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
+    expect(fetchInstrumentUniverse).toHaveBeenCalledOnce();
     expect(result).toHaveLength(refreshed.length);
     expect(database.listStockUniverse()).toHaveLength(refreshed.length);
   });
@@ -121,7 +130,7 @@ describe("AppService 股票目录", () => {
       "cached",
       "2020-01-01T00:00:00Z",
     );
-    vi.mocked(fetchAStockUniverse).mockRejectedValue(
+    vi.mocked(fetchInstrumentUniverse).mockRejectedValue(
       new Error("network unavailable"),
     );
 
@@ -141,12 +150,12 @@ describe("AppService 股票目录", () => {
       "legacy-fallback",
       new Date().toISOString(),
     );
-    vi.mocked(fetchAStockUniverse).mockRejectedValue(
+    vi.mocked(fetchInstrumentUniverse).mockRejectedValue(
       new Error("network unavailable"),
     );
 
     await expect(service.listStocks()).rejects.toThrow(
-      "无法加载完整的全 A 股代码表",
+      "无法加载完整的 A 股与 ETF 代码表",
     );
   });
 });
@@ -276,7 +285,7 @@ describe("AppService 回测试验", () => {
         buyDay: 1,
       }),
     ).rejects.toThrow("回测标的不能重复");
-    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 
@@ -317,7 +326,7 @@ describe("AppService 回测试验", () => {
       await expect(service.runBacktest(invalidRequest)).rejects.toThrow(
         expected,
       );
-      expect(fetchAStockUniverse).not.toHaveBeenCalled();
+      expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
       expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
     },
   );
@@ -614,7 +623,7 @@ describe("AppService 实盘流水", () => {
     const { service, database } = await serviceWithDatabase();
     const original = service.addLedger({
       type: "buy",
-      businessDate: "2026-01-02",
+      businessDate: "2026-01-05",
       symbol: "601398",
       instrumentName: "工商银行",
       securityType: "stock",
@@ -625,7 +634,7 @@ describe("AppService 实盘流水", () => {
 
     const replacement = service.correctLedger(original.id, {
       type: "buy",
-      businessDate: "2026-01-02",
+      businessDate: "2026-01-05",
       symbol: "601398",
       instrumentName: "工商银行",
       securityType: "stock",
@@ -659,7 +668,7 @@ describe("AppService 实盘流水", () => {
     const { service } = await serviceWithDatabase();
     const original = service.addLedger({
       type: "buy",
-      businessDate: "2026-01-01",
+      businessDate: "2026-01-05",
       symbol: "601398",
       price: 5,
       quantity: 100,
@@ -672,7 +681,7 @@ describe("AppService 实盘流水", () => {
     expect(() =>
       service.correctLedger(original.id, {
         type: "buy",
-        businessDate: "2026-01-01",
+        businessDate: "2026-01-05",
         symbol: "601398",
         price: 4.9,
         quantity: 100,
@@ -780,14 +789,14 @@ describe("AppService 实盘流水", () => {
     const { service } = await serviceWithDatabase();
     service.addLedger({
       type: "buy",
-      businessDate: "2026-05-04",
+      businessDate: "2026-05-06",
       symbol: "601398",
       price: 5,
       quantity: 100,
     });
     vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
       rows: [
-        { date: "2026-05-04", close: 5 },
+        { date: "2026-05-06", close: 5 },
         { date: "2026-05-29", close: 5.2 },
       ],
       provenance: {
@@ -808,7 +817,7 @@ describe("AppService 实盘流水", () => {
 
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601398",
-      "2026-05-04",
+      "2026-05-06",
       "2026-05-31",
     );
     expect(view.quality.dataCutoff).toBe("2026-05-29");

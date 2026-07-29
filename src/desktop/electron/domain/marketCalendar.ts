@@ -11,7 +11,60 @@ export interface TradingCalendarCoverage {
 
 export interface TradeDateContext {
   knownTradingDates: readonly string[];
-  coveredRanges: readonly TradingCalendarCoverage[];
+  /**
+   * 仅用于兼容现有调用方的缓存覆盖描述。证券自身没有行情不等于市场休市，
+   * 因此 `tradeDateStatus` 不会用它判定 closed。
+   */
+  coveredRanges?: readonly TradingCalendarCoverage[];
+}
+
+/**
+ * 上交所《关于上海证券交易所2026年部分节假日休市安排的通知》
+ * （上证公告〔2025〕45号）确认的全市场休市区间。
+ *
+ * 年度安排发布前不猜测未来工作日是否休市；未知日期返回 unknown，让真实
+ * 成交事实可以在提示后继续录入。
+ */
+const CONFIRMED_MARKET_CLOSURES = [
+  ["2026-01-01", "2026-01-03"],
+  ["2026-02-15", "2026-02-23"],
+  ["2026-04-04", "2026-04-06"],
+  ["2026-05-01", "2026-05-05"],
+  ["2026-06-19", "2026-06-21"],
+  ["2026-09-25", "2026-09-27"],
+  ["2026-10-01", "2026-10-07"],
+] as const;
+
+function isWeekend(date: string): boolean {
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+export function isConfirmedMarketClosureDate(date: string): boolean {
+  if (!validDate(date)) return false;
+  return (
+    isWeekend(date) ||
+    CONFIRMED_MARKET_CLOSURES.some(
+      ([start, end]) => start <= date && date <= end,
+    )
+  );
+}
+
+export function isConfirmedMarketClosureRange(
+  startDate: string,
+  endDate: string,
+): boolean {
+  if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
+    return false;
+  }
+  for (
+    let date = startDate;
+    date <= endDate;
+    date = addDays(date, 1)
+  ) {
+    if (!isConfirmedMarketClosureDate(date)) return false;
+  }
+  return true;
 }
 
 function marketClock(
@@ -77,7 +130,7 @@ export function latestWeekdayCandidate(now: Date = new Date()): string {
     hour > 15 || (hour === 15 && minute >= 10)
       ? today
       : addDays(today, -1);
-  while ([0, 6].includes(new Date(`${candidate}T00:00:00Z`).getUTCDay())) {
+  while (isConfirmedMarketClosureDate(candidate)) {
     candidate = addDays(candidate, -1);
   }
   return candidate;
@@ -88,13 +141,8 @@ export function tradeDateStatus(
   context?: TradeDateContext,
 ): "trading" | "closed" | "unknown" {
   if (!validDate(date)) return "closed";
-  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-  if (weekday === 0 || weekday === 6) return "closed";
+  if (isConfirmedMarketClosureDate(date)) return "closed";
   if (!context) return "unknown";
   if (context.knownTradingDates.includes(date)) return "trading";
-  return context.coveredRanges.some(
-    (range) => range.startDate <= date && range.endDate >= date,
-  )
-    ? "closed"
-    : "unknown";
+  return "unknown";
 }

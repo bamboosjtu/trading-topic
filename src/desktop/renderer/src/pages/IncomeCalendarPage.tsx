@@ -245,9 +245,9 @@ export function IncomeCalendarPage() {
               { label: "年内收益", value: money(calendar.data.metrics.yearToDate.amount, true), helper: percent(calendar.data.metrics.yearToDate.rate, true), icon: <StockOutlined />, tone: "violet", valueClass: pnlClass(calendar.data.metrics.yearToDate.amount) },
             ]}
           />
-          {calendar.data.metrics.cumulative.amount !== null ? (
+          {calendar.data.metrics.month.amount !== null ? (
             <div className="income-cumulative-breakdown">
-              累计收益 = 市场价格 {money(calendar.data.metrics.marketPrice.amount, true)} + 分红 {money(calendar.data.metrics.dividend.amount)} + 交易影响 {money(calendar.data.metrics.tradingCost.amount, true)}
+              本月收益 = 本月市场价格 {money(calendar.data.metrics.marketPrice.amount, true)} + 本月分红 {money(calendar.data.metrics.dividend.amount)} + 本月交易影响 {money(calendar.data.metrics.tradingCost.amount, true)}
             </div>
           ) : null}
           {calendar.data.quality.status === "empty" ? (

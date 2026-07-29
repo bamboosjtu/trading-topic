@@ -14,6 +14,7 @@ import {
   validatePricePoints,
   type MarketDataProvider,
 } from "./marketDataProvider";
+import { fetchDomesticEtfUniverse } from "./stockUniverse";
 
 const RUN_SMOKE = process.env["RUN_MARKET_SMOKE"] === "1";
 const START_DATE = "2026-07-20";
@@ -30,6 +31,20 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
     "验证沪深京与 ETF、两源不复权/前复权、整段兜底及来源落库",
     async () => {
       const checks: Array<Record<string, unknown>> = [];
+      const etfUniverse = await fetchDomesticEtfUniverse();
+      expect(etfUniverse.length).toBeGreaterThanOrEqual(1_000);
+      expect(etfUniverse).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            symbol: "510300",
+            securityType: "etf",
+          }),
+          expect.objectContaining({
+            symbol: "159915",
+            securityType: "etf",
+          }),
+        ]),
+      );
       for (const marketCase of CASES) {
         const priceRowsBySource = new Map<string, PricePoint[]>();
         const barRowsBySource = new Map<
@@ -253,6 +268,10 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
           {
             executedAt: new Date().toISOString(),
             requestRange: { startDate: START_DATE, endDate: END_DATE },
+            instrumentCatalog: {
+              etfCount: etfUniverse.length,
+              verifiedSymbols: ["510300", "159915"],
+            },
             checks,
             fallback: fallback.provenance,
             persistence: "passed",

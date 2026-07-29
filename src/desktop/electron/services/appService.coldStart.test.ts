@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StockInfo } from "../../shared/contracts";
 import {
   BACKTEST_CALIBER_VERSION,
+  ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
 import {
@@ -39,10 +40,18 @@ afterEach(() => {
 });
 
 function completeStockUniverse(overrides: StockInfo[]): StockInfo[] {
-  const stocks = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
+  const stocks: StockInfo[] = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
     symbol: String(600000 + index),
     name: `沪市股票${index}`,
+    securityType: "stock" as const,
   }));
+  stocks.push(
+    ...Array.from({ length: ETF_UNIVERSE_MIN_SIZE }, (_, index) => ({
+      symbol: String(510000 + index),
+      name: `ETF示例${index}`,
+      securityType: "etf" as const,
+    })),
+  );
   const unique = new Map(stocks.map((stock) => [stock.symbol, stock]));
   for (const stock of overrides) unique.set(stock.symbol, stock);
   return [...unique.values()];

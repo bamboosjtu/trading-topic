@@ -7,6 +7,7 @@ import type {
   PeriodPerformance,
   PositionsOverview,
   StockInfo,
+  XirrStatus,
 } from "../../shared/contracts";
 import {
   LIVE_PERFORMANCE_PERIOD_DAYS,
@@ -253,12 +254,19 @@ function periodPerformance(
   symbol?: string,
 ): PeriodPerformance {
   if (!cutoff) return emptyPeriodPerformance();
-  const earliestDay = daily.length ? daily[0].date : null;
+  const exposureDays = symbol
+    ? daily.filter((day) => {
+        const contribution = day.contributions.get(symbol);
+        return contribution !== undefined && contribution.capitalBase > 0;
+      })
+    : daily.filter((day) => day.capitalBase > 0);
+  const firstExposureDate = exposureDays[0]?.date ?? null;
   const result = emptyPeriodPerformance();
   for (const period of PERFORMANCE_PERIODS) {
     const start = addDays(cutoff, -LIVE_PERFORMANCE_PERIOD_DAYS[period] + 1);
-    // 区间起点早于账户最早可用日期时，样本不完整，不返回该周期收益。
-    if (earliestDay && earliestDay > start) {
+    // 组合和单标的分别按自身首次形成投资敞口的日期判断样本完整性。
+    // 不能用老标的历史替新标的通过一年期完整性校验。
+    if (!firstExposureDate || firstExposureDate > start) {
       result[period] = null;
       continue;
     }
@@ -287,8 +295,10 @@ function investmentXirr(
   entries: readonly LedgerEntry[],
   endingDate: string | null,
   endingValue: number | null,
-): number | null {
-  if (endingValue === null) return null;
+): { value: number | null; status: XirrStatus } {
+  if (endingValue === null) {
+    return { value: null, status: "missing_valuation" };
+  }
   const cashflows = entries.flatMap((entry) => {
     const amount = ledgerEntryAmount(entry);
     if (entry.type === "buy") {
@@ -303,16 +313,29 @@ function investmentXirr(
     return [];
   });
   if (endingValue > 0) {
-    if (!endingDate) return null;
+    if (!endingDate) {
+      return { value: null, status: "missing_valuation" };
+    }
     cashflows.push({ date: endingDate, amount: endingValue });
   }
   cashflows.sort((a, b) => a.date.localeCompare(b.date));
   // 短期样本年化会产生极端 XIRR（例如 7 天 5.6% 年化为 ~1600%），
   // 直接展示会误导用户。样本期不足 30 天时不返回 XIRR。
-  if (cashflows.length < 2) return null;
+  if (
+    cashflows.length < 2 ||
+    !cashflows.some((flow) => flow.amount < 0) ||
+    !cashflows.some((flow) => flow.amount > 0)
+  ) {
+    return { value: null, status: "insufficient_cashflows" };
+  }
   const sampleDays = daysBetween(cashflows[0].date, cashflows[cashflows.length - 1].date);
-  if (sampleDays < 30) return null;
-  return xirr(cashflows);
+  if (sampleDays < 30) {
+    return { value: null, status: "short_sample" };
+  }
+  const value = xirr(cashflows);
+  return value === null
+    ? { value: null, status: "no_solution" }
+    : { value, status: "ready" };
 }
 
 export function buildPositionsOverview(
@@ -358,6 +381,11 @@ export function buildPositionsOverview(
     const symbolEntries = model.effectiveEntries.filter(
       (entry) => entry.symbol === symbol,
     );
+    const symbolXirr = investmentXirr(
+      symbolEntries,
+      model.cutoff,
+      marketValue,
+    );
     return {
       symbol,
       name: names.get(symbol) ?? symbol,
@@ -376,7 +404,8 @@ export function buildPositionsOverview(
       realizedPnl: position.realizedPnl,
       cumulativeDividend: position.cumulativeDividend,
       totalReturn,
-      xirr: investmentXirr(symbolEntries, model.cutoff, marketValue),
+      xirr: symbolXirr.value,
+      xirrStatus: symbolXirr.status,
       periodPerformance: periodPerformance(model.daily, model.cutoff, symbol),
       recentEntries: entries
         .filter((entry) => entry.symbol === symbol)
@@ -412,6 +441,11 @@ export function buildPositionsOverview(
       .map((entry) => entry.businessDate)
       .sort()
       .at(-1) ?? null;
+  const portfolioXirr = investmentXirr(
+    model.effectiveEntries,
+    model.cutoff ?? lastFactDate,
+    marketValue,
+  );
   return {
     quality: qualityFor(model, hasFacts),
     hasLedgerEntries: hasFacts,
@@ -425,11 +459,8 @@ export function buildPositionsOverview(
       cumulativeDividend: state.cumulativeDividend,
       totalReturn: hasFacts ? totalReturn : null,
       // 已清仓时没有期末估值行情，现金流仍可在最后一笔事实日闭合。
-      xirr: investmentXirr(
-        model.effectiveEntries,
-        model.cutoff ?? lastFactDate,
-        marketValue,
-      ),
+      xirr: portfolioXirr.value,
+      xirrStatus: portfolioXirr.status,
     },
     portfolioPerformance: periodPerformance(model.daily, model.cutoff),
     positions,

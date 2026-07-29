@@ -12,7 +12,10 @@ import {
   fetchSinaAdjustedBars,
   fetchSinaUnadjustedPrices,
 } from "./sina";
-import { latestCompletedTradingDate } from "../domain/marketCalendar";
+import {
+  isConfirmedMarketClosureRange,
+  latestCompletedTradingDate,
+} from "../domain/marketCalendar";
 import { currentMarketDate, daysBetween, validDate } from "../domain/dateUtils";
 
 export interface MarketDataProvider {
@@ -157,6 +160,7 @@ function provenance(
   adjustment: "none" | "qfq",
   fetchedAt: string,
   fallbackReason?: string,
+  emptyEvidence?: MarketDataProvenance["emptyEvidence"],
 ): MarketDataProvenance {
   return {
     source,
@@ -166,6 +170,7 @@ function provenance(
     fetchedAt,
     dataCutoff: rows.at(-1)?.date ?? null,
     adjustment,
+    ...(emptyEvidence ? { emptyEvidence } : {}),
   };
 }
 
@@ -180,22 +185,33 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
 ): Promise<{ rows: T[]; provenance: MarketDataProvenance }> {
   let primaryCandidate: readonly PricePoint[] = [];
   let primaryFailureReason: string | null = null;
+  let primaryOutcome: "empty" | "failed" = "failed";
   try {
     const raw =
       operation === "prices"
         ? await primary.fetchPrices(symbol, startDate, endDate)
         : await primary.fetchAdjustedBars(symbol, startDate, endDate);
+    if (raw.length) {
+      assertDates(raw, "腾讯行情");
+      assertRequestedRange(raw, startDate, endDate, "腾讯");
+      primaryCandidate = (
+        operation === "prices"
+          ? raw
+          : (raw as AdjustedBar[]).map(({ date, close }) => ({
+              date,
+              close,
+            }))
+      ) as readonly PricePoint[];
+      if (operation === "prices") {
+        validatePricePoints(raw as PricePoint[], symbol, "腾讯");
+      } else {
+        validateAdjustedBars(raw as AdjustedBar[], symbol, "腾讯");
+      }
+    }
     const rows = completedRows(raw, endDate, now) as unknown as T[];
     assertRequestedRange(rows, startDate, endDate, "腾讯");
-    primaryCandidate = (
-      operation === "prices"
-        ? rows
-        : (rows as unknown as AdjustedBar[]).map(({ date, close }) => ({
-            date,
-            close,
-          }))
-    ) as readonly PricePoint[];
     if (!rows.length) {
+      primaryOutcome = "empty";
       primaryFailureReason = "腾讯在请求区间返回合法空数据";
     } else if (operation === "prices") {
       validatePricePoints(primaryCandidate, symbol, "腾讯");
@@ -214,6 +230,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       };
     }
   } catch (error) {
+    primaryOutcome = "failed";
     primaryFailureReason =
       error instanceof Error ? error.message : String(error);
   }
@@ -224,20 +241,38 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       operation === "prices"
         ? await fallback.fetchPrices(symbol, startDate, endDate)
         : await fallback.fetchAdjustedBars(symbol, startDate, endDate);
+    if (raw.length) {
+      if (operation === "prices") {
+        validatePricePoints(raw as PricePoint[], symbol, "新浪");
+      } else {
+        validateAdjustedBars(raw as AdjustedBar[], symbol, "新浪");
+      }
+    }
     const rows = completedRows(raw, endDate, now) as unknown as T[];
     assertRequestedRange(rows, startDate, endDate, "新浪");
     if (!rows.length) {
       if (primaryCandidate.length) {
         throw new Error("新浪返回空区间，无法验证腾讯的异常候选行情");
       }
+      if (primaryOutcome === "failed") {
+        throw new Error(
+          "腾讯明确失败且新浪返回空数据，无法证明请求区间没有交易数据",
+        );
+      }
+      if (!isConfirmedMarketClosureRange(startDate, endDate)) {
+        throw new Error(
+          "腾讯与新浪均返回空数据，但独立交易日历不能确认请求区间全部休市",
+        );
+      }
       return {
         rows,
         provenance: provenance(
-          primaryFailureReason?.includes("合法空数据") ? "tencent" : "sina",
+          "tencent",
           rows,
           operation === "prices" ? "none" : "qfq",
           now.toISOString(),
-          primaryFailureReason?.includes("合法空数据") ? undefined : reason,
+          undefined,
+          "exchange_calendar",
         ),
       };
     }

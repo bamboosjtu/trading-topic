@@ -16,7 +16,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -68,6 +68,7 @@ interface BackupPayload {
     fetched_at: string;
     data_cutoff: string | null;
     adjustment: "none" | "qfq";
+    empty_evidence: "exchange_calendar" | "outside_listing" | null;
     result_status: "data" | "empty";
   }>;
   corporateActions: Array<{
@@ -122,6 +123,7 @@ export interface StoredMarketCoverage {
   fetchedAt: string;
   dataCutoff: string | null;
   adjustment: "none" | "qfq";
+  emptyEvidence?: "exchange_calendar" | "outside_listing";
   resultStatus: "data" | "empty";
 }
 
@@ -304,6 +306,8 @@ export class LocalDatabase {
         fetched_at TEXT NOT NULL,
         data_cutoff TEXT,
         adjustment TEXT NOT NULL CHECK (adjustment IN ('none', 'qfq')),
+        empty_evidence TEXT
+          CHECK (empty_evidence IS NULL OR empty_evidence IN ('exchange_calendar', 'outside_listing')),
         result_status TEXT NOT NULL CHECK (result_status IN ('data', 'empty')),
         PRIMARY KEY (symbol, requested_from, requested_through, adjustment)
       );
@@ -326,6 +330,8 @@ export class LocalDatabase {
       CREATE TABLE IF NOT EXISTS stock_universe (
         symbol TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        security_type TEXT NOT NULL DEFAULT 'stock'
+          CHECK (security_type IN ('stock', 'etf')),
         source TEXT NOT NULL,
         fetched_at TEXT NOT NULL
       );
@@ -340,6 +346,28 @@ export class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy
         ON backtest_results(strategy_key);
     `);
+    if (currentVersion < 10) {
+      const stockColumns = rows<{ name: string }>(
+        this.database,
+        "PRAGMA table_info(stock_universe)",
+      );
+      if (!stockColumns.some((column) => column.name === "security_type")) {
+        this.database.exec(
+          "ALTER TABLE stock_universe ADD COLUMN security_type TEXT NOT NULL DEFAULT 'stock' CHECK (security_type IN ('stock', 'etf'))",
+        );
+      }
+      const coverageColumns = rows<{ name: string }>(
+        this.database,
+        "PRAGMA table_info(live_market_coverage)",
+      );
+      if (
+        !coverageColumns.some((column) => column.name === "empty_evidence")
+      ) {
+        this.database.exec(
+          "ALTER TABLE live_market_coverage ADD COLUMN empty_evidence TEXT CHECK (empty_evidence IS NULL OR empty_evidence IN ('exchange_calendar', 'outside_listing'))",
+        );
+      }
+    }
     if (currentVersion < 9 && retainedLedgerEntries.length) {
       const insertLedger = this.database.prepare(
         "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
@@ -616,12 +644,18 @@ export class LocalDatabase {
     fetchedAt: string,
   ): void {
     const insert = this.database.prepare(
-      "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
     );
     this.database.transaction(() => {
       this.database.exec("DELETE FROM stock_universe");
       for (const stock of stocks) {
-        insert.run(stock.symbol, stock.name, source, fetchedAt);
+        insert.run(
+          stock.symbol,
+          stock.name,
+          stock.securityType ?? "stock",
+          source,
+          fetchedAt,
+        );
       }
     })();
   }
@@ -632,14 +666,16 @@ export class LocalDatabase {
     return rows<{
       symbol: string;
       name: string;
+      security_type: "stock" | "etf";
       source: string;
       fetched_at: string;
     }>(
       this.database,
-      "SELECT symbol, name, source, fetched_at FROM stock_universe ORDER BY symbol",
+      "SELECT symbol, name, security_type, source, fetched_at FROM stock_universe ORDER BY symbol",
     ).map((row) => ({
       symbol: row.symbol,
       name: row.name,
+      securityType: row.security_type,
       source: row.source,
       fetchedAt: row.fetched_at,
     }));
@@ -710,8 +746,8 @@ export class LocalDatabase {
       `INSERT OR REPLACE INTO live_market_coverage(
          symbol, requested_from, requested_through, source, primary_source,
          fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
-         result_status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         empty_evidence, result_status
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.database.transaction(() => {
       for (const entry of entries) {
@@ -724,6 +760,14 @@ export class LocalDatabase {
         if (!requestedFrom || !requestedThrough) {
           throw new Error("行情覆盖记录缺少请求起止日期");
         }
+        if (
+          !entry.prices.length &&
+          !entry.provenance.emptyEvidence
+        ) {
+          throw new Error(
+            "空行情覆盖缺少独立交易日历或证券存续期证据，拒绝持久化",
+          );
+        }
         insertCoverage.run(
           entry.symbol,
           requestedFrom,
@@ -735,6 +779,7 @@ export class LocalDatabase {
           entry.provenance.fetchedAt,
           entry.provenance.dataCutoff,
           entry.provenance.adjustment,
+          entry.provenance.emptyEvidence ?? null,
           entry.prices.length ? "data" : "empty",
         );
         for (const row of entry.prices) {
@@ -822,12 +867,13 @@ export class LocalDatabase {
       fetched_at: string;
       data_cutoff: string | null;
       adjustment: "none" | "qfq";
+      empty_evidence: "exchange_calendar" | "outside_listing" | null;
       result_status: "data" | "empty";
     }>(
       this.database,
       `SELECT symbol, requested_from, requested_through, source,
               primary_source, fallback_used, fallback_reason, fetched_at,
-              data_cutoff, adjustment, result_status
+              data_cutoff, adjustment, empty_evidence, result_status
        FROM live_market_coverage
        ${where}
        ORDER BY symbol, requested_from, requested_through`,
@@ -845,6 +891,9 @@ export class LocalDatabase {
       fetchedAt: row.fetched_at,
       dataCutoff: row.data_cutoff,
       adjustment: row.adjustment,
+      ...(row.empty_evidence
+        ? { emptyEvidence: row.empty_evidence }
+        : {}),
       resultStatus: row.result_status,
     }));
   }
@@ -972,7 +1021,7 @@ export class LocalDatabase {
         this.database,
         `SELECT symbol, requested_from, requested_through, source,
                 primary_source, fallback_used, fallback_reason, fetched_at,
-                data_cutoff, adjustment, result_status
+                data_cutoff, adjustment, empty_evidence, result_status
          FROM live_market_coverage
          ORDER BY symbol, requested_from, requested_through`,
       ),
@@ -1120,8 +1169,8 @@ export class LocalDatabase {
         `INSERT INTO live_market_coverage(
            symbol, requested_from, requested_through, source, primary_source,
            fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
-           result_status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           empty_evidence, result_status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const row of backup.liveMarketCoverage) {
         insertCoverage.run(
@@ -1135,6 +1184,7 @@ export class LocalDatabase {
           row.fetched_at,
           row.data_cutoff,
           row.adjustment,
+          row.empty_evidence,
           row.result_status,
         );
       }
@@ -1148,12 +1198,13 @@ export class LocalDatabase {
         .prepare("INSERT INTO settings(key, value_json) VALUES ('app', ?)")
         .run(JSON.stringify(backup.settings ?? DEFAULT_SETTINGS));
       const insertStock = this.database.prepare(
-        "INSERT INTO stock_universe(symbol, name, source, fetched_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
       );
       for (const stock of backup.stockUniverse) {
         insertStock.run(
           stock.symbol,
           stock.name,
+          stock.securityType ?? "stock",
           stock.source,
           stock.fetchedAt,
         );

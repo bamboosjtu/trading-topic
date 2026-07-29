@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   tradeDateStatus,
@@ -38,7 +39,7 @@ describe("正式收盘日边界", () => {
     expect(latestTradingDateInMonth("2026-07", calendar)).toBe("2026-07-31");
   });
 
-  it("行情覆盖可以确认春节、国庆和调休周末均为休市日", () => {
+  it("独立交易日历确认春节、国庆和调休周末均为休市日", () => {
     const context = {
       knownTradingDates: ["2026-02-24", "2026-10-08"],
       coveredRanges: [
@@ -52,5 +53,21 @@ describe("正式收盘日边界", () => {
     expect(tradeDateStatus("2026-10-08", context)).toBe("trading");
     // 春节调休上班日仍是周末，证券交易所不开市。
     expect(tradeDateStatus("2026-02-28", context)).toBe("closed");
+  });
+
+  it("证券自身覆盖区间没有价格行时不冒充市场休市", () => {
+    const context = {
+      knownTradingDates: [],
+      coveredRanges: [
+        { startDate: "2026-07-27", endDate: "2026-07-28" },
+      ],
+    };
+    expect(tradeDateStatus("2026-07-27", context)).toBe("unknown");
+    expect(isConfirmedMarketClosureRange("2026-02-15", "2026-02-23")).toBe(
+      true,
+    );
+    expect(isConfirmedMarketClosureRange("2026-07-27", "2026-07-28")).toBe(
+      false,
+    );
   });
 });
