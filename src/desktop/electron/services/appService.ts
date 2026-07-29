@@ -13,6 +13,7 @@ import type {
   IncomeCalendarView,
   LedgerQuery,
   LedgerQueryResult,
+  MarketRefreshResult,
   PositionsOverview,
   StockInfo,
   DividendReinvestmentInput,
@@ -30,7 +31,10 @@ import {
   STOCK_UNIVERSE_CACHE_MAX_AGE_MS,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
-import { fetchInstrumentUniverse } from "../data/stockUniverse";
+import {
+  fetchAStockUniverse,
+  fetchDomesticEtfUniverse,
+} from "../data/stockUniverse";
 import { fetchCorporateActions } from "../data/tencent";
 import {
   fetchMarketAdjustedBars,
@@ -75,16 +79,37 @@ import {
   type TradeDateContext,
 } from "../domain/marketCalendar";
 
-function isCompleteInstrumentUniverse(stocks: readonly StockInfo[]): boolean {
-  const stockCount = stocks.filter(
-    (item) => item.securityType !== "etf",
-  ).length;
-  const etfCount = stocks.filter(
-    (item) => item.securityType === "etf",
-  ).length;
+function isCompleteAStockUniverse(stocks: readonly StockInfo[]): boolean {
   return (
-    stockCount >= STOCK_UNIVERSE_MIN_SIZE &&
-    etfCount >= ETF_UNIVERSE_MIN_SIZE
+    stocks.length >= STOCK_UNIVERSE_MIN_SIZE &&
+    stocks.every((item) => item.securityType !== "etf")
+  );
+}
+
+function isCompleteEtfUniverse(stocks: readonly StockInfo[]): boolean {
+  return (
+    stocks.length >= ETF_UNIVERSE_MIN_SIZE &&
+    stocks.every((item) => item.securityType === "etf")
+  );
+}
+
+function isFreshUniverseSnapshot(
+  rows: ReadonlyArray<StockInfo & { fetchedAt?: string }>,
+): boolean {
+  const fetchedAt = rows[0]?.fetchedAt;
+  return (
+    fetchedAt !== undefined &&
+    Number.isFinite(Date.parse(fetchedAt)) &&
+    Date.now() - Date.parse(fetchedAt) < STOCK_UNIVERSE_CACHE_MAX_AGE_MS
+  );
+}
+
+function mergeInstrumentUniverse(
+  stocks: readonly StockInfo[],
+  etfs: readonly StockInfo[],
+): StockInfo[] {
+  return [...stocks, ...etfs].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
   );
 }
 
@@ -176,32 +201,29 @@ function incomePriceRanges(
 export class AppService {
   constructor(private readonly database: LocalDatabase) {}
 
-  async listStocks(): Promise<StockInfo[]> {
-    const cached = this.database.listStockUniverse();
-    const fetchedAt = cached[0]?.fetchedAt;
-    const cachedIsComplete = isCompleteInstrumentUniverse(cached);
-    const cacheIsFresh =
-      cachedIsComplete &&
-      fetchedAt !== undefined &&
-      Number.isFinite(Date.parse(fetchedAt)) &&
-      Date.now() - Date.parse(fetchedAt) < STOCK_UNIVERSE_CACHE_MAX_AGE_MS;
-    if (cacheIsFresh) return cached;
+  async listAStocks(): Promise<StockInfo[]> {
+    const cached = this.database
+      .listStockUniverse()
+      .filter((item) => item.securityType !== "etf");
+    const cachedIsComplete = isCompleteAStockUniverse(cached);
+    if (cachedIsComplete && isFreshUniverseSnapshot(cached)) return cached;
 
     try {
-      const response = await fetchInstrumentUniverse();
-      if (!isCompleteInstrumentUniverse(response.rows)) {
+      const response = await fetchAStockUniverse();
+      if (!isCompleteAStockUniverse(response.rows)) {
         throw new Error(
-          `证券目录不完整：仅返回 ${response.rows.length} 个标的`,
+          `A 股目录不完整：仅返回 ${response.rows.length} 个标的`,
         );
       }
-      this.database.replaceStockUniverse(
+      this.database.replaceStockUniverseType(
         response.rows,
+        "stock",
         response.source,
         response.fetchedAt,
       );
       this.database.log(
         "info",
-        `已刷新 A 股与 ETF 代码表：${response.rows.length} 个标的`,
+        `已刷新 A 股代码表：${response.rows.length} 个标的`,
       );
       return response.rows;
     } catch (error) {
@@ -209,16 +231,63 @@ export class AppService {
       if (cachedIsComplete) {
         this.database.log(
           "warn",
-          `刷新证券目录失败，使用上次完整快照：${message}`,
+          `刷新 A 股代码表失败，使用上次完整快照：${message}`,
         );
         return cached;
       }
       this.database.log(
         "error",
-        `加载 A 股与 ETF 代码表失败，且没有可用的完整快照：${message}`,
+        `加载 A 股代码表失败，且没有可用的完整快照：${message}`,
       );
-      throw new Error(`无法加载完整的 A 股与 ETF 代码表：${message}`);
+      throw new Error(`无法加载完整的 A 股代码表：${message}`);
     }
+  }
+
+  async listEtfs(): Promise<StockInfo[]> {
+    const cachedEtfs = this.database
+      .listStockUniverse()
+      .filter((item) => item.securityType === "etf");
+    const cachedIsComplete = isCompleteEtfUniverse(cachedEtfs);
+    if (cachedIsComplete && isFreshUniverseSnapshot(cachedEtfs)) {
+      return cachedEtfs;
+    }
+    try {
+      const rows = await fetchDomesticEtfUniverse();
+      if (!isCompleteEtfUniverse(rows)) {
+        throw new Error(`境内 ETF 目录不完整：仅返回 ${rows.length} 个标的`);
+      }
+      const fetchedAt = new Date().toISOString();
+      this.database.replaceStockUniverseType(
+        rows,
+        "etf",
+        "东方财富 / 新浪财经境内交易所 ETF 代码表（产品域独立适配）",
+        fetchedAt,
+      );
+      this.database.log("info", `已刷新境内 ETF 代码表：${rows.length} 个标的`);
+      return rows;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (cachedIsComplete) {
+        this.database.log(
+          "warn",
+          `刷新境内 ETF 代码表失败，使用上次完整快照：${message}`,
+        );
+        return cachedEtfs;
+      }
+      this.database.log(
+        "error",
+        `加载境内 ETF 代码表失败，且没有可用的完整快照：${message}`,
+      );
+      throw new Error(`无法加载完整的境内 ETF 代码表：${message}`);
+    }
+  }
+
+  async listInstruments(): Promise<StockInfo[]> {
+    const [stocks, etfs] = await Promise.all([
+      this.listAStocks(),
+      this.listEtfs(),
+    ]);
+    return mergeInstrumentUniverse(stocks, etfs);
   }
 
   async runBacktest(request: BacktestRequest): Promise<BacktestExperiment> {
@@ -248,7 +317,7 @@ export class AppService {
         throw new Error("历史回测只支持A股股票");
       }
     }
-    const stocks = await this.listStocks();
+    const stocks = await this.listAStocks();
     const instrumentMap = new Map(
       stocks.map((instrument) => [instrument.symbol, instrument]),
     );
@@ -566,10 +635,7 @@ export class AppService {
   getPositionsOverview(): PositionsOverview {
     const snapshot = this.liveDataSnapshot();
     const factAsOfDate = currentMarketDate();
-    const valuationCutoff = latestCompletedTradingDate(
-      new Date(),
-      this.database.listLiveMarketDates(),
-    );
+    const valuationCutoff = this.completedMarketDate();
     return buildPositionsOverview(
       snapshot.entries,
       snapshot.prices,
@@ -578,11 +644,18 @@ export class AppService {
     );
   }
 
-  async refreshPositionsMarket(): Promise<PositionsOverview> {
+  async refreshPositionsMarket(): Promise<MarketRefreshResult> {
     const symbols = this.getPositionsOverview().positions.map(
       (position) => position.symbol,
     );
-    if (!symbols.length) return this.getPositionsOverview();
+    if (!symbols.length) {
+      return {
+        overview: this.getPositionsOverview(),
+        requestedCutoff: null,
+        actualCutoff: null,
+        tailComplete: true,
+      };
+    }
     const endDate = this.completedMarketDate();
     const startDate = addMonths(
       endDate,
@@ -612,11 +685,52 @@ export class AppService {
     }
     // 持仓刷新仍保持全成功后统一写入，避免半成功估值。
     this.database.saveLiveMarketPriceSnapshots(snapshots);
+    const latestBySymbol = new Map<string, string>();
+    for (const row of this.database.listLiveMarketPrices(symbols)) {
+      if (row.date > endDate) continue;
+      const current = latestBySymbol.get(row.symbol);
+      if (!current || row.date > current) {
+        latestBySymbol.set(row.symbol, row.date);
+      }
+    }
+    const actualCutoff =
+      latestBySymbol.size === symbols.length
+        ? [...latestBySymbol.values()].sort()[0]
+        : null;
+    const tailComplete =
+      this.missingLivePriceRanges(
+        symbols.map((symbol) => ({
+          symbol,
+          startDate: endDate,
+          endDate,
+        })),
+      ).length === 0;
+    const overview = this.getPositionsOverview();
+    const refreshIssue = tailComplete
+      ? null
+      : `行情仅更新至 ${actualCutoff ?? "暂无可用日期"}，请求截止 ${endDate} 的尾部尚未确认完整`;
+    const resultOverview = refreshIssue
+      ? {
+          ...overview,
+          quality: {
+            ...overview.quality,
+            status: "partial" as const,
+            issues: [...new Set([...overview.quality.issues, refreshIssue])],
+          },
+        }
+      : overview;
     this.database.log(
-      "info",
-      `已刷新实盘行情：${symbols.length} 个标的，${startDate}..${endDate}`,
+      tailComplete ? "info" : "warn",
+      tailComplete
+        ? `已刷新实盘行情：${symbols.length} 个标的，${startDate}..${endDate}`
+        : refreshIssue!,
     );
-    return this.getPositionsOverview();
+    return {
+      overview: resultOverview,
+      requestedCutoff: endDate,
+      actualCutoff,
+      tailComplete,
+    };
   }
 
   queryLedger(query: LedgerQuery): LedgerQueryResult {

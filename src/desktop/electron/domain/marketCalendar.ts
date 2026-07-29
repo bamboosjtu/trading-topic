@@ -3,6 +3,10 @@ import {
   A_SHARE_MARKET_TIME_ZONE,
   currentMarketDate,
 } from "../../shared/marketDate";
+import calendar2024 from "../data/market-calendar/2024.json";
+import calendar2025 from "../data/market-calendar/2025.json";
+import calendar2026 from "../data/market-calendar/2026.json";
+import calendar2027 from "../data/market-calendar/2027.json";
 
 export interface TradingCalendarCoverage {
   startDate: string;
@@ -18,22 +22,26 @@ export interface TradeDateContext {
   coveredRanges?: readonly TradingCalendarCoverage[];
 }
 
+interface AnnualMarketCalendar {
+  year: number;
+  status: "official" | "pending_official_schedule";
+  source: string | null;
+  closures: Array<[string, string]>;
+}
+
 /**
- * 上交所《关于上海证券交易所2026年部分节假日休市安排的通知》
- * （上证公告〔2025〕45号）确认的全市场休市区间。
- *
- * 年度安排发布前不猜测未来工作日是否休市；未知日期返回 unknown，让真实
- * 成交事实可以在提示后继续录入。
+ * 已发布年度安排使用上交所正式公告；尚未发布的年度只保留空文件和待更新
+ * 状态，不猜测工作日休市。周末由独立规则处理。
  */
-const CONFIRMED_MARKET_CLOSURES = [
-  ["2026-01-01", "2026-01-03"],
-  ["2026-02-15", "2026-02-23"],
-  ["2026-04-04", "2026-04-06"],
-  ["2026-05-01", "2026-05-05"],
-  ["2026-06-19", "2026-06-21"],
-  ["2026-09-25", "2026-09-27"],
-  ["2026-10-01", "2026-10-07"],
-] as const;
+const ANNUAL_MARKET_CALENDARS = [
+  calendar2024,
+  calendar2025,
+  calendar2026,
+  calendar2027,
+] as AnnualMarketCalendar[];
+const CONFIRMED_MARKET_CLOSURES = ANNUAL_MARKET_CALENDARS
+  .filter((calendar) => calendar.status === "official")
+  .flatMap((calendar) => calendar.closures);
 
 function isWeekend(date: string): boolean {
   const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();

@@ -6,10 +6,12 @@ import {
 } from "../../shared/constants";
 import {
   fetchAStockUniverse,
+  fetchDomesticEtfUniverse,
   fetchInstrumentUniverse,
   mergeAStockUniverse,
   parseBeijingStockPage,
   parseDomesticEtfs,
+  parseSinaDomesticEtfs,
   parseShanghaiStocks,
   parseShenzhenStocks,
 } from "./stockUniverse";
@@ -74,6 +76,42 @@ describe("A 股代码表", () => {
       { symbol: "159915", name: "创业板ETF", securityType: "etf" },
       { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
     ]);
+  });
+
+  it("解析新浪 ETF 目录 JSONP 兜底并忽略非法行", () => {
+    expect(
+      parseSinaDomesticEtfs(
+        `IO.XSRV2.CallbackList['test']([["sh510300","沪深300ETF"],["sz159915","创业板ETF"],["bad","-"]]);`,
+      ),
+    ).toEqual([
+      { symbol: "159915", name: "创业板ETF", securityType: "etf" },
+      { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
+    ]);
+  });
+
+  it("东方财富目录失败时由新浪返回完整 ETF 目录", async () => {
+    const etfs = Array.from(
+      { length: ETF_UNIVERSE_MIN_SIZE },
+      (_, index) => [
+        `${index % 2 ? "sz" : "sh"}${String(510000 + index)}`,
+        `ETF示例${index}`,
+      ],
+    );
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "push2.eastmoney.com") {
+        return new Response("", { status: 503 });
+      }
+      if (url.hostname === "vip.stock.finance.sina.com.cn") {
+        return new Response(`callback(${JSON.stringify(etfs)});`);
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    const result = await fetchDomesticEtfUniverse();
+
+    expect(result).toHaveLength(ETF_UNIVERSE_MIN_SIZE);
+    expect(result[0]).toMatchObject({ securityType: "etf" });
   });
 
   it("拒绝把少量标的误当成全 A 股目录", () => {

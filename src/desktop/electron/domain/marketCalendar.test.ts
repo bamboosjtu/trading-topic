@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestTradingDateInMonth,
+  latestWeekdayCandidate,
   tradeDateStatus,
 } from "./marketCalendar";
 
@@ -51,7 +53,6 @@ describe("正式收盘日边界", () => {
     expect(tradeDateStatus("2026-02-24", context)).toBe("trading");
     expect(tradeDateStatus("2026-10-07", context)).toBe("closed");
     expect(tradeDateStatus("2026-10-08", context)).toBe("trading");
-    // 春节调休上班日仍是周末，证券交易所不开市。
     expect(tradeDateStatus("2026-02-28", context)).toBe("closed");
   });
 
@@ -69,5 +70,26 @@ describe("正式收盘日边界", () => {
     expect(isConfirmedMarketClosureRange("2026-07-27", "2026-07-28")).toBe(
       false,
     );
+  });
+
+  it("识别 2024 至 2026 年官方法定休市日", () => {
+    expect(isConfirmedMarketClosureDate("2024-02-09")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2025-02-03")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2026-10-07")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2025-02-05")).toBe(false);
+  });
+
+  it("官方安排未发布前不猜测 2027 年工作日休市", () => {
+    expect(isConfirmedMarketClosureDate("2027-02-08")).toBe(false);
+    expect(isConfirmedMarketClosureDate("2027-02-07")).toBe(true);
+  });
+
+  it("节假日期间的请求上界回退到最近候选交易日", () => {
+    expect(
+      latestWeekdayCandidate(new Date("2025-02-03T08:00:00Z")),
+    ).toBe("2025-01-27");
+    expect(
+      isConfirmedMarketClosureRange("2025-01-28", "2025-02-04"),
+    ).toBe(true);
   });
 });

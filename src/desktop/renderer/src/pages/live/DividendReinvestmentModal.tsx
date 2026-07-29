@@ -38,14 +38,29 @@ interface Values {
   note?: string;
 }
 
+interface InstrumentCatalogStatus {
+  loading: boolean;
+  error?: string;
+}
+
+interface InstrumentOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
 export function DividendReinvestmentModal({
   open,
   stocks,
+  catalogStatus,
+  onRetryCatalog,
   onClose,
   onSaved,
 }: {
   open: boolean;
   stocks: readonly StockInfo[];
+  catalogStatus: Record<SecurityType, InstrumentCatalogStatus>;
+  onRetryCatalog: (type: SecurityType) => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -61,7 +76,7 @@ export function DividendReinvestmentModal({
     () => new Map(stocks.map((stock) => [stock.symbol, stock])),
     [stocks],
   );
-  const symbolOptions = useMemo(
+  const symbolOptions = useMemo<InstrumentOption[]>(
     () =>
       stocks
         .filter(
@@ -75,6 +90,21 @@ export function DividendReinvestmentModal({
         })),
     [securityType, stocks],
   );
+  const activeSecurityType = securityType ?? "stock";
+  const activeCatalogStatus = catalogStatus[activeSecurityType];
+  const displayedSymbolOptions: InstrumentOption[] = symbolOptions.length
+    ? symbolOptions
+    : [
+        {
+          value: "__catalog_status__",
+          label: activeCatalogStatus.loading
+            ? "正在加载证券目录…"
+            : activeCatalogStatus.error
+              ? "证券目录加载失败，点击重试"
+              : "当前资产类型暂无可用标的",
+          disabled: true,
+        },
+      ];
 
   useEffect(() => {
     if (!open) return;
@@ -192,8 +222,9 @@ export function DividendReinvestmentModal({
             ]}
           >
             <AutoComplete
-              options={symbolOptions}
+              options={displayedSymbolOptions}
               filterOption={(input, option) =>
+                Boolean(option?.disabled) ||
                 String(option?.label ?? "")
                   .toLowerCase()
                   .includes(input.toLowerCase())
@@ -206,6 +237,15 @@ export function DividendReinvestmentModal({
                     "securityType",
                     securityTypeForInstrument(stock),
                   );
+                }
+              }}
+              onDropdownVisibleChange={(visible) => {
+                if (
+                  visible &&
+                  activeCatalogStatus.error &&
+                  !activeCatalogStatus.loading
+                ) {
+                  onRetryCatalog(activeSecurityType);
                 }
               }}
             />

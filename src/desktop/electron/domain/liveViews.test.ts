@@ -5,8 +5,13 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 import type { StoredMarketPrice } from "../storage/database";
+import {
+  buildDailyAttribution,
+  rowsBySymbol,
+} from "./dailyAttribution";
 import { buildIncomeCalendar } from "./incomeCalendar";
 import { queryLedgerRecords } from "./ledgerQuery";
+import { activeLedgerEntries } from "./ledgerReducer";
 import { buildPositionsOverview } from "./positionsView";
 
 const stocks: StockInfo[] = [
@@ -47,6 +52,20 @@ function price(
     dataCutoff: date,
     adjustment: "none",
   };
+}
+
+function dailyAttribution(
+  entries: readonly LedgerEntry[],
+  prices: readonly StoredMarketPrice[],
+  cutoff: string,
+) {
+  return buildDailyAttribution(
+    activeLedgerEntries(entries, cutoff).effective,
+    rowsBySymbol(prices),
+    cutoff,
+    cutoff,
+    new Map(),
+  );
 }
 
 describe("投资收益视图", () => {
@@ -313,6 +332,38 @@ describe("投资收益视图", () => {
     ]);
   });
 
+  it("全部清仓后按当前持仓查询收益日历返回空状态", () => {
+    const entries = [
+      entry("buy", "buy", "2026-06-01", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("sell", "sell", "2026-06-30", {
+        symbol: "601398",
+        price: 5.2,
+        quantity: 100,
+      }),
+    ];
+    const view = buildIncomeCalendar(
+      entries,
+      [
+        price("601398", "2026-06-01", 5),
+        price("601398", "2026-06-30", 5.2),
+      ],
+      stocks,
+      { month: "2026-06", scope: "current" },
+      [],
+      {
+        factAsOfDate: "2026-07-01",
+        valuationCutoff: "2026-06-30",
+      },
+    );
+    expect(view.days).toEqual([]);
+    expect(view.quality.status).toBe("empty");
+    expect(view.metrics.month.amount).toBeNull();
+  });
+
   it("收益日历只包含市场价格、分红和交易影响三项归因", () => {
     const entries = [
       entry("buy", "buy", "2026-07-01", {
@@ -352,6 +403,181 @@ describe("投资收益视图", () => {
     // 当前月份仅截止 7 月 2 日，距市场当前日过久，应明确标记过期；
     // 归因值本身仍按已有正式收盘价计算。
     expect(view.quality.status).toBe("stale");
+  });
+
+  it("同日分红再投入不重复增加收益率资本基数", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-1",
+      }),
+      entry("reinvest", "buy", "2026-07-01", {
+        symbol: "601398",
+        price: 10,
+        quantity: 10,
+        linkedGroupId: "reinvest-1",
+      }),
+    ];
+    const day = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+      ],
+      "2026-07-01",
+    ).at(-1)!;
+    expect(day.capitalBase).toBe(1_000);
+    expect(day.returnRate).toBe(0.1);
+  });
+
+  it("分红次日再投入仍识别为内部资金循环", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-next-day",
+      }),
+      entry("reinvest", "buy", "2026-07-02", {
+        symbol: "601398",
+        price: 10,
+        quantity: 10,
+        linkedGroupId: "reinvest-next-day",
+      }),
+    ];
+    const day = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+        price("601398", "2026-07-02", 10),
+      ],
+      "2026-07-02",
+    ).at(-1)!;
+    expect(day.date).toBe("2026-07-02");
+    expect(day.capitalBase).toBe(1_000);
+  });
+
+  it("再投入支出超过分红时只把补足零钱计入外部投入", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-extra",
+      }),
+      entry("reinvest", "buy", "2026-07-01", {
+        symbol: "601398",
+        price: 10,
+        quantity: 12,
+        linkedGroupId: "reinvest-extra",
+      }),
+    ];
+    const day = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+      ],
+      "2026-07-01",
+    ).at(-1)!;
+    expect(day.capitalBase).toBe(1_020);
+  });
+
+  it("普通独立买入仍全部计入外部投入", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("ordinary-buy", "buy", "2026-07-01", {
+        symbol: "601398",
+        price: 10,
+        quantity: 10,
+      }),
+    ];
+    const day = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+      ],
+      "2026-07-01",
+    ).at(-1)!;
+    expect(day.capitalBase).toBe(1_100);
+  });
+
+  it("冲正或修正关联事实后按当前有效版本重算内部再投入", () => {
+    const base = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-audit",
+      }),
+      entry("old-buy", "buy", "2026-07-01", {
+        symbol: "601398",
+        price: 10,
+        quantity: 10,
+        linkedGroupId: "reinvest-audit",
+      }),
+    ];
+    const prices = [
+      price("601398", "2026-06-30", 10),
+      price("601398", "2026-07-01", 10),
+    ];
+    const reversedDividend = dailyAttribution(
+      [
+        ...base,
+        entry("reverse-dividend", "adjustment", "2026-07-01", {
+          reversesEntryId: "dividend",
+          recordedAt: "2026-07-02T01:00:00Z",
+        }),
+      ],
+      prices,
+      "2026-07-02",
+    ).find((day) => day.date === "2026-07-01")!;
+    expect(reversedDividend.capitalBase).toBe(1_100);
+
+    const correctedBuy = dailyAttribution(
+      [
+        ...base,
+        entry("reverse-buy", "adjustment", "2026-07-01", {
+          reversesEntryId: "old-buy",
+          recordedAt: "2026-07-02T01:00:00Z",
+        }),
+        entry("new-buy", "buy", "2026-07-01", {
+          correctsEntryId: "old-buy",
+          recordedAt: "2026-07-02T01:00:01Z",
+          symbol: "601398",
+          price: 10,
+          quantity: 12,
+          linkedGroupId: "reinvest-audit",
+        }),
+      ],
+      prices,
+      "2026-07-02",
+    ).find((day) => day.date === "2026-07-01")!;
+    expect(correctedBuy.capitalBase).toBe(1_020);
   });
 
   it("第二个月的本月归因只与本月收益相等，不冒充累计收益等式", () => {

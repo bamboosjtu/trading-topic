@@ -4,6 +4,11 @@ import type {
 } from "../../shared/contracts";
 import { marketSymbol } from "./tencent";
 import {
+  addDays,
+  currentMarketDate,
+  daysBetween,
+} from "../domain/dateUtils";
+import {
   decodeSinaKlc,
   type DecodedSinaBar,
 } from "./sinaKlcDecoder";
@@ -342,11 +347,27 @@ function inRequestedRange(
   );
 }
 
+function canUseRecentEndpoint(
+  startDate: string,
+  endDate: string,
+): boolean {
+  const today = currentMarketDate();
+  return (
+    endDate >= addDays(today, -7) &&
+    daysBetween(startDate, endDate) <= 1_800
+  );
+}
+
 export async function fetchSinaUnadjustedPrices(
   symbol: string,
   startDate: string,
   endDate: string,
 ): Promise<PricePoint[]> {
+  if (canUseRecentEndpoint(startDate, endDate)) {
+    return (await recentKline(symbol, startDate, endDate, "none")).map(
+      ({ date, close }) => ({ date, close }),
+    );
+  }
   let rows: NormalizedSinaBar[];
   try {
     rows = inRequestedRange(
@@ -368,6 +389,11 @@ export async function fetchSinaAdjustedBars(
   startDate: string,
   endDate: string,
 ): Promise<AdjustedBar[]> {
+  if (canUseRecentEndpoint(startDate, endDate)) {
+    return (await recentKline(symbol, startDate, endDate, "qfq")).map(
+      (row) => ({ ...row, adjustment: "qfq" }),
+    );
+  }
   let history: NormalizedSinaBar[];
   let factors: Array<[string, number]>;
   try {

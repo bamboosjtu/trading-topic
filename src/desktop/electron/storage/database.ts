@@ -16,7 +16,7 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 1;
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -144,103 +144,67 @@ export class LocalDatabase {
     database.pragma("journal_mode = WAL");
     database.pragma("synchronous = NORMAL");
     const store = new LocalDatabase(database);
-    store.migrate();
-    return store;
+    try {
+      store.initializeSchema();
+      return store;
+    } catch (error) {
+      database.close();
+      throw error;
+    }
   }
 
   close(): void {
     if (this.database.open) this.database.close();
   }
 
-  private migrate(): void {
+  private initializeSchema(): void {
     this.database.transaction(() => {
       const currentVersion = this.database.pragma("user_version", {
         simple: true,
       }) as number;
-    if (currentVersion < 5) {
-      this.database.exec(`
-        DROP TABLE IF EXISTS backtest_runs;
-        DROP TABLE IF EXISTS backtest_results;
-        DROP TABLE IF EXISTS backtest_experiments;
-        DROP TABLE IF EXISTS backtest_workspace;
-      `);
-    }
-    const retainedLedgerEntries: LedgerEntry[] = [];
-    if (currentVersion < 9) {
-      const hasLedgerTable = rows<{ name: string }>(
-        this.database,
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries'",
-      ).length > 0;
-      if (hasLedgerTable) {
-        const legacyRows = rows<{ type: string; payload_json: string }>(
-          this.database,
-          "SELECT type, payload_json FROM ledger_entries",
+      if (currentVersion !== 0 && currentVersion !== SCHEMA_VERSION) {
+        throw new Error(
+          `数据库版本不兼容：仅支持 Schema ${SCHEMA_VERSION}，当前为 Schema ${currentVersion}`,
         );
-        const parsed = legacyRows.map((row) => {
-          let entry: LedgerEntry;
-          try {
-            entry = JSON.parse(row.payload_json) as LedgerEntry;
-          } catch {
-            throw new Error(
-              "旧版投资事实无法解析；为避免静默丢失，数据库升级已停止",
-            );
-          }
-          if (entry.type !== row.type) {
-            throw new Error(
-              "旧版投资事实类型不一致；为避免静默丢失，数据库升级已停止",
-            );
-          }
-          return entry;
-        });
-        const retainedIds = new Set(
-          parsed
-            .filter((entry) =>
-              ["buy", "sell", "dividend"].includes(entry.type),
-            )
-            .map((entry) => entry.id),
-        );
-        for (const original of parsed) {
-          if (
-            !["buy", "sell", "dividend", "adjustment"].includes(
-              original.type,
-            )
-          ) {
-            continue;
-          }
-          if (
-            original.type === "adjustment" &&
-            (!original.reversesEntryId ||
-              !retainedIds.has(original.reversesEntryId))
-          ) {
-            continue;
-          }
-          const entry = { ...original } as LedgerEntry & {
-            paymentDate?: string;
-          };
-          if (
-            entry.type === "dividend" &&
-            entry.paymentDate &&
-            /^\d{4}-\d{2}-\d{2}$/.test(entry.paymentDate)
-          ) {
-            entry.businessDate = entry.paymentDate;
-          }
-          delete entry.paymentDate;
-          retainedLedgerEntries.push(entry);
-        }
       }
-      this.database.exec("DROP TABLE IF EXISTS ledger_entries");
-    }
-    if (currentVersion < 8) {
-      // 旧行情缓存与账户型设置可以重建；投资事实已在上方显式提取，
-      // 只保留买入、卖出、分红及其有效审计链。
+      const existingTables = rows<{ name: string }>(
+        this.database,
+        `SELECT name
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'`,
+      ).map((row) => row.name);
+      if (currentVersion === SCHEMA_VERSION) {
+        const requiredTables = [
+          "ledger_entries",
+          "backtest_experiments",
+          "backtest_results",
+          "market_prices",
+          "live_market_prices",
+          "live_market_coverage",
+          "corporate_actions",
+          "settings",
+          "app_logs",
+          "stock_universe",
+          "backtest_workspace",
+        ];
+        const missingTables = requiredTables.filter(
+          (table) => !existingTables.includes(table),
+        );
+        if (missingTables.length) {
+          throw new Error(
+            `Schema ${SCHEMA_VERSION} 数据库结构不完整：缺少 ${missingTables.join("、")}`,
+          );
+        }
+        return;
+      }
+      if (existingTables.length) {
+        throw new Error(
+          "检测到未标记版本的既有数据库；MVP 不执行迁移，请使用新的本地数据库",
+        );
+      }
       this.database.exec(`
-        DROP TABLE IF EXISTS market_prices;
-        DROP TABLE IF EXISTS live_market_prices;
-        DROP TABLE IF EXISTS settings;
-      `);
-    }
-    this.database.exec(`
-      CREATE TABLE IF NOT EXISTS ledger_entries (
+      CREATE TABLE ledger_entries (
         id TEXT PRIMARY KEY,
         business_date TEXT NOT NULL,
         recorded_at TEXT NOT NULL,
@@ -248,7 +212,7 @@ export class LocalDatabase {
           CHECK (type IN ('buy', 'sell', 'dividend', 'adjustment')),
         payload_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS backtest_experiments (
+      CREATE TABLE backtest_experiments (
         id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL,
         request_json TEXT NOT NULL,
@@ -256,7 +220,7 @@ export class LocalDatabase {
         caliber_version TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status = 'completed')
       );
-      CREATE TABLE IF NOT EXISTS backtest_results (
+      CREATE TABLE backtest_results (
         id TEXT PRIMARY KEY,
         experiment_id TEXT NOT NULL,
         symbol TEXT NOT NULL,
@@ -267,7 +231,7 @@ export class LocalDatabase {
           ON DELETE CASCADE,
         UNIQUE (experiment_id, symbol)
       );
-      CREATE TABLE IF NOT EXISTS market_prices (
+      CREATE TABLE market_prices (
         symbol TEXT NOT NULL,
         trade_date TEXT NOT NULL,
         close REAL NOT NULL,
@@ -280,7 +244,7 @@ export class LocalDatabase {
         adjustment TEXT NOT NULL CHECK (adjustment IN ('none', 'qfq')),
         PRIMARY KEY (symbol, trade_date)
       );
-      CREATE TABLE IF NOT EXISTS live_market_prices (
+      CREATE TABLE live_market_prices (
         symbol TEXT NOT NULL,
         trade_date TEXT NOT NULL,
         close REAL NOT NULL,
@@ -295,7 +259,7 @@ export class LocalDatabase {
         requested_through TEXT NOT NULL,
         PRIMARY KEY (symbol, trade_date)
       );
-      CREATE TABLE IF NOT EXISTS live_market_coverage (
+      CREATE TABLE live_market_coverage (
         symbol TEXT NOT NULL,
         requested_from TEXT NOT NULL,
         requested_through TEXT NOT NULL,
@@ -311,107 +275,45 @@ export class LocalDatabase {
         result_status TEXT NOT NULL CHECK (result_status IN ('data', 'empty')),
         PRIMARY KEY (symbol, requested_from, requested_through, adjustment)
       );
-      CREATE TABLE IF NOT EXISTS corporate_actions (
+      CREATE TABLE corporate_actions (
         symbol TEXT NOT NULL,
         event_date TEXT NOT NULL,
         payload_json TEXT NOT NULL,
         PRIMARY KEY (symbol, event_date)
       );
-      CREATE TABLE IF NOT EXISTS settings (
+      CREATE TABLE settings (
         key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS app_logs (
+      CREATE TABLE app_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at TEXT NOT NULL,
         level TEXT NOT NULL,
         message TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS stock_universe (
+      CREATE TABLE stock_universe (
         symbol TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        security_type TEXT NOT NULL DEFAULT 'stock'
+        security_type TEXT NOT NULL
           CHECK (security_type IN ('stock', 'etf')),
         source TEXT NOT NULL,
         fetched_at TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS backtest_workspace (
+      CREATE TABLE backtest_workspace (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state_json TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_backtest_experiments_created_at
+      CREATE INDEX idx_backtest_experiments_created_at
         ON backtest_experiments(created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_backtest_results_experiment
+      CREATE INDEX idx_backtest_results_experiment
         ON backtest_results(experiment_id);
-      CREATE INDEX IF NOT EXISTS idx_backtest_results_strategy
+      CREATE INDEX idx_backtest_results_strategy
         ON backtest_results(strategy_key);
     `);
-    if (currentVersion < 10) {
-      const stockColumns = rows<{ name: string }>(
-        this.database,
-        "PRAGMA table_info(stock_universe)",
-      );
-      if (!stockColumns.some((column) => column.name === "security_type")) {
-        this.database.exec(
-          "ALTER TABLE stock_universe ADD COLUMN security_type TEXT NOT NULL DEFAULT 'stock' CHECK (security_type IN ('stock', 'etf'))",
-        );
-      }
-      const coverageColumns = rows<{ name: string }>(
-        this.database,
-        "PRAGMA table_info(live_market_coverage)",
-      );
-      if (
-        !coverageColumns.some((column) => column.name === "empty_evidence")
-      ) {
-        this.database.exec(
-          "ALTER TABLE live_market_coverage ADD COLUMN empty_evidence TEXT CHECK (empty_evidence IS NULL OR empty_evidence IN ('exchange_calendar', 'outside_listing'))",
-        );
-      }
-      // Schema 9 的空覆盖没有独立证据字段，旧写入路径可能把数据源临时
-      // 异常误记成“无交易数据”。这些记录不能在升级后继续阻止行情补齐；
-      // 删除后由新路径重新请求，并只在交易日历或存续期证据充分时重建。
-      this.database.exec(`
-        DELETE FROM live_market_coverage
-        WHERE result_status = 'empty'
-          AND empty_evidence IS NULL
-      `);
-    }
-    if (currentVersion < 9 && retainedLedgerEntries.length) {
-      const insertLedger = this.database.prepare(
-        "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
-      );
-      this.database.transaction(() => {
-        for (const entry of retainedLedgerEntries) {
-          insertLedger.run(
-            entry.id,
-            entry.businessDate,
-            entry.recordedAt,
-            entry.type,
-            JSON.stringify(entry),
-          );
-        }
-      })();
-    }
-    if (currentVersion === 8) {
-      this.database.exec(`
-        INSERT OR IGNORE INTO live_market_coverage(
-          symbol, requested_from, requested_through, source, primary_source,
-          fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
-          result_status
-        )
-        SELECT
-          symbol, requested_from, requested_through, source, primary_source,
-          fallback_used, fallback_reason, MAX(fetched_at), MAX(data_cutoff),
-          adjustment, 'data'
-        FROM live_market_prices
-        GROUP BY symbol, requested_from, requested_through, adjustment;
-      `);
-    }
-    this.database.pragma(`user_version = ${SCHEMA_VERSION}`);
+      this.database.pragma(`user_version = ${SCHEMA_VERSION}`);
       this.database
         .prepare(
-          `INSERT INTO settings(key, value_json) VALUES ('app', ?)
-           ON CONFLICT(key) DO NOTHING`,
+          "INSERT INTO settings(key, value_json) VALUES ('app', ?)",
         )
         .run(JSON.stringify(DEFAULT_SETTINGS));
     })();
@@ -661,6 +563,38 @@ export class LocalDatabase {
           stock.symbol,
           stock.name,
           stock.securityType ?? "stock",
+          source,
+          fetchedAt,
+        );
+      }
+    })();
+  }
+
+  replaceStockUniverseType(
+    stocks: StockInfo[],
+    securityType: "stock" | "etf",
+    source: string,
+    fetchedAt: string,
+  ): void {
+    if (
+      stocks.some(
+        (stock) => (stock.securityType ?? "stock") !== securityType,
+      )
+    ) {
+      throw new Error("证券目录类型与替换范围不一致");
+    }
+    const insert = this.database.prepare(
+      "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    this.database.transaction(() => {
+      this.database
+        .prepare("DELETE FROM stock_universe WHERE security_type = ?")
+        .run(securityType);
+      for (const stock of stocks) {
+        insert.run(
+          stock.symbol,
+          stock.name,
+          securityType,
           source,
           fetchedAt,
         );

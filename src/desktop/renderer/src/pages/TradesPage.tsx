@@ -99,11 +99,30 @@ export function TradesPage() {
     queryKey: ["ledger:query", query],
     queryFn: () => api.queryLedger(query),
   });
-  const stocks = useQuery({
-    queryKey: ["stocks"],
-    queryFn: api.listStocks,
+  const stockCatalog = useQuery({
+    queryKey: ["instruments", "stock"],
+    queryFn: api.listAStocks,
     staleTime: 24 * 60 * 60 * 1000,
   });
+  const etfCatalog = useQuery({
+    queryKey: ["instruments", "etf"],
+    queryFn: api.listEtfs,
+    staleTime: 24 * 60 * 60 * 1000,
+  });
+  const instruments = useMemo(
+    () => [...(stockCatalog.data ?? []), ...(etfCatalog.data ?? [])],
+    [etfCatalog.data, stockCatalog.data],
+  );
+  const catalogStatus = {
+    stock: {
+      loading: stockCatalog.isLoading,
+      error: stockCatalog.error?.message,
+    },
+    etf: {
+      loading: etfCatalog.isLoading,
+      error: etfCatalog.error?.message,
+    },
+  };
   const exportData = useMutation({
     mutationFn: () => api.exportLedger(query),
     onSuccess: (result) => {
@@ -531,7 +550,11 @@ export function TradesPage() {
       <LedgerEntryModal
         open={entryModalOpen}
         correctionTarget={correctionTarget}
-        stocks={stocks.data ?? []}
+        stocks={instruments}
+        catalogStatus={catalogStatus}
+        onRetryCatalog={(type) =>
+          void (type === "stock" ? stockCatalog.refetch() : etfCatalog.refetch())
+        }
         onClose={() => {
           setEntryModalOpen(false);
           setCorrectionTarget(null);
@@ -543,7 +566,11 @@ export function TradesPage() {
       />
       <DividendReinvestmentModal
         open={reinvestmentOpen}
-        stocks={stocks.data ?? []}
+        stocks={instruments}
+        catalogStatus={catalogStatus}
+        onRetryCatalog={(type) =>
+          void (type === "stock" ? stockCatalog.refetch() : etfCatalog.refetch())
+        }
         onClose={() => setReinvestmentOpen(false)}
         onSaved={refreshLivePages}
       />

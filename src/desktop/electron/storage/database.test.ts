@@ -158,7 +158,7 @@ describe("LocalDatabase", () => {
     expect(database.listLedger()).toEqual([]);
   });
 
-  it("导出并恢复 schema v10 的不可变回测试验、投资事实与行情来源", async () => {
+  it("导出并恢复 schema v1 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -197,7 +197,7 @@ describe("LocalDatabase", () => {
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(10);
+    expect(backup.schemaVersion).toBe(1);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -343,145 +343,27 @@ describe("LocalDatabase", () => {
     );
   });
 
-  it("schema 7 升级显式保留买入卖出分红和审计链，丢弃退出 R1 的账户事实", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "stock-income-migrate-"));
+  it("拒绝打开非 Schema 1 数据库且不修改既有数据", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-incompatible-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "legacy.sqlite");
     const legacy = new BetterSqlite3(filePath);
     legacy.exec(`
-      CREATE TABLE ledger_entries (
-        id TEXT PRIMARY KEY,
-        business_date TEXT NOT NULL,
-        recorded_at TEXT NOT NULL,
-        type TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-      );
+      CREATE TABLE sentinel (value TEXT NOT NULL);
+      INSERT INTO sentinel(value) VALUES ('preserve-me');
     `);
-    const insert = legacy.prepare(
-      "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
+    legacy.pragma("user_version = 10");
+    legacy.close();
+
+    await expect(openDatabase(filePath)).rejects.toThrow(
+      "仅支持 Schema 1",
     );
-    const legacyEntries = [
-      {
-        id: "buy-old",
-        type: "buy",
-        businessDate: "2025-01-02",
-        recordedAt: "2025-01-02T01:00:00Z",
-        currency: "CNY",
-        source: "user",
-        symbol: "601398",
-        price: 5,
-        quantity: 100,
-      },
-      {
-        id: "dividend-old",
-        type: "dividend",
-        businessDate: "2025-06-01",
-        paymentDate: "2025-06-05",
-        recordedAt: "2025-06-05T01:00:00Z",
-        currency: "CNY",
-        source: "user",
-        symbol: "601398",
-        amount: 30,
-      },
-      {
-        id: "adjust-old",
-        type: "adjustment",
-        businessDate: "2025-01-02",
-        recordedAt: "2025-07-01T01:00:00Z",
-        currency: "CNY",
-        source: "system",
-        reversesEntryId: "buy-old",
-      },
-      {
-        id: "transfer-old",
-        type: "transfer_in",
-        businessDate: "2025-01-01",
-        recordedAt: "2025-01-01T01:00:00Z",
-        currency: "CNY",
-        source: "user",
-        amount: 10_000,
-      },
-      {
-        id: "repo-old",
-        type: "reverse_repo",
-        businessDate: "2025-01-03",
-        recordedAt: "2025-01-03T01:00:00Z",
-        currency: "CNY",
-        source: "user",
-        amount: 5_000,
-      },
-    ];
-    for (const entry of legacyEntries) {
-      insert.run(
-        entry.id,
-        entry.businessDate,
-        entry.recordedAt,
-        entry.type,
-        JSON.stringify(entry),
-      );
-    }
-    legacy.pragma("user_version = 7");
-    legacy.close();
-
-    const migrated = await openDatabase(filePath);
-    const rows = migrated.listLedger();
-    expect(rows.map((row) => row.id).sort()).toEqual([
-      "adjust-old",
-      "buy-old",
-      "dividend-old",
-    ]);
-    expect(rows.find((row) => row.id === "dividend-old")).toMatchObject({
-      businessDate: "2025-06-05",
-      amount: 30,
-    });
+    const untouched = new BetterSqlite3(filePath, { readonly: true });
     expect(
-      "paymentDate" in rows.find((row) => row.id === "dividend-old")!,
-    ).toBe(false);
-    expect(migrated.exportBackup().schemaVersion).toBe(10);
-  });
-
-  it("schema 9 的无证据空覆盖升级后恢复为待请求区间", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-migrate-"));
-    temporaryDirectories.push(directory);
-    const filePath = join(directory, "legacy.sqlite");
-    const legacy = new BetterSqlite3(filePath);
-    legacy.exec(`
-      CREATE TABLE live_market_coverage (
-        symbol TEXT NOT NULL,
-        requested_from TEXT NOT NULL,
-        requested_through TEXT NOT NULL,
-        source TEXT NOT NULL,
-        primary_source TEXT NOT NULL,
-        fallback_used INTEGER NOT NULL,
-        fallback_reason TEXT,
-        fetched_at TEXT NOT NULL,
-        data_cutoff TEXT,
-        adjustment TEXT NOT NULL,
-        result_status TEXT NOT NULL,
-        PRIMARY KEY (symbol, requested_from, requested_through, adjustment)
-      );
-      INSERT INTO live_market_coverage VALUES (
-        '601398', '2026-07-01', '2026-07-28', 'sina', 'tencent', 1,
-        '腾讯失败、备用源临时空响应', '2026-07-28T08:00:00Z', NULL,
-        'none', 'empty'
-      );
-      INSERT INTO live_market_coverage VALUES (
-        '601939', '2026-07-01', '2026-07-27', 'tencent', 'tencent', 0,
-        NULL, '2026-07-27T08:00:00Z', '2026-07-27',
-        'none', 'data'
-      );
-    `);
-    legacy.pragma("user_version = 9");
-    legacy.close();
-
-    const migrated = await openDatabase(filePath);
-    expect(migrated.listLiveMarketCoverage(["601398"])).toEqual([]);
-    expect(migrated.listLiveMarketCoverage(["601939"])).toEqual([
-      expect.objectContaining({
-        resultStatus: "data",
-        dataCutoff: "2026-07-27",
-      }),
-    ]);
+      untouched.prepare("SELECT value FROM sentinel").pluck().get(),
+    ).toBe("preserve-me");
+    expect(untouched.pragma("user_version", { simple: true })).toBe(10);
+    untouched.close();
   });
 
   it("相同请求重跑仍新增实验，历史结果不覆盖", async () => {

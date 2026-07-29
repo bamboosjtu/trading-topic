@@ -79,10 +79,16 @@ export function PositionsPage() {
   });
   const refresh = useMutation({
     mutationFn: api.refreshPositionsMarket,
-    onSuccess: (data) => {
-      queryClient.setQueryData(["positions:overview"], data);
+    onSuccess: (result) => {
+      queryClient.setQueryData(["positions:overview"], result.overview);
       void queryClient.invalidateQueries({ queryKey: ["health"] });
-      message.success("行情快照已刷新");
+      if (result.tailComplete) {
+        message.success("行情快照已刷新");
+      } else {
+        message.warning(
+          `行情仅更新至 ${result.actualCutoff ?? "暂无可用日期"}`,
+        );
+      }
     },
     onError: (error) => message.error(error.message),
   });

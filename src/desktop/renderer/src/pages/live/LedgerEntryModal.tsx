@@ -41,6 +41,17 @@ interface LedgerFormValues {
   note?: string;
 }
 
+interface InstrumentCatalogStatus {
+  loading: boolean;
+  error?: string;
+}
+
+interface InstrumentOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
 function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
   return {
     type: row.type === "adjustment" ? "buy" : row.type,
@@ -101,12 +112,16 @@ export function LedgerEntryModal({
   open,
   correctionTarget,
   stocks,
+  catalogStatus,
+  onRetryCatalog,
   onClose,
   onSaved,
 }: {
   open: boolean;
   correctionTarget: LedgerRecordView | null;
   stocks: readonly StockInfo[];
+  catalogStatus: Record<SecurityType, InstrumentCatalogStatus>;
+  onRetryCatalog: (type: SecurityType) => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -123,7 +138,7 @@ export function LedgerEntryModal({
     () => new Map(stocks.map((stock) => [stock.symbol, stock])),
     [stocks],
   );
-  const symbolOptions = useMemo(
+  const symbolOptions = useMemo<InstrumentOption[]>(
     () =>
       stocks
         .filter(
@@ -137,6 +152,21 @@ export function LedgerEntryModal({
         })),
     [securityType, stocks],
   );
+  const activeSecurityType = securityType ?? "stock";
+  const activeCatalogStatus = catalogStatus[activeSecurityType];
+  const displayedSymbolOptions: InstrumentOption[] = symbolOptions.length
+    ? symbolOptions
+    : [
+        {
+          value: "__catalog_status__",
+          label: activeCatalogStatus.loading
+            ? "正在加载证券目录…"
+            : activeCatalogStatus.error
+              ? "证券目录加载失败，点击重试"
+              : "当前资产类型暂无可用标的",
+          disabled: true,
+        },
+      ];
 
   useEffect(() => {
     if (!open) return;
@@ -290,8 +320,9 @@ export function LedgerEntryModal({
                 extra="A 股股票与境内交易所 ETF 均可从完整目录搜索；未缓存标的仍可直接输入代码。"
               >
                 <AutoComplete
-                  options={symbolOptions}
+                  options={displayedSymbolOptions}
                   filterOption={(input, option) =>
+                    Boolean(option?.disabled) ||
                     String(option?.label ?? "")
                       .toLowerCase()
                       .includes(input.toLowerCase())
@@ -314,6 +345,15 @@ export function LedgerEntryModal({
                         "securityType",
                         securityTypeForInstrument(stock),
                       );
+                    }
+                  }}
+                  onDropdownVisibleChange={(visible) => {
+                    if (
+                      visible &&
+                      activeCatalogStatus.error &&
+                      !activeCatalogStatus.loading
+                    ) {
+                      onRetryCatalog(activeSecurityType);
                     }
                   }}
                 />

@@ -350,6 +350,13 @@ export interface PositionsOverview {
   provenance: MarketDataProvenance[];
 }
 
+export interface MarketRefreshResult {
+  overview: PositionsOverview;
+  requestedCutoff: string | null;
+  actualCutoff: string | null;
+  tailComplete: boolean;
+}
+
 export interface LedgerQuery {
   startDate?: string;
   endDate?: string;
@@ -599,7 +606,9 @@ export interface BacktestWorkspaceState {
 
 export interface DesktopApi {
   health(): Promise<HealthResponse>;
-  listStocks(): Promise<StockInfo[]>;
+  listAStocks(): Promise<StockInfo[]>;
+  listEtfs(): Promise<StockInfo[]>;
+  listInstruments(): Promise<StockInfo[]>;
   runBacktest(request: BacktestRequest): Promise<BacktestExperiment>;
   listBacktestExperiments(): Promise<BacktestExperimentSummary[]>;
   getBacktestExperiment(experimentId: string): Promise<BacktestExperiment>;
@@ -609,7 +618,7 @@ export interface DesktopApi {
   saveBacktestWorkspace(state: BacktestWorkspaceState): Promise<void>;
   exportBacktestExperiment(experimentId: string): Promise<ExportResult>;
   getPositionsOverview(): Promise<PositionsOverview>;
-  refreshPositionsMarket(): Promise<PositionsOverview>;
+  refreshPositionsMarket(): Promise<MarketRefreshResult>;
   exportPositions(): Promise<ExportResult>;
   queryLedger(query: LedgerQuery): Promise<LedgerQueryResult>;
   exportLedger(query: LedgerQuery): Promise<ExportResult>;

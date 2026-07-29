@@ -8,7 +8,10 @@ import {
   ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
-import { fetchInstrumentUniverse } from "../data/stockUniverse";
+import {
+  fetchAStockUniverse,
+  fetchDomesticEtfUniverse,
+} from "../data/stockUniverse";
 import {
   fetchCorporateActions,
 } from "../data/tencent";
@@ -21,7 +24,8 @@ import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
 vi.mock("../data/stockUniverse", () => ({
-  fetchInstrumentUniverse: vi.fn(),
+  fetchAStockUniverse: vi.fn(),
+  fetchDomesticEtfUniverse: vi.fn(),
 }));
 vi.mock("../data/tencent", () => ({
   fetchCorporateActions: vi.fn(),
@@ -38,6 +42,7 @@ const openDatabases: LocalDatabase[] = [];
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
   for (const database of openDatabases.splice(0)) database.close();
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -74,7 +79,7 @@ function completeStockUniverse(overrides: StockInfo[] = []): StockInfo[] {
 }
 
 describe("AppService 股票目录", () => {
-  it("七天内直接使用完整 SQLite 快照，不重复联网", async () => {
+  it("七天内直接使用完整 A 股 SQLite 快照，不重复联网", async () => {
     const { service, database } = await serviceWithDatabase();
     const snapshot = completeStockUniverse([
       { symbol: "000001", name: "平安银行" },
@@ -85,14 +90,15 @@ describe("AppService 股票目录", () => {
       new Date().toISOString(),
     );
 
-    const result = await service.listStocks();
-    expect(result).toHaveLength(snapshot.length);
+    const result = await service.listAStocks();
+    expect(result).toHaveLength(STOCK_UNIVERSE_MIN_SIZE + 1);
     expect(result.find((stock) => stock.symbol === "000001")).toMatchObject({
       name: "平安银行",
       source: "cached",
       fetchedAt: expect.any(String),
     });
-    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
+    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchDomesticEtfUniverse).not.toHaveBeenCalled();
   });
 
   it("不把新鲜的 7 条旧缓存当成全 A 股目录，并立即重新拉取", async () => {
@@ -107,16 +113,16 @@ describe("AppService 股票目录", () => {
     );
     const refreshed = completeStockUniverse([
       { symbol: "000001", name: "平安银行" },
-    ]);
-    vi.mocked(fetchInstrumentUniverse).mockResolvedValue({
+    ]).filter((item) => item.securityType !== "etf");
+    vi.mocked(fetchAStockUniverse).mockResolvedValue({
       rows: refreshed,
       source: "official-exchanges",
       fetchedAt: "2026-07-26T00:00:00Z",
     });
 
-    const result = await service.listStocks();
+    const result = await service.listAStocks();
 
-    expect(fetchInstrumentUniverse).toHaveBeenCalledOnce();
+    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
     expect(result).toHaveLength(refreshed.length);
     expect(database.listStockUniverse()).toHaveLength(refreshed.length);
   });
@@ -131,12 +137,14 @@ describe("AppService 股票目录", () => {
       "cached",
       "2020-01-01T00:00:00Z",
     );
-    vi.mocked(fetchInstrumentUniverse).mockRejectedValue(
+    vi.mocked(fetchAStockUniverse).mockRejectedValue(
       new Error("network unavailable"),
     );
 
-    const result = await service.listStocks();
-    expect(result).toHaveLength(snapshot.length);
+    const result = await service.listAStocks();
+    expect(result).toHaveLength(
+      snapshot.filter((item) => item.securityType !== "etf").length,
+    );
     expect(result.find((stock) => stock.symbol === "601398")).toMatchObject({
       name: "工商银行",
       source: "cached",
@@ -151,13 +159,53 @@ describe("AppService 股票目录", () => {
       "legacy-fallback",
       new Date().toISOString(),
     );
-    vi.mocked(fetchInstrumentUniverse).mockRejectedValue(
+    vi.mocked(fetchAStockUniverse).mockRejectedValue(
       new Error("network unavailable"),
     );
 
-    await expect(service.listStocks()).rejects.toThrow(
-      "无法加载完整的 A 股与 ETF 代码表",
+    await expect(service.listAStocks()).rejects.toThrow(
+      "无法加载完整的 A 股代码表",
     );
+  });
+
+  it("ETF 数据源故障不阻断 A 股目录和历史回测用例", async () => {
+    const { service } = await serviceWithDatabase();
+    const stocks = completeStockUniverse().filter(
+      (item) => item.securityType !== "etf",
+    );
+    vi.mocked(fetchAStockUniverse).mockResolvedValue({
+      rows: stocks,
+      source: "official-exchanges",
+      fetchedAt: "2026-07-29T00:00:00Z",
+    });
+    vi.mocked(fetchDomesticEtfUniverse).mockRejectedValue(
+      new Error("ETF source unavailable"),
+    );
+
+    await expect(service.listAStocks()).resolves.toHaveLength(
+      stocks.length,
+    );
+    expect(fetchDomesticEtfUniverse).not.toHaveBeenCalled();
+  });
+
+  it("实盘证券目录分别加载 A 股和境内 ETF", async () => {
+    const { service } = await serviceWithDatabase();
+    const universe = completeStockUniverse();
+    const stocks = universe.filter((item) => item.securityType !== "etf");
+    const etfs = universe.filter((item) => item.securityType === "etf");
+    vi.mocked(fetchAStockUniverse).mockResolvedValue({
+      rows: stocks,
+      source: "official-exchanges",
+      fetchedAt: "2026-07-29T00:00:00Z",
+    });
+    vi.mocked(fetchDomesticEtfUniverse).mockResolvedValue(etfs);
+
+    const result = await service.listInstruments();
+
+    expect(result).toHaveLength(stocks.length + etfs.length);
+    expect(result.some((item) => item.securityType === "etf")).toBe(true);
+    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
+    expect(fetchDomesticEtfUniverse).toHaveBeenCalledOnce();
   });
 });
 
@@ -286,7 +334,7 @@ describe("AppService 回测试验", () => {
         buyDay: 1,
       }),
     ).rejects.toThrow("回测标的不能重复");
-    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
+    expect(fetchAStockUniverse).not.toHaveBeenCalled();
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 
@@ -302,7 +350,7 @@ describe("AppService 回测试验", () => {
         buyDay: 1,
       }),
     ).rejects.toThrow("历史回测只支持A股股票");
-    expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
+    expect(fetchAStockUniverse).not.toHaveBeenCalled();
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
     expect(fetchAdjustedBars).not.toHaveBeenCalled();
     expect(fetchCorporateActions).not.toHaveBeenCalled();
@@ -345,7 +393,7 @@ describe("AppService 回测试验", () => {
       await expect(service.runBacktest(invalidRequest)).rejects.toThrow(
         expected,
       );
-      expect(fetchInstrumentUniverse).not.toHaveBeenCalled();
+      expect(fetchAStockUniverse).not.toHaveBeenCalled();
       expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
     },
   );
@@ -720,7 +768,7 @@ describe("AppService 实盘流水", () => {
       },
       {
         type: "sell" as const,
-        businessDate: "2025-02-03",
+        businessDate: "2025-02-05",
         symbol: "601398",
         price: 5.2,
         quantity: 37,
@@ -776,7 +824,7 @@ describe("AppService 实盘流水", () => {
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601398",
       "2025-01-02",
-      "2025-02-03",
+      "2025-02-05",
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601939",
@@ -903,5 +951,50 @@ describe("AppService 实盘流水", () => {
     );
     expect(view.quality.dataCutoff).toBe("2026-06-30");
     expect(view.quality.status).toBe("ready");
+  });
+
+  it("持仓刷新返回请求与实际截止日并将未确认尾部标记为 partial", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T08:00:00Z"));
+    const { service, database } = await serviceWithDatabase();
+    database.addLedger({
+      id: "holding",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [{ date: "2026-07-28", close: 5.2 }],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-29T08:00:00Z",
+        dataCutoff: "2026-07-28",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const result = await service.refreshPositionsMarket();
+
+    expect(result).toMatchObject({
+      requestedCutoff: "2026-07-29",
+      actualCutoff: "2026-07-28",
+      tailComplete: false,
+    });
+    expect(result.overview.quality.status).toBe("partial");
+    expect(result.overview.quality.issues).toContain(
+      "行情仅更新至 2026-07-28，请求截止 2026-07-29 的尾部尚未确认完整",
+    );
+    expect(result.overview.positions[0].marketValue).toBeNull();
   });
 });

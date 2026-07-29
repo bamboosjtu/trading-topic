@@ -161,6 +161,57 @@ describe("腾讯主源与新浪整段兜底", () => {
     );
   });
 
+  it("收盘后腾讯缺少当天尾部时继续请求新浪完整区间", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([
+      { date: "2026-07-27", close: 5 },
+      { date: "2026-07-28", close: 5.1 },
+      { date: "2026-07-29", close: 5.2 },
+    ]);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-27",
+      "2026-07-29",
+      primary,
+      fallback,
+      new Date("2026-07-29T08:00:00Z"),
+    );
+
+    expect(fallback.fetchPrices).toHaveBeenCalledWith(
+      "601398",
+      "2026-07-27",
+      "2026-07-29",
+    );
+    expect(result.provenance).toMatchObject({
+      source: "sina",
+      fallbackUsed: true,
+      dataCutoff: "2026-07-29",
+    });
+    expect(result.rows.at(-1)?.date).toBe("2026-07-29");
+  });
+
+  it("收盘前不要求取得尚未完成的当天日线", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-27",
+      "2026-07-29",
+      primary,
+      fallback,
+      new Date("2026-07-29T06:00:00Z"),
+    );
+
+    expect(fallback.fetchPrices).not.toHaveBeenCalled();
+    expect(result.provenance.source).toBe("tencent");
+    expect(result.rows.at(-1)?.date).toBe("2026-07-28");
+  });
+
   it("跨源重叠收盘价明显冲突时阻断计算", () => {
     expect(() =>
       assertCrossProviderConsistency(

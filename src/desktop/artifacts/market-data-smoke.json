@@ -1,11 +1,11 @@
 {
-  "executedAt": "2026-07-29T05:38:59.480Z",
+  "executedAt": "2026-07-29T15:35:10.967Z",
   "requestRange": {
     "startDate": "2026-07-20",
     "endDate": "2026-07-24"
   },
   "instrumentCatalog": {
-    "etfCount": 1549,
+    "etfCount": 1609,
     "verifiedSymbols": [
       "510300",
       "159915"
@@ -84,6 +84,14 @@
       "dataCutoff": "2026-07-24",
       "unadjustedRows": 3640,
       "qfqRows": 3640
+    },
+    {
+      "label": "收盘后最新已完成交易日",
+      "symbol": "600036",
+      "source": "tencent",
+      "requestedCutoff": "2026-07-29",
+      "dataCutoff": "2026-07-29",
+      "fallbackUsed": false
     }
   ],
   "fallback": {

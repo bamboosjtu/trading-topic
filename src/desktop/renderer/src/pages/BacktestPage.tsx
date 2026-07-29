@@ -50,7 +50,7 @@ export function BacktestPage() {
 
   const stocks = useQuery({
     queryKey: ["stocks"],
-    queryFn: api.listStocks,
+    queryFn: api.listAStocks,
     staleTime: 60 * 60 * 1_000,
   });
   const experiments = useQuery({

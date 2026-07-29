@@ -138,7 +138,14 @@ export function buildIncomeCalendar(
     };
   };
 
-  const filteredDaily = model.daily.map(filterDay);
+  const filteredDaily = model.daily
+    .map(filterDay)
+    .filter(
+      (day) =>
+        (!query.symbol && query.scope === "all") ||
+        day.contributions.size > 0 ||
+        day.events.length > 0,
+    );
   const monthDays = filteredDaily.filter((day) =>
     day.date.startsWith(query.month),
   );
@@ -193,10 +200,13 @@ export function buildIncomeCalendar(
       ? [`缺少 ${relevantMissingSymbols.length} 个所选标的的本地行情快照`]
       : [],
   };
+  const hasScopedFacts = model.effectiveEntries.some(
+    (entry) => entry.symbol && selectedSymbols.has(entry.symbol),
+  );
   return {
     quality: qualityFor(
       qualityModel,
-      entries.length > 0,
+      hasScopedFacts,
       monthDays.some((day) => day.isPartial)
         ? ["所选月份存在缺失行情，部分收益无法计算", ...externalIssues]
         : [...externalIssues],

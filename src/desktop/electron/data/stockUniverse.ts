@@ -12,6 +12,8 @@ const BSE_STOCK_LIST_URL =
   "https://www.bse.cn/nqxxController/nqxxCnzq.do";
 const EASTMONEY_ETF_LIST_URL =
   "https://push2.eastmoney.com/api/qt/clist/get";
+const SINA_ETF_LIST_URL =
+  "https://vip.stock.finance.sina.com.cn/quotes_service/api/jsonp.php/IO.XSRV2.CallbackList['da_yPT46_Ll7K6WD']/Market_Center.getHQNodeDataSimple";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 interface ShanghaiStockListResponse {
@@ -211,6 +213,54 @@ export function parseDomesticEtfs(payload: unknown): StockInfo[] {
   );
 }
 
+export function parseSinaDomesticEtfs(payload: string): StockInfo[] {
+  const start = payload.indexOf("([");
+  const end = payload.lastIndexOf("])");
+  if (start < 0 || end <= start) {
+    throw new Error("新浪境内 ETF 代码表响应格式已变化");
+  }
+  let rows: unknown;
+  try {
+    rows = JSON.parse(payload.slice(start + 1, end + 1));
+  } catch {
+    throw new Error("新浪境内 ETF 代码表响应不是合法 JSONP");
+  }
+  if (!Array.isArray(rows)) {
+    throw new Error("新浪境内 ETF 代码表缺少数据数组");
+  }
+  const unique = new Map<string, StockInfo>();
+  for (const row of rows) {
+    const record =
+      row && typeof row === "object" && !Array.isArray(row)
+        ? (row as Record<string, unknown>)
+        : null;
+    const marketCode = String(
+      Array.isArray(row) ? row[0] : record?.["symbol"] ?? "",
+    )
+      .trim()
+      .toLowerCase();
+    const symbol = normalizeStockCode(
+      record?.["code"] as string | number | undefined ??
+        marketCode.replace(/^(sh|sz)/, ""),
+    );
+    const name = String(
+      Array.isArray(row) ? row[1] : record?.["name"] ?? "",
+    ).trim();
+    if (
+      !/^(sh|sz)\d{6}$/.test(marketCode) ||
+      !/^\d{6}$/.test(symbol) ||
+      !name ||
+      name === "-"
+    ) {
+      continue;
+    }
+    unique.set(symbol, { symbol, name, securityType: "etf" });
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+}
+
 async function fetchShanghaiStocks(stockType: "1" | "8"): Promise<StockInfo[]> {
   const url = new URL(SSE_STOCK_LIST_URL);
   const parameters: Record<string, string> = {
@@ -313,7 +363,7 @@ async function fetchBeijingStocks(): Promise<StockInfo[]> {
   return rows;
 }
 
-export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
+async function fetchEastmoneyDomesticEtfs(): Promise<StockInfo[]> {
   const pageSize = 100;
   const fetchPage = async (page: number): Promise<{
     rows: StockInfo[];
@@ -384,6 +434,49 @@ export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
     );
   }
   return rows;
+}
+
+async function fetchSinaDomesticEtfs(): Promise<StockInfo[]> {
+  const url = new URL(SINA_ETF_LIST_URL);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("num", "5000");
+  url.searchParams.set("sort", "symbol");
+  url.searchParams.set("asc", "0");
+  url.searchParams.set("node", "etf_hq_fund");
+  const response = await request(url, "新浪境内 ETF 代码表", {
+    headers: {
+      Referer: "https://vip.stock.finance.sina.com.cn/fund_center/",
+    },
+  });
+  const rows = parseSinaDomesticEtfs(await response.text());
+  if (rows.length < ETF_UNIVERSE_MIN_SIZE) {
+    throw new Error(
+      `新浪境内 ETF 代码表不完整：仅返回 ${rows.length} 个标的`,
+    );
+  }
+  return rows;
+}
+
+export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
+  try {
+    return await fetchEastmoneyDomesticEtfs();
+  } catch (primaryError) {
+    try {
+      return await fetchSinaDomesticEtfs();
+    } catch (fallbackError) {
+      const primaryMessage =
+        primaryError instanceof Error
+          ? primaryError.message
+          : String(primaryError);
+      const fallbackMessage =
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : String(fallbackError);
+      throw new Error(
+        `东方财富 ETF 目录失败（${primaryMessage}）；新浪 ETF 目录兜底失败（${fallbackMessage}）`,
+      );
+    }
+  }
 }
 
 /**

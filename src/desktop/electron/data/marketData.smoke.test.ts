@@ -15,6 +15,8 @@ import {
   type MarketDataProvider,
 } from "./marketDataProvider";
 import { fetchDomesticEtfUniverse } from "./stockUniverse";
+import { latestWeekdayCandidate } from "../domain/marketCalendar";
+import { addDays } from "../domain/dateUtils";
 
 const RUN_SMOKE = process.env["RUN_MARKET_SMOKE"] === "1";
 const START_DATE = "2026-07-20";
@@ -223,6 +225,25 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
         primarySource: "tencent",
         fallbackUsed: true,
         dataCutoff: END_DATE,
+      });
+
+      const currentCompletedDate = latestWeekdayCandidate(new Date());
+      const currentPrices = await fetchWithProviderFallback<PricePoint>(
+        "prices",
+        "600036",
+        addDays(currentCompletedDate, -10),
+        currentCompletedDate,
+        tencentProvider,
+        sinaProvider,
+      );
+      expect(currentPrices.rows.at(-1)?.date).toBe(currentCompletedDate);
+      checks.push({
+        label: "收盘后最新已完成交易日",
+        symbol: "600036",
+        source: currentPrices.provenance.source,
+        requestedCutoff: currentCompletedDate,
+        dataCutoff: currentPrices.rows.at(-1)?.date,
+        fallbackUsed: currentPrices.provenance.fallbackUsed,
       });
 
       const databasePath = join(

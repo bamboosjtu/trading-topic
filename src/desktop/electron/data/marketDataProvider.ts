@@ -15,8 +15,14 @@ import {
 import {
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
+  latestWeekdayCandidate,
 } from "../domain/marketCalendar";
-import { currentMarketDate, daysBetween, validDate } from "../domain/dateUtils";
+import {
+  addDays,
+  currentMarketDate,
+  daysBetween,
+  validDate,
+} from "../domain/dateUtils";
 
 export interface MarketDataProvider {
   readonly source: "tencent" | "sina";
@@ -154,6 +160,21 @@ function completedRows<T extends { date: string }>(
   return cutoff ? rows.filter((row) => row.date <= cutoff) : [];
 }
 
+function hasConfirmedTail(
+  rows: readonly { date: string }[],
+  endDate: string,
+  now: Date,
+): boolean {
+  const expectedThrough = [endDate, latestWeekdayCandidate(now)].sort()[0];
+  const dataCutoff = rows.at(-1)?.date;
+  if (!dataCutoff) return false;
+  if (dataCutoff >= expectedThrough) return true;
+  return isConfirmedMarketClosureRange(
+    addDays(dataCutoff, 1),
+    expectedThrough,
+  );
+}
+
 function provenance(
   source: "tencent" | "sina",
   rows: readonly { date: string }[],
@@ -184,8 +205,9 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   now = new Date(),
 ): Promise<{ rows: T[]; provenance: MarketDataProvenance }> {
   let primaryCandidate: readonly PricePoint[] = [];
+  let primaryRows: T[] = [];
   let primaryFailureReason: string | null = null;
-  let primaryOutcome: "empty" | "failed" = "failed";
+  let primaryOutcome: "empty" | "failed" | "tail_incomplete" = "failed";
   try {
     const raw =
       operation === "prices"
@@ -218,7 +240,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     } else {
       validateAdjustedBars(rows as unknown as AdjustedBar[], symbol, "腾讯");
     }
-    if (rows.length) {
+    if (rows.length && hasConfirmedTail(rows, endDate, now)) {
       return {
         rows,
         provenance: provenance(
@@ -228,6 +250,13 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
           now.toISOString(),
         ),
       };
+    }
+    if (rows.length) {
+      primaryRows = rows;
+      primaryOutcome = "tail_incomplete";
+      primaryFailureReason = `腾讯行情仅更新至 ${
+        rows.at(-1)?.date ?? "未知日期"
+      }，未到达请求的已完成交易日`;
     }
   } catch (error) {
     primaryOutcome = "failed";
@@ -251,6 +280,17 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     const rows = completedRows(raw, endDate, now) as unknown as T[];
     assertRequestedRange(rows, startDate, endDate, "新浪");
     if (!rows.length) {
+      if (primaryOutcome === "tail_incomplete" && primaryRows.length) {
+        return {
+          rows: primaryRows,
+          provenance: provenance(
+            "tencent",
+            primaryRows,
+            operation === "prices" ? "none" : "qfq",
+            now.toISOString(),
+          ),
+        };
+      }
       if (primaryCandidate.length) {
         throw new Error("新浪返回空区间，无法验证腾讯的异常候选行情");
       }
@@ -303,6 +343,17 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       ),
     };
   } catch (fallbackError) {
+    if (primaryOutcome === "tail_incomplete" && primaryRows.length) {
+      return {
+        rows: primaryRows,
+        provenance: provenance(
+          "tencent",
+          primaryRows,
+          operation === "prices" ? "none" : "qfq",
+          now.toISOString(),
+        ),
+      };
+    }
     const fallbackMessage =
       fallbackError instanceof Error
         ? fallbackError.message
