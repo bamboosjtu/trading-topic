@@ -32,6 +32,7 @@ function entry(
     recordedAt: `${businessDate}T01:00:00Z`,
     currency: "CNY",
     source: "user",
+    ...(type === "adjustment" ? {} : { securityType: "stock" as const }),
     ...fields,
   };
 }

@@ -15,6 +15,7 @@ import {
   fetchSinaUnadjustedPrices,
 } from "./sina";
 import {
+  assertMarketCalendarOfficialForRange,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestWeekdayCandidate,
@@ -208,6 +209,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   fallback: MarketDataProvider,
   now = new Date(),
 ): Promise<MarketFetchResult<T>> {
+  assertMarketCalendarOfficialForRange(startDate, endDate, now);
   interface Candidate {
     rows: T[];
     consistencyRows: PricePoint[];

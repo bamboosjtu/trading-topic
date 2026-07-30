@@ -18,7 +18,6 @@ import {
 } from "./export/liveWorkbooks";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
-import { assertCurrentYearCalendarOfficial } from "./domain/marketCalendar";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = app.isPackaged ? process.resourcesPath : process.cwd();
@@ -286,7 +285,6 @@ function registerIpc(): void {
 app
   .whenReady()
   .then(async () => {
-    assertCurrentYearCalendarOfficial();
     const databasePath = join(app.getPath("userData"), "stock-income.sqlite");
     database = await LocalDatabase.open(databasePath);
     service = new AppService(database);

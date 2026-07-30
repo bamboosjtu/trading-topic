@@ -34,12 +34,23 @@ const CONFIRMED_MARKET_CLOSURES = ANNUAL_MARKET_CALENDARS
   .filter((calendar) => calendar.status === "official")
   .flatMap((calendar) => calendar.closures);
 
-export function marketCalendarDiagnostics(): MarketCalendarDiagnostic[] {
-  return ANNUAL_MARKET_CALENDARS.map(({ year, status, source }) => ({
+export function marketCalendarDiagnostics(
+  now = new Date(),
+): MarketCalendarDiagnostic[] {
+  const diagnostics = ANNUAL_MARKET_CALENDARS.map(({ year, status, source }) => ({
     year,
     status,
     source,
   }));
+  const currentYear = Number(currentMarketDate(now).slice(0, 4));
+  if (!diagnostics.some((item) => item.year === currentYear)) {
+    diagnostics.push({
+      year: currentYear,
+      status: "pending_official_schedule",
+      source: null,
+    });
+  }
+  return diagnostics.sort((left, right) => left.year - right.year);
 }
 
 export function assertCurrentYearCalendarOfficial(now = new Date()): void {
@@ -51,6 +62,36 @@ export function assertCurrentYearCalendarOfficial(now = new Date()): void {
     throw new Error(
       `${currentYear} 年交易日历尚未更新为官方安排，拒绝生成发布版本`,
     );
+  }
+}
+
+/**
+ * 运行期只阻断确实需要未发布年度日历的联网行情请求。
+ * 历史数据浏览、备份、日志和设置不调用此门禁，应用本身也不会因此退出。
+ */
+export function assertMarketCalendarOfficialForRange(
+  startDate: string,
+  endDate: string,
+  now = new Date(),
+): void {
+  if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
+    throw new Error("行情请求区间必须使用合法且有序的 YYYY-MM-DD");
+  }
+  const currentYear = Number(currentMarketDate(now).slice(0, 4));
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  for (let year = startYear; year <= endYear; year += 1) {
+    const calendar = ANNUAL_MARKET_CALENDARS.find(
+      (item) => item.year === year,
+    );
+    if (
+      calendar?.status === "pending_official_schedule" ||
+      (!calendar && year >= currentYear)
+    ) {
+      throw new Error(
+        `${year} 年交易日历尚无官方安排；历史数据、备份和日志仍可使用，但依赖该年度日历的行情补齐与回测已阻断`,
+      );
+    }
   }
 }
 

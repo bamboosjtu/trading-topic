@@ -10,6 +10,7 @@ import {
   ledgerEntryAmount,
   reduceLedger,
 } from "./ledgerReducer";
+import { projectInvestmentCash } from "./investmentCashProjection";
 
 export interface ContributionAttribution {
   holdingChange: number;
@@ -73,57 +74,6 @@ function emptyContribution(): ContributionAttribution {
   };
 }
 
-function reinvestedDividendByBuy(
-  entries: readonly LedgerEntry[],
-): Map<string, number> {
-  const groups = new Map<string, LedgerEntry[]>();
-  for (const entry of entries) {
-    if (
-      !entry.linkedGroupId ||
-      !entry.symbol ||
-      (entry.type !== "buy" && entry.type !== "dividend")
-    ) {
-      continue;
-    }
-    const key = `${entry.linkedGroupId}\u0000${entry.symbol}`;
-    const current = groups.get(key) ?? [];
-    current.push(entry);
-    groups.set(key, current);
-  }
-
-  const result = new Map<string, number>();
-  for (const group of groups.values()) {
-    const dividends = group
-      .filter((entry) => entry.type === "dividend")
-      .sort(canonicalLedgerOrder);
-    const buys = group
-      .filter((entry) => entry.type === "buy")
-      .sort(canonicalLedgerOrder);
-    let allocated = 0;
-    for (const buy of buys) {
-      const available = roundMoney(
-        dividends
-          .filter(
-            (dividend) => dividend.businessDate <= buy.businessDate,
-          )
-          .reduce(
-            (sum, dividend) => sum + ledgerEntryAmount(dividend),
-            0,
-          ) - allocated,
-      );
-      const buySpend = roundMoney(
-        ledgerEntryAmount(buy) + (buy.fee ?? 0),
-      );
-      const internalFunding = roundMoney(
-        Math.max(0, Math.min(buySpend, available)),
-      );
-      result.set(buy.id, internalFunding);
-      allocated = roundMoney(allocated + internalFunding);
-    }
-  }
-  return result;
-}
-
 function openingPendingReinvestmentCashByDate(
   entries: readonly LedgerEntry[],
   orderedDates: readonly string[],
@@ -180,7 +130,8 @@ export function buildDailyAttribution(
   valuationCutoff: string | null,
   names: Map<string, string>,
 ): DailyAttribution[] {
-  const internalFundingByBuy = reinvestedDividendByBuy(entries);
+  const internalFundingByBuy =
+    projectInvestmentCash(entries).internalFundingByBuy;
   const holdingIntervals = new Map<
     string,
     Array<{ startDate: string; endDate: string }>

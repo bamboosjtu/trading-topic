@@ -389,7 +389,7 @@ export function TradesPage() {
               { label: "累计买入支出", value: money(ledger.data.metrics.cumulativeBuySpend), helper: "成交金额 + 费用", icon: <SwapOutlined />, tone: "red" },
               { label: "累计卖出净收入", value: money(ledger.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 费用", icon: <SwapOutlined />, tone: "green" },
               { label: "累计分红", value: money(ledger.data.metrics.cumulativeDividend), helper: "到账金额合计", icon: <GiftOutlined />, tone: "orange" },
-              { label: "累计净投入", value: money(ledger.data.metrics.netInvestment), helper: "买入支出 − 卖出净收入 − 分红", icon: <TransactionOutlined />, tone: "indigo" },
+              { label: "累计净投入", value: money(ledger.data.metrics.netInvestment), helper: "外部买入 − 卖出净收入 − 外部分红", icon: <TransactionOutlined />, tone: "indigo" },
             ]}
           />
           <section className="workspace-panel live-table-panel">

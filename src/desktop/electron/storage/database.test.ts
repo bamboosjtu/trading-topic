@@ -35,6 +35,7 @@ function request(rangeYears: 3 | 5 = 3): BacktestRequest {
     buyDay: 1,
     rangeYears,
     dividendTiming: "ex_date",
+    caliberVersion: BACKTEST_CALIBER_VERSION,
   };
 }
 
@@ -203,6 +204,7 @@ describe("LocalDatabase", () => {
 
     const backup = database.exportBackup();
     expect(backup.schemaVersion).toBe(2);
+    expect(backup.schemaFingerprint).toContain("investment-cash-v2");
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -347,6 +349,13 @@ describe("LocalDatabase", () => {
     const missingSettings = structuredClone(valid) as Partial<typeof valid>;
     delete missingSettings.settings;
     expect(() => target.restoreBackup(missingSettings)).toThrow(
+      "备份结构或 schema 版本不兼容",
+    );
+
+    const oldFingerprint = structuredClone(valid);
+    oldFingerprint.schemaFingerprint =
+      "stock-income-r1-schema-2-2026-07-30";
+    expect(() => target.restoreBackup(oldFingerprint)).toThrow(
       "备份结构或 schema 版本不兼容",
     );
 
@@ -627,5 +636,153 @@ describe("LocalDatabase", () => {
       },
     ]);
     expect(reopened.getBacktestWorkspace()).toEqual(workspace());
+  });
+
+  it("恢复前拒绝领域非法的账本、回测、行情、目录和工作区且不触碰现有数据", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-deep-backup-"));
+    temporaryDirectories.push(directory);
+    const source = await openDatabase(join(directory, "source.sqlite"));
+    source.addLedger({
+      id: "source-buy",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    source.saveBacktestExperimentWithMarketData(
+      experiment("experiment-last", "2026-07-24T09:30:00Z", 150000),
+      [
+        {
+          symbol: "601398",
+          prices: [{ date: "2026-07-24", close: 7.2 }],
+          dividends: [
+            {
+              date: "2026-07-10",
+              recordDate: "2026-07-09",
+              paymentDate: "2026-07-10",
+              perShare: 0.1,
+              transferRatio: 0,
+              bonusRatio: 0,
+              status: "implemented",
+            },
+          ],
+          provenance: {
+            source: "tencent",
+            primarySource: "tencent",
+            fallbackUsed: false,
+            fetchedAt: "2026-07-24T08:00:00Z",
+            dataCutoff: "2026-07-24",
+            adjustment: "none",
+            caliberVersion: BACKTEST_CALIBER_VERSION,
+          },
+        },
+      ],
+    );
+    source.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [{ date: "2026-07-24", close: 7.2 }],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-24T08:00:00Z",
+          dataCutoff: "2026-07-24",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      },
+    ]);
+    source.replaceStockUniverseType(
+      [{ symbol: "601398", name: "工商银行", securityType: "stock" }],
+      "stock",
+      {
+        source: "交易所官方目录",
+        primarySource: "exchange_official",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-24T00:00:00Z",
+      },
+    );
+    source.saveBacktestWorkspace(workspace("experiment-last"));
+    const valid = source.exportBackup();
+
+    const target = await openDatabase(join(directory, "target.sqlite"));
+    target.addLedger({
+      id: "preserve-me",
+      type: "dividend",
+      businessDate: "2026-07-02",
+      recordedAt: "2026-07-02T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      securityType: "stock",
+      amount: 1,
+    });
+
+    const invalidPayloads: Array<{ payload: typeof valid; message: string }> = [];
+    const invalidLedger = structuredClone(valid);
+    invalidLedger.ledgerEntries[0].quantity = 1.5;
+    invalidPayloads.push({
+      payload: invalidLedger,
+      message: "价格、数量或费用非法",
+    });
+    const invalidBacktest = structuredClone(valid);
+    invalidBacktest.backtestExperiments[0].results[0].actualEndDate =
+      "2026-07-25";
+    invalidPayloads.push({
+      payload: invalidBacktest,
+      message: "区间或请求参数非法",
+    });
+    const missingRequestedEnd = structuredClone(valid);
+    delete (
+      missingRequestedEnd.backtestExperiments[0].results[0] as Partial<
+        BacktestResult
+      >
+    ).requestedEndDate;
+    invalidPayloads.push({
+      payload: missingRequestedEnd,
+      message: "区间或请求参数非法",
+    });
+    const invalidMarket = structuredClone(valid);
+    invalidMarket.liveMarketPrices[0].close = -1;
+    invalidPayloads.push({
+      payload: invalidMarket,
+      message: "非法实盘行情快照",
+    });
+    const invalidDirectory = structuredClone(valid);
+    invalidDirectory.stockUniverse.push({
+      ...invalidDirectory.stockUniverse[0],
+    });
+    invalidPayloads.push({
+      payload: invalidDirectory,
+      message: "重复的证券目录代码",
+    });
+    const invalidWorkspace = structuredClone(valid);
+    invalidWorkspace.backtestWorkspace!.activeExperimentId = "missing";
+    invalidPayloads.push({
+      payload: invalidWorkspace,
+      message: "工作区字段或实验引用非法",
+    });
+    const invalidAction = structuredClone(valid);
+    invalidAction.corporateActions[0].payload_json = "{broken";
+    invalidPayloads.push({
+      payload: invalidAction,
+      message: "公司行动 JSON 无法解析",
+    });
+
+    for (const item of invalidPayloads) {
+      expect(() => target.restoreBackup(item.payload)).toThrow(item.message);
+      expect(target.listLedger()).toEqual([
+        expect.objectContaining({ id: "preserve-me", amount: 1 }),
+      ]);
+      expect(target.listBacktestExperiments()).toEqual([]);
+    }
   });
 });

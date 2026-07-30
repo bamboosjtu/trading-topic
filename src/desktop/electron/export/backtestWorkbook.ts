@@ -14,7 +14,7 @@ const EXCEL_SHEET_NAME_MAX_LENGTH = 31;
 function rangeLabel(result: BacktestResult): string {
   return result.rangeYears
     ? (BACKTEST_RANGE_LABELS[result.rangeYears] ?? `${result.rangeYears}年`)
-    : `${result.requestedStartDate}_${result.requestedEndDate ?? result.actualEndDate}`;
+    : `${result.requestedStartDate}_${result.requestedEndDate}`;
 }
 
 function uniqueSheetName(base: string, used: Set<string>): string {
@@ -104,7 +104,7 @@ function addSummarySheet(
       name: result.name,
       range: rangeLabel(result),
       startDate: result.requestedStartDate,
-      endDate: result.requestedEndDate ?? result.actualEndDate,
+      endDate: result.requestedEndDate,
       actualStartDate: result.actualStartDate,
       actualEndDate: result.actualEndDate,
       monthlyAmount: result.monthlyAmount,

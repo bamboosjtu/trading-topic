@@ -18,6 +18,7 @@ import {
   securityTypesMap,
   toLedgerRecord,
 } from "./liveViewSupport";
+import { projectInvestmentCash } from "./investmentCashProjection";
 
 function toLedgerRecords(
   entries: readonly LedgerEntry[],
@@ -125,6 +126,42 @@ export function queryLedgerRecords(
   const aggregateRows = allRows.filter(
     (row) => effectiveIds.has(row.id) && row.type !== "adjustment",
   );
+  const aggregateIds = new Set(aggregateRows.map((row) => row.id));
+  const cashProjection = projectInvestmentCash(effective);
+  const selectedEffectiveEntries = effective.filter((entry) =>
+    aggregateIds.has(entry.id),
+  );
+  const selectedBuySpend = roundMoney(
+    selectedEffectiveEntries
+      .filter((entry) => entry.type === "buy")
+      .reduce(
+        (sum, entry) =>
+          sum +
+          (entry.amount ?? (entry.price ?? 0) * (entry.quantity ?? 0)) +
+          (entry.fee ?? 0) -
+          (cashProjection.internalFundingByBuy.get(entry.id) ?? 0),
+        0,
+      ),
+  );
+  const selectedSellIncome = roundMoney(
+    selectedEffectiveEntries
+      .filter((entry) => entry.type === "sell")
+      .reduce(
+        (sum, entry) =>
+          sum +
+          (entry.amount ?? (entry.price ?? 0) * (entry.quantity ?? 0)) -
+          (entry.fee ?? 0),
+        0,
+      ),
+  );
+  const selectedExternalDividend = roundMoney(
+    selectedEffectiveEntries
+      .filter(
+        (entry) =>
+          entry.type === "dividend" && !entry.linkedGroupId,
+      )
+      .reduce((sum, entry) => sum + (entry.amount ?? 0), 0),
+  );
   const page = Math.max(1, Math.floor(query.page));
   const pageSize = query.pageSize;
   const offset = (page - 1) * pageSize;
@@ -163,14 +200,7 @@ export function queryLedgerRecords(
           .reduce((sum, row) => sum + (row.amount ?? 0), 0),
       ),
       netInvestment: roundMoney(
-        aggregateRows
-          .filter((row) => row.type !== "adjustment")
-          .reduce((sum, row) => {
-            if (row.type === "buy") return sum + (row.amount ?? 0) + row.fee;
-            if (row.type === "sell") return sum - (row.amount ?? 0) + row.fee;
-            if (row.type === "dividend") return sum - (row.amount ?? 0);
-            return sum;
-          }, 0),
+        selectedBuySpend - selectedSellIncome - selectedExternalDividend,
       ),
     },
     rows: allRows.slice(offset, offset + pageSize),

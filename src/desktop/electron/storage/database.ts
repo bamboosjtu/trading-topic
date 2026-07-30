@@ -18,9 +18,11 @@ import type {
   StoredStockInfo,
   StockInfo,
 } from "../../shared/contracts";
+import { validateBackup } from "../domain/backupValidation";
 
 export const SCHEMA_VERSION = 2;
-const SCHEMA_FINGERPRINT = "stock-income-r1-schema-2-2026-07-30";
+const SCHEMA_FINGERPRINT =
+  "stock-income-r1-schema-2-2026-07-30-investment-cash-v2";
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -29,8 +31,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   caliberVersion: BACKTEST_CALIBER_VERSION,
 };
 
-interface BackupPayload {
+export interface BackupPayload {
   schemaVersion: number;
+  schemaFingerprint: string;
   exportedAt: string;
   application: "stock-income-r1";
   ledgerEntries: LedgerEntry[];
@@ -153,18 +156,6 @@ function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
   return createHash("sha256")
     .update(JSON.stringify(schema), "utf8")
     .digest("hex");
-}
-
-function isAppSettings(value: unknown): value is AppSettings {
-  if (!value || typeof value !== "object") return false;
-  const settings = value as Partial<AppSettings>;
-  return (
-    settings.priceSource === "tencent_sina" &&
-    settings.dividendSource === "eastmoney" &&
-    settings.commissionRate === 0 &&
-    settings.minimumCommission === 0 &&
-    settings.caliberVersion === BACKTEST_CALIBER_VERSION
-  );
 }
 
 export class LocalDatabase {
@@ -1037,6 +1028,7 @@ export class LocalDatabase {
   exportBackup(): BackupPayload {
     return {
       schemaVersion: SCHEMA_VERSION,
+      schemaFingerprint: SCHEMA_FINGERPRINT,
       exportedAt: new Date().toISOString(),
       application: "stock-income-r1",
       ledgerEntries: this.listLedger(),
@@ -1076,93 +1068,13 @@ export class LocalDatabase {
   }
 
   restoreBackup(payload: unknown): void {
-    if (
-      !payload ||
-      typeof payload !== "object" ||
-      (payload as Partial<BackupPayload>).schemaVersion !== SCHEMA_VERSION ||
-      (payload as Partial<BackupPayload>).application !== "stock-income-r1" ||
-      !Array.isArray((payload as Partial<BackupPayload>).ledgerEntries) ||
-      !Array.isArray(
-        (payload as Partial<BackupPayload>).backtestExperiments,
-      ) ||
-      !Array.isArray((payload as Partial<BackupPayload>).marketPrices) ||
-      !Array.isArray((payload as Partial<BackupPayload>).liveMarketPrices) ||
-      !Array.isArray(
-        (payload as Partial<BackupPayload>).liveMarketCoverage,
-      ) ||
-      !Array.isArray((payload as Partial<BackupPayload>).corporateActions) ||
-      !Array.isArray((payload as Partial<BackupPayload>).stockUniverse) ||
-      !isAppSettings((payload as Partial<BackupPayload>).settings) ||
-      !Object.prototype.hasOwnProperty.call(payload, "backtestWorkspace")
-    ) {
-      throw new Error("备份结构或 schema 版本不兼容");
-    }
-    const backup = payload as BackupPayload;
-    const allowedEntryTypes = new Set([
-      "buy",
-      "sell",
-      "dividend",
-      "adjustment",
-    ]);
-    if (
-      backup.ledgerEntries.some(
-        (entry) =>
-          !allowedEntryTypes.has(entry.type) ||
-          (entry.type !== "adjustment" &&
-            (!entry.securityType ||
-              !["stock", "etf"].includes(entry.securityType))),
-      )
-    ) {
-      throw new Error("备份包含不属于当前 R1 schema 的投资事实");
-    }
-    if (
-      backup.stockUniverse.some(
-        (stock) =>
-          !/^\d{6}$/.test(stock.symbol) ||
-          !stock.name ||
-          !["stock", "etf"].includes(stock.securityType) ||
-          !stock.source ||
-          !stock.primarySource ||
-          typeof stock.fallbackUsed !== "boolean" ||
-          !Number.isFinite(Date.parse(stock.fetchedAt)),
-      )
-    ) {
-      throw new Error("备份包含不属于当前 R1 schema 的证券目录");
-    }
-    const invalidMarketRow = [
-      ...backup.marketPrices,
-      ...backup.liveMarketPrices,
-      ...backup.liveMarketCoverage,
-    ].some(
-      (row) =>
-        !["tencent", "sina"].includes(row.source) ||
-        row.primary_source !== "tencent" ||
-        ![0, 1].includes(row.fallback_used) ||
-        !["none", "qfq"].includes(row.adjustment),
+    // 所有结构、引用和领域完整性校验均发生在覆盖事务之前。
+    // 安全备份是回退手段，不是接受非法输入的替代品。
+    const backup = validateBackup(
+      payload,
+      SCHEMA_VERSION,
+      SCHEMA_FINGERPRINT,
     );
-    if (invalidMarketRow) {
-      throw new Error("备份包含非法行情来源或复权口径");
-    }
-    if (
-      backup.liveMarketCoverage.some(
-        (row) =>
-          !["data", "empty"].includes(row.result_status) ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_from) ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(row.requested_through) ||
-          row.requested_from > row.requested_through ||
-          (row.result_status === "empty" &&
-            (!["exchange_calendar", "outside_listing"].includes(
-              row.empty_evidence ?? "",
-            ) ||
-              row.data_cutoff !== null)) ||
-          (row.result_status === "data" &&
-            (row.empty_evidence !== null ||
-              !row.data_cutoff ||
-              !/^\d{4}-\d{2}-\d{2}$/.test(row.data_cutoff))),
-      )
-    ) {
-      throw new Error("备份包含非法行情覆盖记录");
-    }
     this.database.transaction(() => {
       this.database.exec(`
         DELETE FROM ledger_entries;

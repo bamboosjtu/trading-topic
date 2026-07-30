@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertCurrentYearCalendarOfficial,
+  assertMarketCalendarOfficialForRange,
   isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
@@ -90,6 +91,32 @@ describe("正式收盘日边界", () => {
     expect(
       marketCalendarDiagnostics().find((item) => item.year === 2027),
     ).toMatchObject({
+      status: "pending_official_schedule",
+      source: null,
+    });
+  });
+
+  it("运行期只阻断涉及待发布年度日历的行情能力", () => {
+    expect(() =>
+      assertMarketCalendarOfficialForRange(
+        "2026-01-01",
+        "2026-12-31",
+        new Date("2026-07-30T08:00:00Z"),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertMarketCalendarOfficialForRange(
+        "2026-12-01",
+        "2027-01-10",
+        new Date("2027-01-10T08:00:00Z"),
+      ),
+    ).toThrow("历史数据、备份和日志仍可使用");
+    expect(
+      marketCalendarDiagnostics(
+        new Date("2028-01-10T08:00:00Z"),
+      ).find((item) => item.year === 2028),
+    ).toEqual({
+      year: 2028,
       status: "pending_official_schedule",
       source: null,
     });

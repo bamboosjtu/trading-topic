@@ -168,6 +168,7 @@ function impactState(
     cumulativeSellNetIncome: state.cumulativeSellNetIncome,
     cumulativeDividend: state.cumulativeDividend,
     netInvestment: state.netInvestment,
+    pendingReinvestmentCash: state.pendingReinvestmentCash,
   };
 }
 
@@ -178,11 +179,6 @@ export function previewLedgerMutation(
   asOf = currentMarketDate(),
   tradeDateContext?: TradeDateContext,
 ): LedgerImpactPreview {
-  const normalizedInput = normalizeLedgerInput(
-    input,
-    asOf,
-    tradeDateContext,
-  );
   const target = replacingEntryId
     ? entries.find((entry) => entry.id === replacingEntryId)
     : undefined;
@@ -194,6 +190,23 @@ export function previewLedgerMutation(
   ) {
     throw new Error("该流水已经被冲正或修正");
   }
+  if (
+    target?.linkedGroupId &&
+    input.linkedGroupId &&
+    input.linkedGroupId !== target.linkedGroupId
+  ) {
+    throw new Error("关联流水修正不能改入其他分红再投入组");
+  }
+  if (target && !target.linkedGroupId && input.linkedGroupId) {
+    throw new Error("独立流水不能通过修正加入分红再投入组");
+  }
+  const normalizedInput = normalizeLedgerInput(
+    target?.linkedGroupId
+      ? { ...input, linkedGroupId: target.linkedGroupId }
+      : input,
+    asOf,
+    tradeDateContext,
+  );
 
   const correctedAt = new Date().toISOString();
   const afterEntries = replacingEntryId

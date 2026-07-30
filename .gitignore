@@ -49,6 +49,8 @@ labs/data/*
 # 各 Lab 子目录自带 data/，默认不入库
 labs/00_金融数据获取/data/
 labs/01_银行股定投回测/data/
+labs/02_行业走势相关性研究/data/
+labs/03_板块周期轮动研究/data/
 *.csv
 *.xlsx
 *.parquet

@@ -1,6 +1,7 @@
 import type { LedgerEntry } from "../../shared/contracts";
 import { currentMarketDate, validDate } from "./dateUtils";
 import { roundMoney } from "./finance";
+import { projectInvestmentCash } from "./investmentCashProjection";
 
 const QUANTITY_EPSILON = 1e-8;
 
@@ -21,6 +22,7 @@ export interface LedgerState {
   cumulativeBuySpend: number;
   cumulativeSellNetIncome: number;
   cumulativeDividend: number;
+  pendingReinvestmentCash: number;
   netInvestment: number;
   realizedPnl: number;
   positions: Map<string, LedgerPositionState>;
@@ -114,6 +116,7 @@ export function reduceLedger(
   asOfDate = currentMarketDate(),
 ): LedgerState {
   const { effective, reversedIds } = activeLedgerEntries(entries, asOfDate);
+  const cashProjection = projectInvestmentCash(effective);
   const positions = new Map<string, LedgerPositionState>();
   let cumulativeBuySpend = 0;
   let cumulativeSellNetIncome = 0;
@@ -179,8 +182,11 @@ export function reduceLedger(
     cumulativeBuySpend,
     cumulativeSellNetIncome,
     cumulativeDividend,
+    pendingReinvestmentCash: cashProjection.pendingReinvestmentCash,
     netInvestment: roundMoney(
-      cumulativeBuySpend - cumulativeSellNetIncome - cumulativeDividend,
+      cashProjection.externalBuySpend -
+        cumulativeSellNetIncome -
+        cashProjection.externalDividendIncome,
     ),
     realizedPnl,
     positions,

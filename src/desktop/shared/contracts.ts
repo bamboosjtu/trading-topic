@@ -175,7 +175,7 @@ export interface BacktestResult {
   symbol: string;
   name: string;
   requestedStartDate: string;
-  requestedEndDate?: string;
+  requestedEndDate: string;
   actualStartDate: string;
   actualEndDate: string;
   monthlyAmount: number;
@@ -336,6 +336,7 @@ export interface PositionView {
   cumulativeBuySpend: number;
   cumulativeSellNetIncome: number;
   netInvestment: number;
+  pendingReinvestmentCash: number;
   unrealizedPnl: number | null;
   realizedPnl: number;
   cumulativeDividend: number;
@@ -354,6 +355,7 @@ export interface PositionsOverview {
     cumulativeBuySpend: number;
     cumulativeSellNetIncome: number;
     netInvestment: number;
+    pendingReinvestmentCash: number;
     unrealizedPnl: number | null;
     realizedPnl: number;
     cumulativeDividend: number;
@@ -420,6 +422,7 @@ export interface LedgerImpactState {
   cumulativeSellNetIncome: number;
   cumulativeDividend: number;
   netInvestment: number;
+  pendingReinvestmentCash: number;
 }
 
 export interface LedgerImpactPreview {

@@ -771,6 +771,48 @@ describe("AppService 实盘流水", () => {
       fee: 1,
     });
     expect(replacement.linkedGroupId).toBe(result.linkedGroupId);
+
+    expect(() =>
+      service.correctLedger(replacement.id, {
+        type: "buy",
+        businessDate: "2026-07-13",
+        symbol: "601398",
+        securityType: "stock",
+        price: 5.9,
+        quantity: 60,
+        fee: 1,
+        linkedGroupId: "another-group",
+      }),
+    ).toThrow("不能改入其他分红再投入组");
+    expect(() =>
+      service.correctLedger(replacement.id, {
+        type: "buy",
+        businessDate: "2026-07-09",
+        symbol: "601398",
+        securityType: "stock",
+        price: 5.9,
+        quantity: 60,
+        fee: 1,
+      }),
+    ).toThrow("买入日期不得早于分红到账日期");
+    expect(() =>
+      service.correctLedger(result.dividend.id, {
+        type: "dividend",
+        businessDate: "2026-07-10",
+        symbol: "510300",
+        securityType: "etf",
+        amount: 300,
+      }),
+    ).toThrow("必须使用同一标的和资产类型");
+    expect(() =>
+      service.correctLedger(replacement.id, {
+        type: "dividend",
+        businessDate: "2026-07-13",
+        symbol: "601398",
+        securityType: "stock",
+        amount: 300,
+      }),
+    ).toThrow("最多只能有一个有效分红事实");
   });
 
   it("分红并再投入在领域层拒绝倒序日期，并返回两条事实的合并影响预览", async () => {

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Layout } from "antd";
+import { Alert, Button, Layout } from "antd";
 import {
   CalendarOutlined,
   FundProjectionScreenOutlined,
@@ -55,6 +55,22 @@ export function AppLayout() {
     queryFn: api.health,
     retry: 0,
   });
+  const { data: diagnostics } = useQuery({
+    queryKey: ["diagnostics"],
+    queryFn: api.getDiagnostics,
+    retry: 0,
+  });
+  const currentMarketYear = Number(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+    }).format(new Date()),
+  );
+  const currentCalendarPending = diagnostics
+    ? diagnostics.marketCalendars.find(
+        (calendar) => calendar.year === currentMarketYear,
+      )?.status !== "official"
+    : false;
   const selectedKey = useMemo(
     () =>
       NAV_GROUPS.flatMap((group) => group.items).find((item) =>
@@ -123,6 +139,20 @@ export function AppLayout() {
         </Header>
 
         <Content className="app-content">
+          {currentCalendarPending ? (
+            <Alert
+              className="mb-4"
+              type="error"
+              showIcon
+              message={`${currentMarketYear} 年交易日历尚未更新`}
+              description="本地历史数据、流水、备份、日志和设置仍可使用；依赖当前年度日历的行情补齐、日期确认和新回测已阻断。"
+              action={
+                <Button onClick={() => navigate("/settings")}>
+                  查看诊断
+                </Button>
+              }
+            />
+          ) : null}
           <div key={selectedKey} className="workspace-enter">
             <Outlet />
           </div>

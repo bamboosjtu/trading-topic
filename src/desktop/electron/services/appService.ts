@@ -843,6 +843,9 @@ export class AppService {
   }
 
   addLedger(input: LedgerEntryInput): LedgerEntry {
+    if (input.linkedGroupId) {
+      throw new Error("普通单条录入不能加入分红再投入关联组");
+    }
     const preview = this.previewLedger(input);
     const entry: LedgerEntry = {
       ...preview.normalizedInput,
@@ -900,6 +903,7 @@ export class AppService {
       instrumentName: input.instrumentName,
       securityType: input.securityType,
       note: input.note,
+      linkedGroupId: "__preview_reinvestment__",
     };
     const dividend = previewLedgerMutation(
       entries,
@@ -961,10 +965,16 @@ export class AppService {
   }
 
   correctLedger(entryId: string, input: LedgerEntryInput): LedgerEntry {
-    const preview = this.previewLedger(input, entryId);
-    const target = this.database
-      .listLedger()
-      .find((entry) => entry.id === entryId)!;
+    const entries = this.database.listLedger();
+    const target = entries.find((entry) => entry.id === entryId);
+    if (!target) throw new Error("找不到需要修正的原流水");
+    const preview = previewLedgerMutation(
+      entries,
+      input,
+      entryId,
+      currentMarketDate(),
+      this.tradeDateContext(input.symbol),
+    );
     const recordedAt = new Date().toISOString();
     const reversal: LedgerEntry = {
       id: randomUUID(),
@@ -985,9 +995,11 @@ export class AppService {
       currency: "CNY",
       source: "user",
       correctsEntryId: entryId,
-      linkedGroupId:
-        preview.normalizedInput.linkedGroupId ?? target.linkedGroupId,
+      linkedGroupId: preview.normalizedInput.linkedGroupId,
     };
+    // 最终随机 ID 与时间戳写入前再次验证完整审计图和关联组，
+    // 避免预览对象与实际持久化对象之间出现口径漂移。
+    reduceLedger([...entries, reversal, replacement], currentMarketDate());
     this.database.addLedgerEntries([reversal, replacement]);
     this.database.log(
       "info",

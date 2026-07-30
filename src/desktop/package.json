@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:renderer": "vite --config renderer/vite.config.ts",
+    "check:market-calendar": "node scripts/check-market-calendar.mjs",
+    "prebuild": "npm run check:market-calendar",
     "build": "electron-vite build",
     "pack:portable": "npm run build && electron-builder --win portable --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json",
