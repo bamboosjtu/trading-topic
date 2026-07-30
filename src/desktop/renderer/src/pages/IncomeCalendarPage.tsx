@@ -53,6 +53,16 @@ function monthGrid(month: string): Array<{ date: string; inMonth: boolean }> {
   });
 }
 
+const WEEKDAY_LABELS = [
+  "周日",
+  "周一",
+  "周二",
+  "周三",
+  "周四",
+  "周五",
+  "周六",
+] as const;
+
 export function IncomeCalendarPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
@@ -96,8 +106,13 @@ export function IncomeCalendarPage() {
     {
       title: "标的",
       key: "symbol",
+      width: 132,
+      ellipsis: true,
       render: (_, row) => (
-        <div className="ledger-symbol">
+        <div
+          className="income-contribution-symbol"
+          title={`${row.name} ${row.symbol}`}
+        >
           <strong>{row.name}</strong>
           <span>{row.symbol}</span>
         </div>
@@ -106,16 +121,16 @@ export function IncomeCalendarPage() {
     {
       title: "持仓变动",
       dataIndex: "holdingChange",
-      width: 100,
+      width: 72,
       align: "right",
       render: (value: number) => (
         <span className="tabular-nums">{value === 0 ? "—" : numberValue(value)}</span>
       ),
     },
     {
-      title: "市场价变",
+      title: "价格变动",
       dataIndex: "marketPricePnl",
-      width: 100,
+      width: 84,
       align: "right",
       render: (value: number | null) => (
         <span className={`tabular-nums ${pnlClass(value)}`}>
@@ -126,7 +141,7 @@ export function IncomeCalendarPage() {
     {
       title: "分红",
       dataIndex: "dividendPnl",
-      width: 90,
+      width: 72,
       align: "right",
       render: (value: number) => (
         <span className="tabular-nums">{money(value)}</span>
@@ -135,7 +150,7 @@ export function IncomeCalendarPage() {
     {
       title: "交易影响",
       dataIndex: "tradingCostPnl",
-      width: 100,
+      width: 82,
       align: "right",
       render: (value: number) => (
         <span className={`tabular-nums ${pnlClass(value)}`}>
@@ -146,7 +161,7 @@ export function IncomeCalendarPage() {
     {
       title: "当日贡献",
       dataIndex: "totalPnl",
-      width: 120,
+      width: 92,
       align: "right",
       render: (value: number | null) => (
         <strong className={`tabular-nums ${pnlClass(value)}`}>{money(value, true)}</strong>
@@ -288,9 +303,9 @@ export function IncomeCalendarPage() {
                               {money(day.totalPnl, true)}
                             </strong>
                             <small>
-                              价变 {money(day.marketPricePnl, true)}
-                              {day.dividendPnl ? ` · 分红 ${money(day.dividendPnl)}` : ""}
-                              {day.tradingCostPnl ? ` · 交易 ${money(day.tradingCostPnl, true)}` : ""}
+                              价 {money(day.marketPricePnl, true)}
+                              {day.dividendPnl ? ` · 分 ${money(day.dividendPnl)}` : ""}
+                              {day.tradingCostPnl ? ` · 交 ${money(day.tradingCostPnl, true)}` : ""}
                             </small>
                             <i className={`calendar-heat ${direction} level-${level}`} />
                             {day.dividendPnl > 0 ? <b className="dividend-dot" title="当日有现金分红" /> : null}
@@ -303,9 +318,20 @@ export function IncomeCalendarPage() {
               </div>
               <aside className="income-day-detail">
                 <div className="day-detail-heading">
-                  <div>
-                    <span>日期明细</span>
-                    <strong>{selectedDate ?? "—"}</strong>
+                  <div className="day-detail-title">
+                    <strong>
+                      {selectedDate
+                        ? `${selectedDate}（${WEEKDAY_LABELS[dayjs(selectedDate).day()]}）`
+                        : "—"}
+                    </strong>
+                    {selectedDay ? (
+                      <span>
+                        当日收益
+                        <b className={pnlClass(selectedDay.totalPnl)}>
+                          {money(selectedDay.totalPnl, true)}
+                        </b>
+                      </span>
+                    ) : null}
                   </div>
                   <Tag>{calendar.data.scopeLabel}</Tag>
                 </div>
@@ -313,31 +339,30 @@ export function IncomeCalendarPage() {
                   <>
                     <div className="day-summary">
                       <div>
-                        <span>当日总收益</span>
-                        <strong className={pnlClass(selectedDay.totalPnl)}>{money(selectedDay.totalPnl, true)}</strong>
+                        <span>价格变化收益</span>
+                        <strong className={pnlClass(selectedDay.marketPricePnl)}>{money(selectedDay.marketPricePnl, true)}</strong>
                       </div>
+                      <div>
+                        <span>分红收益</span>
+                        <strong>{money(selectedDay.dividendPnl)}</strong>
+                      </div>
+                      {selectedDay.tradingCostPnl !== 0 ? (
+                        <div>
+                          <span>交易影响</span>
+                          <strong className={pnlClass(selectedDay.tradingCostPnl)}>{money(selectedDay.tradingCostPnl, true)}</strong>
+                        </div>
+                      ) : null}
                       <div>
                         <span>当日收益率</span>
                         <strong className={pnlClass(selectedDay.returnRate)}>{percent(selectedDay.returnRate, true)}</strong>
                       </div>
-                      <div>
-                        <span>市场价格</span>
-                        <strong className={pnlClass(selectedDay.marketPricePnl)}>{money(selectedDay.marketPricePnl, true)}</strong>
-                      </div>
-                      <div>
-                        <span>现金分红</span>
-                        <strong>{money(selectedDay.dividendPnl)}</strong>
-                      </div>
-                      <div>
-                        <span>交易影响</span>
-                        <strong className={pnlClass(selectedDay.tradingCostPnl)}>{money(selectedDay.tradingCostPnl, true)}</strong>
-                      </div>
                     </div>
-                    <h3>标的贡献</h3>
+                    <h3>收益明细（按贡献）</h3>
                     {selectedDay.contributions.length ? (
                       <Table
                         className="income-contribution-table"
                         size="small"
+                        tableLayout="fixed"
                         rowKey="symbol"
                         columns={contributionColumns}
                         dataSource={selectedDay.contributions}

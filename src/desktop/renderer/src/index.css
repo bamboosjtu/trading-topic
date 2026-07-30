@@ -2227,14 +2227,14 @@ a:focus-visible,
 
 .income-calendar-panel {
   display: grid;
-  min-height: 520px;
-  grid-template-columns: minmax(0, 1.9fr) minmax(390px, 0.9fr);
+  min-height: 470px;
+  grid-template-columns: minmax(0, 1.65fr) minmax(560px, 1fr);
   overflow: hidden;
 }
 
 .income-calendar-main {
   min-width: 0;
-  padding: 14px 16px 16px;
+  padding: 10px 12px 12px;
   border-right: 1px solid #e8edf3;
 }
 
@@ -2245,10 +2245,11 @@ a:focus-visible,
 }
 
 .calendar-week-header {
-  height: 32px;
+  height: 30px;
   align-items: center;
   color: #718299;
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 500;
   text-align: center;
 }
 
@@ -2263,10 +2264,10 @@ a:focus-visible,
   position: relative;
   display: grid;
   min-width: 0;
-  height: 72px;
+  height: 70px;
   align-content: start;
-  gap: 3px;
-  padding: 7px 8px;
+  gap: 2px;
+  padding: 6px 7px;
   overflow: hidden;
   border: 0;
   border-right: 1px solid #e4eaf1;
@@ -2305,13 +2306,13 @@ a:focus-visible,
 
 .calendar-day-number {
   font-size: 10px;
-  line-height: 14px;
+  line-height: 13px;
 }
 
 .calendar-cell strong {
   overflow: hidden;
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 11px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2320,7 +2321,7 @@ a:focus-visible,
   overflow: hidden;
   color: #7a8ba1;
   font-size: 9px;
-  line-height: 13px;
+  line-height: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2368,62 +2369,142 @@ a:focus-visible,
 
 .income-day-detail {
   min-width: 0;
-  padding: 16px;
+  padding: 12px 14px 14px;
   overflow: auto;
   background: #fbfcfe;
 }
 
 .day-detail-heading {
   display: flex;
-  align-items: flex-start;
+  min-height: 26px;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  border-bottom: 1px solid #e8edf3;
+  padding-bottom: 9px;
 }
 
-.day-detail-heading > div {
-  display: grid;
-  gap: 4px;
+.day-detail-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 14px;
 }
 
-.day-detail-heading span {
+.day-detail-title > span {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 6px;
   color: #718299;
   font-size: 10px;
+  white-space: nowrap;
 }
 
-.day-detail-heading strong {
+.day-detail-title > strong {
+  overflow: hidden;
   color: #172f4f;
-  font-size: 15px;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-detail-title b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.day-detail-heading .ant-tag {
+  flex: none;
+  margin-inline-end: 0;
+  font-size: 10px;
+  line-height: 20px;
 }
 
 .day-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid #e5ebf2;
+  border-radius: 5px;
+  background: #ffffff;
 }
 
 .day-summary > div {
   display: grid;
-  gap: 5px;
-  padding: 10px 11px;
-  border: 1px solid #e5ebf2;
-  border-radius: 6px;
+  min-width: 0;
+  gap: 4px;
+  padding: 9px 10px;
+  border-right: 1px solid #e8edf3;
   background: #ffffff;
+}
+
+.day-summary > div:last-child {
+  border-right: 0;
 }
 
 .day-summary span {
   color: #718299;
-  font-size: 10px;
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .day-summary strong {
-  font-size: 13px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.income-day-detail h3 {
+  margin: 15px 0 7px;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.income-contribution-table .ant-table {
+  line-height: 1.2;
 }
 
 .income-contribution-table .ant-table-thead > tr > th,
 .income-contribution-table .ant-table-tbody > tr > td {
-  padding: 8px;
-  font-size: 11px;
+  overflow: hidden;
+  padding: 6px 5px;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.income-contribution-table .ant-table-thead > tr > th {
+  color: #526780;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.income-contribution-symbol {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.income-contribution-symbol strong {
+  overflow: hidden;
+  color: #1c3554;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.income-contribution-symbol span {
+  flex: none;
+  color: #8291a5;
+  font-size: 9px;
 }
 
 .income-event-list {
@@ -2437,17 +2518,17 @@ a:focus-visible,
 .income-event-list button {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  min-height: 42px;
+  min-height: 34px;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 5px 8px;
   border: 0;
   border-bottom: 1px solid #edf1f6;
   color: #314967;
   background: #ffffff;
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
   text-align: left;
 }
 
@@ -2460,11 +2541,11 @@ a:focus-visible,
 }
 
 .day-no-events {
-  padding: 18px;
+  padding: 11px;
   border: 1px dashed #dfe6ef;
   border-radius: 6px;
   color: #7a8ba1;
-  font-size: 11px;
+  font-size: 10px;
   text-align: center;
 }
 
