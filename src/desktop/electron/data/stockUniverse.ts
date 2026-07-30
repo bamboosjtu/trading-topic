@@ -1,5 +1,8 @@
 import ExcelJS from "exceljs";
-import type { StockInfo } from "../../shared/contracts";
+import type {
+  DirectoryProvenance,
+  StockInfo,
+} from "../../shared/contracts";
 import {
   ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
@@ -457,17 +460,30 @@ async function fetchSinaDomesticEtfs(): Promise<StockInfo[]> {
   return rows;
 }
 
-export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
+export async function fetchDomesticEtfUniverse(): Promise<
+  { rows: StockInfo[] } & DirectoryProvenance
+> {
   try {
-    return await fetchEastmoneyDomesticEtfs();
+    return {
+      rows: await fetchEastmoneyDomesticEtfs(),
+      source: "东方财富境内交易所 ETF 代码表",
+      primarySource: "eastmoney",
+      fallbackUsed: false,
+      fetchedAt: new Date().toISOString(),
+    };
   } catch (primaryError) {
+    const primaryMessage =
+      primaryError instanceof Error ? primaryError.message : String(primaryError);
     try {
-      return await fetchSinaDomesticEtfs();
+      return {
+        rows: await fetchSinaDomesticEtfs(),
+        source: "新浪财经境内交易所 ETF 代码表",
+        primarySource: "eastmoney",
+        fallbackUsed: true,
+        fallbackReason: primaryMessage,
+        fetchedAt: new Date().toISOString(),
+      };
     } catch (fallbackError) {
-      const primaryMessage =
-        primaryError instanceof Error
-          ? primaryError.message
-          : String(primaryError);
       const fallbackMessage =
         fallbackError instanceof Error
           ? fallbackError.message
@@ -487,9 +503,7 @@ export async function fetchDomesticEtfUniverse(): Promise<StockInfo[]> {
  */
 export async function fetchAStockUniverse(): Promise<{
   rows: StockInfo[];
-  fetchedAt: string;
-  source: string;
-}> {
+} & DirectoryProvenance> {
   const [shMain, shStar, shenzhen, beijing] = await Promise.all([
     fetchShanghaiStocks("1"),
     fetchShanghaiStocks("8"),
@@ -500,6 +514,8 @@ export async function fetchAStockUniverse(): Promise<{
     rows: mergeAStockUniverse([shMain, shStar, shenzhen, beijing]),
     fetchedAt: new Date().toISOString(),
     source: "上交所、深交所、北交所 A 股代码表（产品域独立适配）",
+    primarySource: "official-exchanges",
+    fallbackUsed: false,
   };
 }
 
@@ -509,15 +525,13 @@ export async function fetchAStockUniverse(): Promise<{
  */
 export async function fetchInstrumentUniverse(): Promise<{
   rows: StockInfo[];
-  fetchedAt: string;
-  source: string;
-}> {
+} & DirectoryProvenance> {
   const [stocks, etfs] = await Promise.all([
     fetchAStockUniverse(),
     fetchDomesticEtfUniverse(),
   ]);
   const unique = new Map<string, StockInfo>();
-  for (const row of [...stocks.rows, ...etfs]) unique.set(row.symbol, row);
+  for (const row of [...stocks.rows, ...etfs.rows]) unique.set(row.symbol, row);
   return {
     rows: [...unique.values()].sort((left, right) =>
       left.symbol.localeCompare(right.symbol),
@@ -525,5 +539,10 @@ export async function fetchInstrumentUniverse(): Promise<{
     fetchedAt: new Date().toISOString(),
     source:
       "上交所、深交所、北交所 A 股代码表 + 境内交易所 ETF 代码表（产品域独立适配）",
+    primarySource: "official-exchanges+eastmoney",
+    fallbackUsed: etfs.fallbackUsed,
+    ...(etfs.fallbackReason
+      ? { fallbackReason: etfs.fallbackReason }
+      : {}),
   };
 }

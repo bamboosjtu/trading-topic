@@ -34,8 +34,8 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
     async () => {
       const checks: Array<Record<string, unknown>> = [];
       const etfUniverse = await fetchDomesticEtfUniverse();
-      expect(etfUniverse.length).toBeGreaterThanOrEqual(1_000);
-      expect(etfUniverse).toEqual(
+      expect(etfUniverse.rows.length).toBeGreaterThanOrEqual(1_000);
+      expect(etfUniverse.rows).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             symbol: "510300",
@@ -290,8 +290,15 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
             executedAt: new Date().toISOString(),
             requestRange: { startDate: START_DATE, endDate: END_DATE },
             instrumentCatalog: {
-              etfCount: etfUniverse.length,
+              etfCount: etfUniverse.rows.length,
               verifiedSymbols: ["510300", "159915"],
+              provenance: {
+                source: etfUniverse.source,
+                primarySource: etfUniverse.primarySource,
+                fallbackUsed: etfUniverse.fallbackUsed,
+                fallbackReason: etfUniverse.fallbackReason,
+                fetchedAt: etfUniverse.fetchedAt,
+              },
             },
             checks,
             fallback: fallback.provenance,

@@ -74,10 +74,10 @@ export function normalizeLedgerInput(
   if (!input.symbol || !/^\d{6}$/.test(input.symbol)) {
     throw new Error("请输入有效的 6 位证券代码");
   }
-  if (
-    input.securityType !== undefined &&
-    !["stock", "etf"].includes(input.securityType)
-  ) {
+  if (!input.securityType) {
+    throw new Error("投资事实必须明确指定资产类型");
+  }
+  if (!["stock", "etf"].includes(input.securityType)) {
     throw new Error("资产类型只支持股票或 ETF");
   }
   const normalized: LedgerEntryInput = {
@@ -85,7 +85,7 @@ export function normalizeLedgerInput(
     businessDate: input.businessDate,
     symbol: input.symbol,
     instrumentName: cleanText(input.instrumentName),
-    securityType: input.securityType ?? "stock",
+    securityType: input.securityType,
     note: cleanText(input.note),
     linkedGroupId: cleanText(input.linkedGroupId),
   };

@@ -1,4 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -158,7 +163,7 @@ describe("LocalDatabase", () => {
     expect(database.listLedger()).toEqual([]);
   });
 
-  it("导出并恢复 schema v1 的不可变回测试验、投资事实与行情来源", async () => {
+  it("导出并恢复当前 Schema 2 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -197,7 +202,7 @@ describe("LocalDatabase", () => {
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(1);
+    expect(backup.schemaVersion).toBe(2);
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -308,6 +313,70 @@ describe("LocalDatabase", () => {
     );
   });
 
+  it("拒绝缺失当前设置、资产类型、目录来源或工作区字段的旧备份", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-backup-contract-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    database.addLedger({
+      id: "entry-current",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T00:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    database.replaceStockUniverseType(
+      [{ symbol: "601398", name: "工商银行", securityType: "stock" }],
+      "stock",
+      {
+        source: "交易所官方目录",
+        primarySource: "exchange_official",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-30T00:00:00Z",
+      },
+    );
+    const target = await openDatabase(join(directory, "target.sqlite"));
+    const valid = database.exportBackup();
+
+    const missingSettings = structuredClone(valid) as Partial<typeof valid>;
+    delete missingSettings.settings;
+    expect(() => target.restoreBackup(missingSettings)).toThrow(
+      "备份结构或 schema 版本不兼容",
+    );
+
+    const missingWorkspace = structuredClone(valid) as Partial<typeof valid>;
+    delete missingWorkspace.backtestWorkspace;
+    expect(() => target.restoreBackup(missingWorkspace)).toThrow(
+      "备份结构或 schema 版本不兼容",
+    );
+
+    const missingSecurityType = structuredClone(valid);
+    delete (
+      missingSecurityType.ledgerEntries[0] as Partial<
+        (typeof missingSecurityType.ledgerEntries)[number]
+      >
+    ).securityType;
+    expect(() => target.restoreBackup(missingSecurityType)).toThrow(
+      "不属于当前 R1 schema 的投资事实",
+    );
+
+    const missingDirectoryProvenance = structuredClone(valid);
+    delete (
+      missingDirectoryProvenance.stockUniverse[0] as Partial<
+        (typeof missingDirectoryProvenance.stockUniverse)[number]
+      >
+    ).primarySource;
+    expect(() => target.restoreBackup(missingDirectoryProvenance)).toThrow(
+      "不属于当前 R1 schema 的证券目录",
+    );
+  });
+
   it("恢复备份时要求非空行情覆盖具有实际截止日且不带空区间证据", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-coverage-data-"));
     temporaryDirectories.push(directory);
@@ -343,7 +412,7 @@ describe("LocalDatabase", () => {
     );
   });
 
-  it("拒绝打开非 Schema 1 数据库且不修改既有数据", async () => {
+  it("拒绝打开非 Schema 2 数据库且不修改既有数据", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-incompatible-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "legacy.sqlite");
@@ -354,15 +423,72 @@ describe("LocalDatabase", () => {
     `);
     legacy.pragma("user_version = 10");
     legacy.close();
+    const before = readFileSync(filePath);
 
     await expect(openDatabase(filePath)).rejects.toThrow(
-      "仅支持 Schema 1",
+      "仅支持 Schema 2",
     );
+    expect(readFileSync(filePath)).toEqual(before);
+    expect(existsSync(`${filePath}-wal`)).toBe(false);
     const untouched = new BetterSqlite3(filePath, { readonly: true });
     expect(
       untouched.prepare("SELECT value FROM sentinel").pluck().get(),
     ).toBe("preserve-me");
     expect(untouched.pragma("user_version", { simple: true })).toBe(10);
+    untouched.close();
+  });
+
+  it("拒绝指纹不匹配的 Schema 2 数据库且不修改既有文件", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-fingerprint-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "app.sqlite");
+    const initialized = await openDatabase(filePath);
+    initialized.close();
+    openDatabases.splice(openDatabases.indexOf(initialized), 1);
+    const tampered = new BetterSqlite3(filePath);
+    tampered
+      .prepare("UPDATE schema_metadata SET fingerprint = ? WHERE id = 1")
+      .run("legacy-schema-with-same-user-version");
+    tampered.close();
+    const before = readFileSync(filePath);
+
+    await expect(openDatabase(filePath)).rejects.toThrow(
+      "Schema 2 指纹不匹配",
+    );
+    expect(readFileSync(filePath)).toEqual(before);
+    const untouched = new BetterSqlite3(filePath, { readonly: true });
+    expect(
+      untouched
+        .prepare("SELECT fingerprint FROM schema_metadata WHERE id = 1")
+        .pluck()
+        .get(),
+    ).toBe("legacy-schema-with-same-user-version");
+    untouched.close();
+  });
+
+  it("拒绝实际 DDL 与指纹不一致的同版本数据库且不自动修复", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-shape-"));
+    temporaryDirectories.push(directory);
+    const filePath = join(directory, "app.sqlite");
+    const initialized = await openDatabase(filePath);
+    initialized.close();
+    openDatabases.splice(openDatabases.indexOf(initialized), 1);
+    const damaged = new BetterSqlite3(filePath);
+    damaged.exec("DROP INDEX idx_backtest_results_strategy");
+    damaged.close();
+
+    await expect(openDatabase(filePath)).rejects.toThrow(
+      "Schema 2 指纹不匹配",
+    );
+    const untouched = new BetterSqlite3(filePath, { readonly: true });
+    expect(
+      untouched
+        .prepare(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .pluck()
+        .get("idx_backtest_results_strategy"),
+    ).toBe(0);
     untouched.close();
   });
 
@@ -452,13 +578,27 @@ describe("LocalDatabase", () => {
     temporaryDirectories.push(directory);
     const filePath = join(directory, "app.sqlite");
     const database = await openDatabase(filePath);
-    database.replaceStockUniverse(
-      [
-        { symbol: "000001", name: "平安银行", securityType: "stock" },
-        { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
-      ],
-      "test-source",
-      "2026-07-24T00:00:00Z",
+    const fetchedAt = "2026-07-24T00:00:00Z";
+    database.replaceStockUniverseType(
+      [{ symbol: "000001", name: "平安银行", securityType: "stock" }],
+      "stock",
+      {
+        source: "上交所、深交所、北交所",
+        primarySource: "exchange_official",
+        fallbackUsed: false,
+        fetchedAt,
+      },
+    );
+    database.replaceStockUniverseType(
+      [{ symbol: "510300", name: "沪深300ETF", securityType: "etf" }],
+      "etf",
+      {
+        source: "新浪财经",
+        primarySource: "eastmoney",
+        fallbackUsed: true,
+        fallbackReason: "东方财富 HTTP 503",
+        fetchedAt,
+      },
     );
     database.saveBacktestWorkspace(workspace());
 
@@ -470,15 +610,20 @@ describe("LocalDatabase", () => {
         symbol: "000001",
         name: "平安银行",
         securityType: "stock",
-        source: "test-source",
-        fetchedAt: "2026-07-24T00:00:00Z",
+        source: "上交所、深交所、北交所",
+        primarySource: "exchange_official",
+        fallbackUsed: false,
+        fetchedAt,
       },
       {
         symbol: "510300",
         name: "沪深300ETF",
         securityType: "etf",
-        source: "test-source",
-        fetchedAt: "2026-07-24T00:00:00Z",
+        source: "新浪财经",
+        primarySource: "eastmoney",
+        fallbackUsed: true,
+        fallbackReason: "东方财富 HTTP 503",
+        fetchedAt,
       },
     ]);
     expect(reopened.getBacktestWorkspace()).toEqual(workspace());

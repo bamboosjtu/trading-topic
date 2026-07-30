@@ -18,6 +18,7 @@ import {
 } from "./export/liveWorkbooks";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
+import { assertCurrentYearCalendarOfficial } from "./domain/marketCalendar";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = app.isPackaged ? process.resourcesPath : process.cwd();
@@ -66,14 +67,13 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle("app:health", () => {
-    const latest = database.latestPrices();
     return {
       status: "ok",
       version: app.getVersion(),
       storage: "sqlite",
-      dataCutoff: latest.dataCutoff,
     };
   });
+  ipcMain.handle("diagnostics:get", () => service.getDiagnostics());
   ipcMain.handle("backtest:run", (_event, request: BacktestRequest) =>
     service.runBacktest(request),
   );
@@ -283,14 +283,25 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(async () => {
-  const databasePath = join(app.getPath("userData"), "stock-income.sqlite");
-  database = await LocalDatabase.open(databasePath);
-  service = new AppService(database);
-  registerIpc();
-  database.log("info", "应用启动");
-  createWindow();
-});
+app
+  .whenReady()
+  .then(async () => {
+    assertCurrentYearCalendarOfficial();
+    const databasePath = join(app.getPath("userData"), "stock-income.sqlite");
+    database = await LocalDatabase.open(databasePath);
+    service = new AppService(database);
+    registerIpc();
+    database.log("info", "应用启动");
+    createWindow();
+  })
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    dialog.showErrorBox(
+      "攒股收息无法启动",
+      `${message}\n\nMVP 不迁移或兼容旧数据库。请保留原文件，并使用新的本地数据目录启动当前版本。`,
+    );
+    app.quit();
+  });
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

@@ -110,16 +110,22 @@ describe("A 股代码表", () => {
 
     const result = await fetchDomesticEtfUniverse();
 
-    expect(result).toHaveLength(ETF_UNIVERSE_MIN_SIZE);
-    expect(result[0]).toMatchObject({ securityType: "etf" });
+    expect(result.rows).toHaveLength(ETF_UNIVERSE_MIN_SIZE);
+    expect(result.rows[0]).toMatchObject({ securityType: "etf" });
+    expect(result).toMatchObject({
+      source: "新浪财经境内交易所 ETF 代码表",
+      primarySource: "eastmoney",
+      fallbackUsed: true,
+      fallbackReason: expect.stringContaining("503"),
+    });
   });
 
   it("拒绝把少量标的误当成全 A 股目录", () => {
     expect(() =>
       mergeAStockUniverse([
         [
-          { symbol: "601398", name: "工商银行" },
-          { symbol: "601288", name: "农业银行" },
+          { symbol: "601398", name: "工商银行", securityType: "stock" },
+          { symbol: "601288", name: "农业银行", securityType: "stock" },
         ],
       ]),
     ).toThrow("A 股代码表不完整");

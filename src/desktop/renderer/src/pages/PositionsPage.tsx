@@ -82,7 +82,7 @@ export function PositionsPage() {
     onSuccess: (result) => {
       queryClient.setQueryData(["positions:overview"], result.overview);
       void queryClient.invalidateQueries({ queryKey: ["health"] });
-      if (result.tailComplete) {
+      if (result.tailStatus !== "incomplete") {
         message.success("行情快照已刷新");
       } else {
         message.warning(

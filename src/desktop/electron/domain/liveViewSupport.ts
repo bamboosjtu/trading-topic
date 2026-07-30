@@ -5,7 +5,6 @@ import type {
   StockInfo,
 } from "../../shared/contracts";
 import { activeLedgerEntries, ledgerEntryAmount } from "./ledgerReducer";
-import { securityTypeForInstrument } from "../../shared/instruments";
 
 function recordedOrder(left: LedgerEntry, right: LedgerEntry): number {
   return (
@@ -13,13 +12,6 @@ function recordedOrder(left: LedgerEntry, right: LedgerEntry): number {
     left.businessDate.localeCompare(right.businessDate) ||
     left.id.localeCompare(right.id)
   );
-}
-
-export function inferSecurityType(
-  symbol: string,
-  name = "",
-): SecurityType {
-  return securityTypeForInstrument({ symbol, name });
 }
 
 export function namesMap(
@@ -48,9 +40,20 @@ export function securityTypesMap(
     }
   }
   for (const stock of stocks) {
-    result.set(stock.symbol, securityTypeForInstrument(stock));
+    result.set(stock.symbol, stock.securityType);
   }
   return result;
+}
+
+export function requiredSecurityType(
+  symbol: string,
+  securityTypes: ReadonlyMap<string, SecurityType>,
+): SecurityType {
+  const securityType = securityTypes.get(symbol);
+  if (!securityType) {
+    throw new Error(`证券 ${symbol} 缺少明确的资产类型`);
+  }
+  return securityType;
 }
 
 export function toLedgerRecord(
@@ -59,17 +62,16 @@ export function toLedgerRecord(
   securityTypes: Map<string, SecurityType>,
   reversedIds: Set<string>,
 ): LedgerRecordView {
+  const securityType: SecurityType | null = entry.symbol
+    ? requiredSecurityType(entry.symbol, securityTypes)
+    : null;
   return {
     id: entry.id,
     businessDate: entry.businessDate,
     type: entry.type,
     symbol: entry.symbol ?? null,
     name: entry.symbol ? (names.get(entry.symbol) ?? entry.symbol) : null,
-    securityType: entry.symbol
-      ? securityTypes.get(entry.symbol) ??
-        entry.securityType ??
-        inferSecurityType(entry.symbol, names.get(entry.symbol))
-      : null,
+    securityType,
     quantity: entry.quantity ?? null,
     price: entry.price ?? null,
     amount:

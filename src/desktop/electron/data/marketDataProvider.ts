@@ -1,6 +1,8 @@
 import type {
   AdjustedBar,
+  MarketFetchResult,
   MarketDataProvenance,
+  MarketTailStatus,
   PricePoint,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
@@ -160,19 +162,21 @@ function completedRows<T extends { date: string }>(
   return cutoff ? rows.filter((row) => row.date <= cutoff) : [];
 }
 
-function hasConfirmedTail(
+function marketTailStatus(
   rows: readonly { date: string }[],
   endDate: string,
   now: Date,
-): boolean {
+): MarketTailStatus {
   const expectedThrough = [endDate, latestWeekdayCandidate(now)].sort()[0];
   const dataCutoff = rows.at(-1)?.date;
-  if (!dataCutoff) return false;
-  if (dataCutoff >= expectedThrough) return true;
+  if (!dataCutoff) return "incomplete";
+  if (dataCutoff >= expectedThrough) return "complete";
   return isConfirmedMarketClosureRange(
     addDays(dataCutoff, 1),
     expectedThrough,
-  );
+  )
+    ? "confirmed_non_trading"
+    : "incomplete";
 }
 
 function provenance(
@@ -203,165 +207,202 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   primary: MarketDataProvider,
   fallback: MarketDataProvider,
   now = new Date(),
-): Promise<{ rows: T[]; provenance: MarketDataProvenance }> {
-  let primaryCandidate: readonly PricePoint[] = [];
-  let primaryRows: T[] = [];
-  let primaryFailureReason: string | null = null;
-  let primaryOutcome: "empty" | "failed" | "tail_incomplete" = "failed";
-  try {
-    const raw =
-      operation === "prices"
-        ? await primary.fetchPrices(symbol, startDate, endDate)
-        : await primary.fetchAdjustedBars(symbol, startDate, endDate);
-    if (raw.length) {
-      assertDates(raw, "腾讯行情");
-      assertRequestedRange(raw, startDate, endDate, "腾讯");
-      primaryCandidate = (
-        operation === "prices"
-          ? raw
-          : (raw as AdjustedBar[]).map(({ date, close }) => ({
-              date,
-              close,
-            }))
-      ) as readonly PricePoint[];
-      if (operation === "prices") {
-        validatePricePoints(raw as PricePoint[], symbol, "腾讯");
-      } else {
-        validateAdjustedBars(raw as AdjustedBar[], symbol, "腾讯");
-      }
-    }
-    const rows = completedRows(raw, endDate, now) as unknown as T[];
-    assertRequestedRange(rows, startDate, endDate, "腾讯");
-    if (!rows.length) {
-      primaryOutcome = "empty";
-      primaryFailureReason = "腾讯在请求区间返回合法空数据";
-    } else if (operation === "prices") {
-      validatePricePoints(primaryCandidate, symbol, "腾讯");
-    } else {
-      validateAdjustedBars(rows as unknown as AdjustedBar[], symbol, "腾讯");
-    }
-    if (rows.length && hasConfirmedTail(rows, endDate, now)) {
-      return {
-        rows,
-        provenance: provenance(
-          "tencent",
-          rows,
-          operation === "prices" ? "none" : "qfq",
-          now.toISOString(),
-        ),
-      };
-    }
-    if (rows.length) {
-      primaryRows = rows;
-      primaryOutcome = "tail_incomplete";
-      primaryFailureReason = `腾讯行情仅更新至 ${
-        rows.at(-1)?.date ?? "未知日期"
-      }，未到达请求的已完成交易日`;
-    }
-  } catch (error) {
-    primaryOutcome = "failed";
-    primaryFailureReason =
-      error instanceof Error ? error.message : String(error);
+): Promise<MarketFetchResult<T>> {
+  interface Candidate {
+    rows: T[];
+    consistencyRows: PricePoint[];
+    tailStatus: MarketTailStatus;
   }
 
-  const reason = primaryFailureReason ?? "腾讯行情不可用";
-  try {
+  const adjustment = operation === "prices" ? "none" : "qfq";
+  const fetchedAt = now.toISOString();
+  const evaluate = async (
+    provider: MarketDataProvider,
+    label: "腾讯" | "新浪",
+  ): Promise<Candidate> => {
     const raw =
       operation === "prices"
-        ? await fallback.fetchPrices(symbol, startDate, endDate)
-        : await fallback.fetchAdjustedBars(symbol, startDate, endDate);
+        ? await provider.fetchPrices(symbol, startDate, endDate)
+        : await provider.fetchAdjustedBars(symbol, startDate, endDate);
+    assertRequestedRange(raw, startDate, endDate, label);
     if (raw.length) {
       if (operation === "prices") {
-        validatePricePoints(raw as PricePoint[], symbol, "新浪");
+        validatePricePoints(raw as PricePoint[], symbol, label);
       } else {
-        validateAdjustedBars(raw as AdjustedBar[], symbol, "新浪");
+        validateAdjustedBars(raw as AdjustedBar[], symbol, label);
       }
     }
-    const rows = completedRows(raw, endDate, now) as unknown as T[];
-    assertRequestedRange(rows, startDate, endDate, "新浪");
-    if (!rows.length) {
-      if (primaryOutcome === "tail_incomplete" && primaryRows.length) {
-        return {
-          rows: primaryRows,
-          provenance: provenance(
-            "tencent",
-            primaryRows,
-            operation === "prices" ? "none" : "qfq",
-            now.toISOString(),
-          ),
-        };
-      }
-      if (primaryCandidate.length) {
-        throw new Error("新浪返回空区间，无法验证腾讯的异常候选行情");
-      }
-      if (primaryOutcome === "failed") {
-        throw new Error(
-          "腾讯明确失败且新浪返回空数据，无法证明请求区间没有交易数据",
+    const completed = completedRows(raw, endDate, now) as unknown as T[];
+    assertRequestedRange(completed, startDate, endDate, label);
+    if (completed.length) {
+      if (operation === "prices") {
+        validatePricePoints(
+          completed as unknown as PricePoint[],
+          symbol,
+          label,
         );
-      }
-      if (!isConfirmedMarketClosureRange(startDate, endDate)) {
-        throw new Error(
-          "腾讯与新浪均返回空数据，但独立交易日历不能确认请求区间全部休市",
-        );
-      }
-      return {
-        rows,
-        provenance: provenance(
-          "tencent",
-          rows,
-          operation === "prices" ? "none" : "qfq",
-          now.toISOString(),
-          undefined,
-          "exchange_calendar",
-        ),
-      };
-    }
-    if (operation === "prices") {
-      const priceRows = rows as unknown as PricePoint[];
-      validatePricePoints(priceRows, symbol, "新浪");
-      if (primaryCandidate.length) {
-        assertCrossProviderConsistency(primaryCandidate, priceRows);
-      }
-    } else {
-      const bars = rows as unknown as AdjustedBar[];
-      validateAdjustedBars(bars, symbol, "新浪");
-      if (primaryCandidate.length) {
-        assertCrossProviderConsistency(
-          primaryCandidate,
-          bars.map(({ date, close }) => ({ date, close })),
+      } else {
+        validateAdjustedBars(
+          completed as unknown as AdjustedBar[],
+          symbol,
+          label,
         );
       }
     }
     return {
-      rows,
-      provenance: provenance(
-        "sina",
-        rows,
-        operation === "prices" ? "none" : "qfq",
-        now.toISOString(),
-        reason,
-      ),
+      rows: completed,
+      consistencyRows:
+        operation === "prices"
+          ? (completed as unknown as PricePoint[])
+          : (completed as unknown as AdjustedBar[]).map(({ date, close }) => ({
+              date,
+              close,
+            })),
+      tailStatus: marketTailStatus(completed, endDate, now),
     };
-  } catch (fallbackError) {
-    if (primaryOutcome === "tail_incomplete" && primaryRows.length) {
+  };
+
+  let primaryCandidate: Candidate | null = null;
+  let primaryIssue: string | null = null;
+  try {
+    primaryCandidate = await evaluate(primary, "腾讯");
+    if (
+      primaryCandidate.rows.length &&
+      primaryCandidate.tailStatus !== "incomplete"
+    ) {
       return {
-        rows: primaryRows,
+        rows: primaryCandidate.rows,
+        requestedThrough: endDate,
+        dataCutoff: primaryCandidate.rows.at(-1)?.date ?? null,
+        tailStatus: primaryCandidate.tailStatus,
+        issues: [],
         provenance: provenance(
           "tencent",
-          primaryRows,
-          operation === "prices" ? "none" : "qfq",
-          now.toISOString(),
+          primaryCandidate.rows,
+          adjustment,
+          fetchedAt,
         ),
       };
     }
-    const fallbackMessage =
-      fallbackError instanceof Error
-        ? fallbackError.message
-        : String(fallbackError);
-    throw new Error(
-      `腾讯行情不可用（${reason}）；新浪完整区间兜底失败（${fallbackMessage}）`,
+    primaryIssue = primaryCandidate.rows.length
+      ? `腾讯行情仅更新至 ${primaryCandidate.rows.at(-1)?.date ?? "未知日期"}，尾部不完整`
+      : "腾讯在请求区间返回空数据";
+  } catch (error) {
+    primaryIssue = error instanceof Error ? error.message : String(error);
+  }
+
+  let fallbackCandidate: Candidate | null = null;
+  let fallbackIssue: string | null = null;
+  try {
+    fallbackCandidate = await evaluate(fallback, "新浪");
+  } catch (error) {
+    fallbackIssue = error instanceof Error ? error.message : String(error);
+  }
+
+  if (
+    primaryCandidate?.consistencyRows.length &&
+    fallbackCandidate?.consistencyRows.length
+  ) {
+    // 两个来源都给出候选结果时，冲突属于证据冲突而不是可忽略的兜底失败。
+    assertCrossProviderConsistency(
+      primaryCandidate.consistencyRows,
+      fallbackCandidate.consistencyRows,
     );
   }
+
+  if (
+    fallbackCandidate?.rows.length &&
+    fallbackCandidate.tailStatus !== "incomplete"
+  ) {
+    return {
+      rows: fallbackCandidate.rows,
+      requestedThrough: endDate,
+      dataCutoff: fallbackCandidate.rows.at(-1)?.date ?? null,
+      tailStatus: fallbackCandidate.tailStatus,
+      issues: primaryIssue ? [primaryIssue] : [],
+      provenance: provenance(
+        "sina",
+        fallbackCandidate.rows,
+        adjustment,
+        fetchedAt,
+        primaryIssue ?? "腾讯行情不可用",
+      ),
+    };
+  }
+
+  const primaryEmpty = primaryCandidate !== null && !primaryCandidate.rows.length;
+  const fallbackEmpty =
+    fallbackCandidate !== null && !fallbackCandidate.rows.length;
+  if (primaryEmpty && fallbackEmpty) {
+    if (!isConfirmedMarketClosureRange(startDate, endDate)) {
+      throw new Error(
+        "腾讯与新浪均返回空数据，但独立交易日历不能确认请求区间全部休市",
+      );
+    }
+    return {
+      rows: [],
+      requestedThrough: endDate,
+      dataCutoff: null,
+      tailStatus: "confirmed_non_trading",
+      issues: [],
+      provenance: provenance(
+        "tencent",
+        [],
+        adjustment,
+        fetchedAt,
+        undefined,
+        "exchange_calendar",
+      ),
+    };
+  }
+
+  const incompleteCandidates = [
+    ...(primaryCandidate?.rows.length
+      ? [{ source: "tencent" as const, candidate: primaryCandidate }]
+      : []),
+    ...(fallbackCandidate?.rows.length
+      ? [{ source: "sina" as const, candidate: fallbackCandidate }]
+      : []),
+  ].sort((left, right) =>
+    (right.candidate.rows.at(-1)?.date ?? "").localeCompare(
+      left.candidate.rows.at(-1)?.date ?? "",
+    ),
+  );
+  const selected = incompleteCandidates[0];
+  if (selected) {
+    if (fallbackCandidate?.rows.length) {
+      fallbackIssue = `新浪行情仅更新至 ${
+        fallbackCandidate.rows.at(-1)?.date ?? "未知日期"
+      }，尾部不完整`;
+    } else if (!fallbackIssue && fallbackEmpty) {
+      fallbackIssue = "新浪在请求区间返回空数据";
+    }
+    const issues = [primaryIssue, fallbackIssue].filter(
+      (issue): issue is string => Boolean(issue),
+    );
+    return {
+      rows: selected.candidate.rows,
+      requestedThrough: endDate,
+      dataCutoff: selected.candidate.rows.at(-1)?.date ?? null,
+      tailStatus: "incomplete",
+      issues,
+      provenance: provenance(
+        selected.source,
+        selected.candidate.rows,
+        adjustment,
+        fetchedAt,
+        selected.source === "sina"
+          ? primaryIssue ?? "腾讯行情不可用"
+          : undefined,
+      ),
+    };
+  }
+
+  throw new Error(
+    `腾讯行情不可用（${primaryIssue ?? "未知原因"}）；新浪完整区间兜底失败（${
+      fallbackIssue ?? "未返回可用行情"
+    }）`,
+  );
 }
 
 export async function fetchMarketPrices(
@@ -370,6 +411,10 @@ export async function fetchMarketPrices(
   endDate: string,
 ): Promise<{
   rows: PricePoint[];
+  requestedThrough: string;
+  dataCutoff: string | null;
+  tailStatus: MarketTailStatus;
+  issues: string[];
   provenance: MarketDataProvenance & { caliberVersion: string };
 }> {
   const result = await fetchWithProviderFallback<PricePoint>(
@@ -382,6 +427,10 @@ export async function fetchMarketPrices(
   );
   return {
     rows: result.rows,
+    requestedThrough: result.requestedThrough,
+    dataCutoff: result.dataCutoff,
+    tailStatus: result.tailStatus,
+    issues: result.issues,
     provenance: {
       ...result.provenance,
       caliberVersion: BACKTEST_CALIBER_VERSION,
@@ -395,6 +444,10 @@ export async function fetchMarketAdjustedBars(
   endDate: string,
 ): Promise<{
   rows: AdjustedBar[];
+  requestedThrough: string;
+  dataCutoff: string | null;
+  tailStatus: MarketTailStatus;
+  issues: string[];
   provenance: MarketDataProvenance & { caliberVersion: string };
 }> {
   const result = await fetchWithProviderFallback<AdjustedBar>(
@@ -407,6 +460,10 @@ export async function fetchMarketAdjustedBars(
   );
   return {
     rows: result.rows,
+    requestedThrough: result.requestedThrough,
+    dataCutoff: result.dataCutoff,
+    tailStatus: result.tailStatus,
+    issues: result.issues,
     provenance: {
       ...result.provenance,
       caliberVersion: BACKTEST_CALIBER_VERSION,

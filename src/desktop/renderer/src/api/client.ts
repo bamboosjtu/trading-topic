@@ -55,6 +55,7 @@ export const api = {
   reverseLedger: (entryId: string, reason: string) =>
     bridge().reverseLedger(entryId, reason),
   getSettings: () => bridge().getSettings(),
+  getDiagnostics: () => bridge().getDiagnostics(),
   exportBackup: () => bridge().exportBackup(),
   restoreBackup: () => bridge().restoreBackup(),
   exportLogs: () => bridge().exportLogs(),
@@ -62,6 +63,7 @@ export const api = {
 
 export type {
   AdjustedBar,
+  AppDiagnostics,
   AppSettings,
   BacktestExperiment,
   BacktestExperimentSummary,
@@ -72,6 +74,7 @@ export type {
   BacktestWorkspaceState,
   ChartDataState,
   EntryType,
+  DirectoryProvenance,
   DividendReinvestmentInput,
   DividendReinvestmentPreview,
   DividendReinvestmentResult,
@@ -88,6 +91,7 @@ export type {
   LedgerQueryResult,
   LedgerRecordView,
   LiveDataQuality,
+  MarketCalendarDiagnostic,
   PerformancePeriod,
   PositionsOverview,
   PositionView,

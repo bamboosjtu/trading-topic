@@ -26,6 +26,11 @@ const IncomeCalendarPage = lazy(() =>
     default: module.IncomeCalendarPage,
   })),
 );
+const SettingsPage = lazy(() =>
+  import("./pages/SettingsPage").then((module) => ({
+    default: module.SettingsPage,
+  })),
+);
 
 export function App() {
   return (
@@ -50,7 +55,10 @@ export function App() {
               path="/income-calendar"
               element={<Suspense fallback={<SkeletonPage />}><IncomeCalendarPage /></Suspense>}
             />
-            <Route path="/settings" element={<SkeletonPage />} />
+            <Route
+              path="/settings"
+              element={<Suspense fallback={<SkeletonPage />}><SettingsPage /></Suspense>}
+            />
             <Route path="*" element={<Navigate to="/backtest" replace />} />
           </Route>
         </Routes>

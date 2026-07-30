@@ -13,8 +13,8 @@ import {
   canonicalLedgerOrderDescending,
 } from "./ledgerReducer";
 import {
-  inferSecurityType,
   namesMap,
+  requiredSecurityType,
   securityTypesMap,
   toLedgerRecord,
 } from "./liveViewSupport";
@@ -182,9 +182,7 @@ export function queryLedgerRecords(
       .map((symbol) => ({
         symbol,
         name: names.get(symbol) ?? symbol,
-        securityType:
-          securityTypes.get(symbol) ??
-          inferSecurityType(symbol, names.get(symbol)),
+        securityType: requiredSecurityType(symbol, securityTypes),
       })),
   };
 }

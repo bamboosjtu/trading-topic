@@ -15,8 +15,8 @@ import { activeLedgerEntries } from "./ledgerReducer";
 import { buildPositionsOverview } from "./positionsView";
 
 const stocks: StockInfo[] = [
-  { symbol: "601398", name: "工商银行" },
-  { symbol: "510300", name: "沪深300ETF" },
+  { symbol: "601398", name: "工商银行", securityType: "stock" },
+  { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
 ];
 
 function entry(
@@ -465,7 +465,89 @@ describe("投资收益视图", () => {
       "2026-07-02",
     ).at(-1)!;
     expect(day.date).toBe("2026-07-02");
-    expect(day.capitalBase).toBe(1_000);
+    expect(day.capitalBase).toBe(1_100);
+  });
+
+  it("跨日再投入等待期间的分红现金持续进入资本基数", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-price-change",
+      }),
+      entry("reinvest", "buy", "2026-07-02", {
+        symbol: "601398",
+        price: 11,
+        quantity: 9,
+        linkedGroupId: "reinvest-price-change",
+      }),
+    ];
+    const days = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+        price("601398", "2026-07-02", 11),
+      ],
+      "2026-07-02",
+    );
+    const dividendDay = days.find((day) => day.date === "2026-07-01")!;
+    const reinvestmentDay = days.find((day) => day.date === "2026-07-02")!;
+
+    expect(dividendDay.returnRate).toBeCloseTo(0.1, 12);
+    expect(reinvestmentDay.marketPricePnl).toBe(100);
+    expect(reinvestmentDay.capitalBase).toBe(1_100);
+    expect(reinvestmentDay.returnRate).toBeCloseTo(100 / 1_100, 12);
+    expect(
+      days.reduce(
+        (result, day) =>
+          day.returnRate === null ? result : result * (1 + day.returnRate),
+        1,
+      ) - 1,
+    ).toBeCloseTo(0.2, 12);
+  });
+
+  it("部分再投入后未使用分红现金继续跨日进入资本基数", () => {
+    const entries = [
+      entry("opening", "buy", "2026-06-30", {
+        symbol: "601398",
+        price: 10,
+        quantity: 100,
+      }),
+      entry("dividend", "dividend", "2026-07-01", {
+        symbol: "601398",
+        amount: 100,
+        linkedGroupId: "reinvest-partial",
+      }),
+      entry("partial-buy", "buy", "2026-07-02", {
+        symbol: "601398",
+        price: 10,
+        quantity: 6,
+        linkedGroupId: "reinvest-partial",
+      }),
+    ];
+    const days = dailyAttribution(
+      entries,
+      [
+        price("601398", "2026-06-30", 10),
+        price("601398", "2026-07-01", 10),
+        price("601398", "2026-07-02", 10),
+        price("601398", "2026-07-03", 11),
+      ],
+      "2026-07-03",
+    );
+
+    expect(days.find((day) => day.date === "2026-07-02")!.capitalBase).toBe(
+      1_100,
+    );
+    expect(days.find((day) => day.date === "2026-07-03")!.capitalBase).toBe(
+      1_100,
+    );
   });
 
   it("再投入支出超过分红时只把补足零钱计入外部投入", () => {
@@ -828,7 +910,7 @@ describe("投资收益视图", () => {
 
     const withDirectory = queryLedgerRecords(
       [older, newer],
-      [{ symbol: "510300", name: "沪深300ETF" }],
+      [{ symbol: "510300", name: "沪深300ETF", securityType: "etf" }],
       { page: 1, pageSize: 20 },
       null,
     );

@@ -3,23 +3,14 @@ import {
   A_SHARE_MARKET_TIME_ZONE,
   currentMarketDate,
 } from "../../shared/marketDate";
+import type { MarketCalendarDiagnostic } from "../../shared/contracts";
 import calendar2024 from "../data/market-calendar/2024.json";
 import calendar2025 from "../data/market-calendar/2025.json";
 import calendar2026 from "../data/market-calendar/2026.json";
 import calendar2027 from "../data/market-calendar/2027.json";
 
-export interface TradingCalendarCoverage {
-  startDate: string;
-  endDate: string;
-}
-
 export interface TradeDateContext {
   knownTradingDates: readonly string[];
-  /**
-   * 仅用于兼容现有调用方的缓存覆盖描述。证券自身没有行情不等于市场休市，
-   * 因此 `tradeDateStatus` 不会用它判定 closed。
-   */
-  coveredRanges?: readonly TradingCalendarCoverage[];
 }
 
 interface AnnualMarketCalendar {
@@ -42,6 +33,26 @@ const ANNUAL_MARKET_CALENDARS = [
 const CONFIRMED_MARKET_CLOSURES = ANNUAL_MARKET_CALENDARS
   .filter((calendar) => calendar.status === "official")
   .flatMap((calendar) => calendar.closures);
+
+export function marketCalendarDiagnostics(): MarketCalendarDiagnostic[] {
+  return ANNUAL_MARKET_CALENDARS.map(({ year, status, source }) => ({
+    year,
+    status,
+    source,
+  }));
+}
+
+export function assertCurrentYearCalendarOfficial(now = new Date()): void {
+  const currentYear = Number(currentMarketDate(now).slice(0, 4));
+  const calendar = ANNUAL_MARKET_CALENDARS.find(
+    (item) => item.year === currentYear,
+  );
+  if (!calendar || calendar.status !== "official") {
+    throw new Error(
+      `${currentYear} 年交易日历尚未更新为官方安排，拒绝生成发布版本`,
+    );
+  }
+}
 
 function isWeekend(date: string): boolean {
   const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();

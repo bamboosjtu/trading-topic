@@ -116,8 +116,8 @@ export function AppLayout() {
         <Header className="app-header">
           <div className="ml-auto flex items-center">
             <div className="data-cutoff">
-              数据截止：
-              <span className="tabular-nums">{health?.dataCutoff ?? "暂无快照"}</span>
+              本地模式 ·
+              <span className="tabular-nums"> v{health?.version ?? "—"}</span>
             </div>
           </div>
         </Header>

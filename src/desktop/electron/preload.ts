@@ -55,6 +55,7 @@ const api: DesktopApi = {
   reverseLedger: (entryId: string, reason: string) =>
     ipcRenderer.invoke("ledger:reverse", entryId, reason),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  getDiagnostics: () => ipcRenderer.invoke("diagnostics:get"),
   exportBackup: () => ipcRenderer.invoke("backup:export"),
   restoreBackup: () => ipcRenderer.invoke("backup:restore"),
   exportLogs: () => ipcRenderer.invoke("logs:export"),

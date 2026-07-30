@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertCurrentYearCalendarOfficial,
   isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   latestWeekdayCandidate,
+  marketCalendarDiagnostics,
   tradeDateStatus,
 } from "./marketCalendar";
 
@@ -44,10 +46,6 @@ describe("正式收盘日边界", () => {
   it("独立交易日历确认春节、国庆和调休周末均为休市日", () => {
     const context = {
       knownTradingDates: ["2026-02-24", "2026-10-08"],
-      coveredRanges: [
-        { startDate: "2026-02-15", endDate: "2026-02-24" },
-        { startDate: "2026-10-01", endDate: "2026-10-08" },
-      ],
     };
     expect(tradeDateStatus("2026-02-23", context)).toBe("closed");
     expect(tradeDateStatus("2026-02-24", context)).toBe("trading");
@@ -59,9 +57,6 @@ describe("正式收盘日边界", () => {
   it("证券自身覆盖区间没有价格行时不冒充市场休市", () => {
     const context = {
       knownTradingDates: [],
-      coveredRanges: [
-        { startDate: "2026-07-27", endDate: "2026-07-28" },
-      ],
     };
     expect(tradeDateStatus("2026-07-27", context)).toBe("unknown");
     expect(isConfirmedMarketClosureRange("2026-02-15", "2026-02-23")).toBe(
@@ -82,6 +77,22 @@ describe("正式收盘日边界", () => {
   it("官方安排未发布前不猜测 2027 年工作日休市", () => {
     expect(isConfirmedMarketClosureDate("2027-02-08")).toBe(false);
     expect(isConfirmedMarketClosureDate("2027-02-07")).toBe(true);
+  });
+
+  it("当前发布年度必须具有官方日历，并公开年度来源诊断", () => {
+    expect(() => assertCurrentYearCalendarOfficial()).not.toThrow();
+    expect(
+      marketCalendarDiagnostics().find((item) => item.year === 2026),
+    ).toMatchObject({
+      status: "official",
+      source: expect.stringContaining("sse.com.cn"),
+    });
+    expect(
+      marketCalendarDiagnostics().find((item) => item.year === 2027),
+    ).toMatchObject({
+      status: "pending_official_schedule",
+      source: null,
+    });
   });
 
   it("节假日期间的请求上界回退到最近候选交易日", () => {

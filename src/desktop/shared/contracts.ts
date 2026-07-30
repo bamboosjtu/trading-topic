@@ -28,6 +28,23 @@ export interface MarketDataProvenance {
   emptyEvidence?: "exchange_calendar" | "outside_listing";
 }
 
+export type MarketTailStatus =
+  | "complete"
+  | "confirmed_non_trading"
+  | "incomplete";
+
+export interface MarketFetchResult<
+  T,
+  P extends MarketDataProvenance = MarketDataProvenance,
+> {
+  rows: T[];
+  requestedThrough: string;
+  dataCutoff: string | null;
+  tailStatus: MarketTailStatus;
+  issues: string[];
+  provenance: P;
+}
+
 export interface PricePoint {
   date: string;
   close: number;
@@ -354,7 +371,8 @@ export interface MarketRefreshResult {
   overview: PositionsOverview;
   requestedCutoff: string | null;
   actualCutoff: string | null;
-  tailComplete: boolean;
+  tailStatus: MarketTailStatus;
+  issues: string[];
 }
 
 export interface LedgerQuery {
@@ -521,7 +539,7 @@ export interface AppSettings {
 export interface DividendReinvestmentInput {
   symbol: string;
   instrumentName?: string;
-  securityType?: SecurityType;
+  securityType: SecurityType;
   dividendDate: string;
   dividendAmount: number;
   perShare?: number;
@@ -551,7 +569,6 @@ export interface HealthResponse {
   status: "ok";
   version: string;
   storage: "sqlite";
-  dataCutoff: string | null;
 }
 
 export interface ExportResult {
@@ -567,8 +584,30 @@ export interface RestoreResult extends ExportResult {
 export interface StockInfo {
   symbol: string;
   name: string;
-  /** 旧快照缺失时按代码和名称保守推断；新目录必须显式写入。 */
-  securityType?: SecurityType;
+  securityType: SecurityType;
+}
+
+export interface DirectoryProvenance {
+  source: string;
+  primarySource: string;
+  fallbackUsed: boolean;
+  fallbackReason?: string;
+  fetchedAt: string;
+}
+
+export interface StoredStockInfo extends StockInfo, DirectoryProvenance {}
+
+export interface MarketCalendarDiagnostic {
+  year: number;
+  status: "official" | "pending_official_schedule";
+  source: string | null;
+}
+
+export interface AppDiagnostics {
+  schemaVersion: number;
+  stockDirectory: DirectoryProvenance | null;
+  etfDirectory: DirectoryProvenance | null;
+  marketCalendars: MarketCalendarDiagnostic[];
 }
 
 export type BacktestChartMetric = "kline" | "return" | "drawdown";
@@ -642,6 +681,7 @@ export interface DesktopApi {
   ): Promise<LedgerEntry>;
   reverseLedger(entryId: string, reason: string): Promise<LedgerEntry>;
   getSettings(): Promise<AppSettings>;
+  getDiagnostics(): Promise<AppDiagnostics>;
   exportBackup(): Promise<ExportResult>;
   restoreBackup(): Promise<RestoreResult>;
   exportLogs(): Promise<ExportResult>;

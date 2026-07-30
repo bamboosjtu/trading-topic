@@ -33,8 +33,8 @@ import {
   type DailyAttribution,
 } from "./dailyAttribution";
 import {
-  inferSecurityType,
   namesMap,
+  requiredSecurityType,
   securityTypesMap,
   toLedgerRecord,
 } from "./liveViewSupport";
@@ -411,8 +411,7 @@ export function buildPositionsOverview(
     return {
       symbol,
       name: names.get(symbol) ?? symbol,
-      securityType:
-        securityTypes.get(symbol) ?? inferSecurityType(symbol, names.get(symbol)),
+      securityType: requiredSecurityType(symbol, securityTypes),
       quantity: position.quantity,
       cost: position.cost,
       // 保留原始精度，避免展示值反算后无法对账累计买入支出。

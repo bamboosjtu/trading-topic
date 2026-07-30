@@ -1,4 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
+import { createHash } from "node:crypto";
 import {
   BACKTEST_CALIBER_VERSION,
   RECENT_BACKTEST_EXPERIMENT_LIMIT,
@@ -9,14 +10,17 @@ import type {
   BacktestExperimentSummary,
   BacktestResult,
   BacktestWorkspaceState,
+  DirectoryProvenance,
   DividendEvent,
   LedgerEntry,
   MarketDataProvenance,
   PricePoint,
+  StoredStockInfo,
   StockInfo,
 } from "../../shared/contracts";
 
-const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+const SCHEMA_FINGERPRINT = "stock-income-r1-schema-2-2026-07-30";
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -77,12 +81,7 @@ interface BackupPayload {
     payload_json: string;
   }>;
   settings: AppSettings;
-  stockUniverse: Array<
-    StockInfo & {
-      source: string;
-      fetchedAt: string;
-    }
-  >;
+  stockUniverse: StoredStockInfo[];
   backtestWorkspace: BacktestWorkspaceState | null;
 }
 
@@ -135,17 +134,52 @@ function rows<T>(
   return database.prepare(sql).all(...parameters) as T[];
 }
 
+function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
+  const schema = rows<{
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }>(
+    database,
+    `SELECT type, name, tbl_name, sql
+     FROM sqlite_master
+     WHERE name NOT LIKE 'sqlite_%'
+     ORDER BY type, name`,
+  ).map((item) => ({
+    ...item,
+    sql: item.sql?.replace(/\s+/g, " ").trim() ?? null,
+  }));
+  return createHash("sha256")
+    .update(JSON.stringify(schema), "utf8")
+    .digest("hex");
+}
+
+function isAppSettings(value: unknown): value is AppSettings {
+  if (!value || typeof value !== "object") return false;
+  const settings = value as Partial<AppSettings>;
+  return (
+    settings.priceSource === "tencent_sina" &&
+    settings.dividendSource === "eastmoney" &&
+    settings.commissionRate === 0 &&
+    settings.minimumCommission === 0 &&
+    settings.caliberVersion === BACKTEST_CALIBER_VERSION
+  );
+}
+
 export class LocalDatabase {
   private constructor(private readonly database: BetterSqlite3.Database) {}
 
   static async open(filePath: string): Promise<LocalDatabase> {
     const database = new BetterSqlite3(filePath);
     database.pragma("foreign_keys = ON");
-    database.pragma("journal_mode = WAL");
-    database.pragma("synchronous = NORMAL");
     const store = new LocalDatabase(database);
     try {
       store.initializeSchema();
+      // 只有当前 Schema 验证通过后才切换持久化模式，避免打开不兼容
+      // 数据库时先写文件头或创建 WAL 辅助文件。
+      database.pragma("journal_mode = WAL");
+      database.pragma("synchronous = NORMAL");
       return store;
     } catch (error) {
       database.close();
@@ -155,6 +189,10 @@ export class LocalDatabase {
 
   close(): void {
     if (this.database.open) this.database.close();
+  }
+
+  getSchemaVersion(): number {
+    return SCHEMA_VERSION;
   }
 
   private initializeSchema(): void {
@@ -187,6 +225,7 @@ export class LocalDatabase {
           "app_logs",
           "stock_universe",
           "backtest_workspace",
+          "schema_metadata",
         ];
         const missingTables = requiredTables.filter(
           (table) => !existingTables.includes(table),
@@ -194,6 +233,22 @@ export class LocalDatabase {
         if (missingTables.length) {
           throw new Error(
             `Schema ${SCHEMA_VERSION} 数据库结构不完整：缺少 ${missingTables.join("、")}`,
+          );
+        }
+        const metadata = this.database
+          .prepare(
+            "SELECT fingerprint, shape_fingerprint FROM schema_metadata WHERE id = 1",
+          )
+          .get() as
+          | { fingerprint: string; shape_fingerprint: string }
+          | undefined;
+        if (
+          metadata?.fingerprint !== SCHEMA_FINGERPRINT ||
+          metadata.shape_fingerprint !==
+            schemaShapeFingerprint(this.database)
+        ) {
+          throw new Error(
+            `Schema ${SCHEMA_VERSION} 指纹不匹配；MVP 不兼容旧数据库`,
           );
         }
         return;
@@ -297,11 +352,19 @@ export class LocalDatabase {
         security_type TEXT NOT NULL
           CHECK (security_type IN ('stock', 'etf')),
         source TEXT NOT NULL,
+        primary_source TEXT NOT NULL,
+        fallback_used INTEGER NOT NULL CHECK (fallback_used IN (0, 1)),
+        fallback_reason TEXT,
         fetched_at TEXT NOT NULL
       );
       CREATE TABLE backtest_workspace (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         state_json TEXT NOT NULL
+      );
+      CREATE TABLE schema_metadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        fingerprint TEXT NOT NULL,
+        shape_fingerprint TEXT NOT NULL
       );
       CREATE INDEX idx_backtest_experiments_created_at
         ON backtest_experiments(created_at DESC);
@@ -310,6 +373,16 @@ export class LocalDatabase {
       CREATE INDEX idx_backtest_results_strategy
         ON backtest_results(strategy_key);
     `);
+      this.database
+        .prepare(
+          `INSERT INTO schema_metadata(
+             id, fingerprint, shape_fingerprint
+           ) VALUES (1, ?, ?)`,
+        )
+        .run(
+          SCHEMA_FINGERPRINT,
+          schemaShapeFingerprint(this.database),
+        );
       this.database.pragma(`user_version = ${SCHEMA_VERSION}`);
       this.database
         .prepare(
@@ -548,43 +621,19 @@ export class LocalDatabase {
     return row ? (JSON.parse(row.result_json) as BacktestResult) : null;
   }
 
-  replaceStockUniverse(
-    stocks: StockInfo[],
-    source: string,
-    fetchedAt: string,
-  ): void {
-    const insert = this.database.prepare(
-      "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
-    );
-    this.database.transaction(() => {
-      this.database.exec("DELETE FROM stock_universe");
-      for (const stock of stocks) {
-        insert.run(
-          stock.symbol,
-          stock.name,
-          stock.securityType ?? "stock",
-          source,
-          fetchedAt,
-        );
-      }
-    })();
-  }
-
   replaceStockUniverseType(
     stocks: StockInfo[],
     securityType: "stock" | "etf",
-    source: string,
-    fetchedAt: string,
+    provenance: DirectoryProvenance,
   ): void {
-    if (
-      stocks.some(
-        (stock) => (stock.securityType ?? "stock") !== securityType,
-      )
-    ) {
+    if (stocks.some((stock) => stock.securityType !== securityType)) {
       throw new Error("证券目录类型与替换范围不一致");
     }
     const insert = this.database.prepare(
-      "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+      `INSERT INTO stock_universe(
+         symbol, name, security_type, source, primary_source, fallback_used,
+         fallback_reason, fetched_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.database.transaction(() => {
       this.database
@@ -595,32 +644,61 @@ export class LocalDatabase {
           stock.symbol,
           stock.name,
           securityType,
-          source,
-          fetchedAt,
+          provenance.source,
+          provenance.primarySource,
+          provenance.fallbackUsed ? 1 : 0,
+          provenance.fallbackReason ?? null,
+          provenance.fetchedAt,
         );
       }
     })();
   }
 
-  listStockUniverse(): Array<
-    StockInfo & { source: string; fetchedAt: string }
-  > {
+  listStockUniverse(): StoredStockInfo[] {
     return rows<{
       symbol: string;
       name: string;
       security_type: "stock" | "etf";
       source: string;
+      primary_source: string;
+      fallback_used: number;
+      fallback_reason: string | null;
       fetched_at: string;
     }>(
       this.database,
-      "SELECT symbol, name, security_type, source, fetched_at FROM stock_universe ORDER BY symbol",
+      `SELECT symbol, name, security_type, source, primary_source,
+              fallback_used, fallback_reason, fetched_at
+       FROM stock_universe ORDER BY symbol`,
     ).map((row) => ({
       symbol: row.symbol,
       name: row.name,
       securityType: row.security_type,
       source: row.source,
+      primarySource: row.primary_source,
+      fallbackUsed: Boolean(row.fallback_used),
+      ...(row.fallback_reason
+        ? { fallbackReason: row.fallback_reason }
+        : {}),
       fetchedAt: row.fetched_at,
     }));
+  }
+
+  getDirectoryProvenance(
+    securityType: "stock" | "etf",
+  ): DirectoryProvenance | null {
+    const row = this.listStockUniverse().find(
+      (item) => item.securityType === securityType,
+    );
+    if (!row) return null;
+    return {
+      source: row.source,
+      primarySource: row.primarySource,
+      fallbackUsed: row.fallbackUsed,
+      ...(row.fallbackReason
+        ? { fallbackReason: row.fallbackReason }
+        : {}),
+      fetchedAt: row.fetchedAt,
+    };
   }
 
   getBacktestWorkspace(): BacktestWorkspaceState | null {
@@ -1013,7 +1091,9 @@ export class LocalDatabase {
         (payload as Partial<BackupPayload>).liveMarketCoverage,
       ) ||
       !Array.isArray((payload as Partial<BackupPayload>).corporateActions) ||
-      !Array.isArray((payload as Partial<BackupPayload>).stockUniverse)
+      !Array.isArray((payload as Partial<BackupPayload>).stockUniverse) ||
+      !isAppSettings((payload as Partial<BackupPayload>).settings) ||
+      !Object.prototype.hasOwnProperty.call(payload, "backtestWorkspace")
     ) {
       throw new Error("备份结构或 schema 版本不兼容");
     }
@@ -1026,10 +1106,28 @@ export class LocalDatabase {
     ]);
     if (
       backup.ledgerEntries.some(
-        (entry) => !allowedEntryTypes.has(entry.type),
+        (entry) =>
+          !allowedEntryTypes.has(entry.type) ||
+          (entry.type !== "adjustment" &&
+            (!entry.securityType ||
+              !["stock", "etf"].includes(entry.securityType))),
       )
     ) {
-      throw new Error("备份包含不属于 R1 的投资事实类型");
+      throw new Error("备份包含不属于当前 R1 schema 的投资事实");
+    }
+    if (
+      backup.stockUniverse.some(
+        (stock) =>
+          !/^\d{6}$/.test(stock.symbol) ||
+          !stock.name ||
+          !["stock", "etf"].includes(stock.securityType) ||
+          !stock.source ||
+          !stock.primarySource ||
+          typeof stock.fallbackUsed !== "boolean" ||
+          !Number.isFinite(Date.parse(stock.fetchedAt)),
+      )
+    ) {
+      throw new Error("备份包含不属于当前 R1 schema 的证券目录");
     }
     const invalidMarketRow = [
       ...backup.marketPrices,
@@ -1167,16 +1265,22 @@ export class LocalDatabase {
       }
       this.database
         .prepare("INSERT INTO settings(key, value_json) VALUES ('app', ?)")
-        .run(JSON.stringify(backup.settings ?? DEFAULT_SETTINGS));
+        .run(JSON.stringify(backup.settings));
       const insertStock = this.database.prepare(
-        "INSERT INTO stock_universe(symbol, name, security_type, source, fetched_at) VALUES (?, ?, ?, ?, ?)",
+        `INSERT INTO stock_universe(
+           symbol, name, security_type, source, primary_source, fallback_used,
+           fallback_reason, fetched_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const stock of backup.stockUniverse) {
         insertStock.run(
           stock.symbol,
           stock.name,
-          stock.securityType ?? "stock",
+          stock.securityType,
           stock.source,
+          stock.primarySource,
+          stock.fallbackUsed ? 1 : 0,
+          stock.fallbackReason ?? null,
           stock.fetchedAt,
         );
       }

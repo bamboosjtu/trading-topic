@@ -71,16 +71,25 @@ describe("AppService 冷启动恢复", () => {
     const databasePath = join(directory, "app.sqlite");
     const database = await LocalDatabase.open(databasePath);
     openDatabases.push(database);
-    database.replaceStockUniverse(
-      completeStockUniverse([
-        { symbol: "601398", name: "工商银行" },
-        { symbol: "601288", name: "农业银行" },
-        { symbol: "601166", name: "兴业银行" },
-        { symbol: "601939", name: "建设银行" },
-      ]),
-      "cold-start-fixture",
-      new Date().toISOString(),
-    );
+    const fetchedAt = new Date().toISOString();
+    const universe = completeStockUniverse([
+      { symbol: "601398", name: "工商银行", securityType: "stock" },
+      { symbol: "601288", name: "农业银行", securityType: "stock" },
+      { symbol: "601166", name: "兴业银行", securityType: "stock" },
+      { symbol: "601939", name: "建设银行", securityType: "stock" },
+    ]);
+    for (const securityType of ["stock", "etf"] as const) {
+      database.replaceStockUniverseType(
+        universe.filter((row) => row.securityType === securityType),
+        securityType,
+        {
+          source: "cold-start-fixture",
+          primarySource: "cold-start-fixture",
+          fallbackUsed: false,
+          fetchedAt,
+        },
+      );
+    }
 
     vi.mocked(fetchUnadjustedPrices).mockImplementation(async (symbol) => {
       const offset = symbols.indexOf(symbol) * 0.1;
@@ -90,6 +99,10 @@ describe("AppService 冷启动恢复", () => {
           { date: "2024-02-01", close: 4.8 + offset },
           { date: "2024-03-01", close: 5.3 + offset },
         ],
+        requestedThrough: "2024-03-01",
+        dataCutoff: "2024-03-01",
+        tailStatus: "complete",
+        issues: [],
         provenance: {
           source: "tencent",
           primarySource: "tencent",
@@ -133,6 +146,10 @@ describe("AppService 冷启动恢复", () => {
             adjustment: "qfq",
           },
         ],
+        requestedThrough: "2024-03-01",
+        dataCutoff: "2024-03-01",
+        tailStatus: "complete",
+        issues: [],
         provenance: {
           source: "tencent",
           primarySource: "tencent",

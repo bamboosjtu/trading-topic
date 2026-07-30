@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AppDiagnostics,
   BacktestExperiment,
   BacktestExperimentSummary,
   BacktestRequest,
@@ -22,7 +23,6 @@ import type {
   LedgerRecordView,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
-import { securityTypeForInstrument } from "../../shared/instruments";
 import {
   BACKTEST_CALIBER_VERSION,
   DATA_SOURCE_THROTTLE_MS,
@@ -76,6 +76,7 @@ import {
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   latestWeekdayCandidate,
+  marketCalendarDiagnostics,
   type TradeDateContext,
 } from "../domain/marketCalendar";
 
@@ -201,6 +202,15 @@ function incomePriceRanges(
 export class AppService {
   constructor(private readonly database: LocalDatabase) {}
 
+  getDiagnostics(): AppDiagnostics {
+    return {
+      schemaVersion: this.database.getSchemaVersion(),
+      stockDirectory: this.database.getDirectoryProvenance("stock"),
+      etfDirectory: this.database.getDirectoryProvenance("etf"),
+      marketCalendars: marketCalendarDiagnostics(),
+    };
+  }
+
   async listAStocks(): Promise<StockInfo[]> {
     const cached = this.database
       .listStockUniverse()
@@ -218,8 +228,7 @@ export class AppService {
       this.database.replaceStockUniverseType(
         response.rows,
         "stock",
-        response.source,
-        response.fetchedAt,
+        response,
       );
       this.database.log(
         "info",
@@ -252,19 +261,26 @@ export class AppService {
       return cachedEtfs;
     }
     try {
-      const rows = await fetchDomesticEtfUniverse();
-      if (!isCompleteEtfUniverse(rows)) {
-        throw new Error(`境内 ETF 目录不完整：仅返回 ${rows.length} 个标的`);
+      const response = await fetchDomesticEtfUniverse();
+      if (!isCompleteEtfUniverse(response.rows)) {
+        throw new Error(
+          `境内 ETF 目录不完整：仅返回 ${response.rows.length} 个标的`,
+        );
       }
-      const fetchedAt = new Date().toISOString();
       this.database.replaceStockUniverseType(
-        rows,
+        response.rows,
         "etf",
-        "东方财富 / 新浪财经境内交易所 ETF 代码表（产品域独立适配）",
-        fetchedAt,
+        response,
       );
-      this.database.log("info", `已刷新境内 ETF 代码表：${rows.length} 个标的`);
-      return rows;
+      this.database.log(
+        "info",
+        `已刷新境内 ETF 代码表：${response.rows.length} 个标的；实际来源 ${response.source}${
+          response.fallbackUsed
+            ? `；东方财富失败：${response.fallbackReason ?? "未知原因"}`
+            : ""
+        }`,
+      );
+      return response.rows;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (cachedIsComplete) {
@@ -309,11 +325,7 @@ export class AppService {
     );
     for (const symbol of canonicalRequest.symbols) {
       const cachedInstrument = cachedInstrumentMap.get(symbol);
-      if (
-        securityTypeForInstrument(
-          cachedInstrument ?? { symbol, name: "" },
-        ) !== "stock"
-      ) {
+      if (cachedInstrument && cachedInstrument.securityType !== "stock") {
         throw new Error("历史回测只支持A股股票");
       }
     }
@@ -350,6 +362,16 @@ export class AppService {
           canonicalRequest.endDate,
         ),
       ]);
+      if (prices.tailStatus === "incomplete") {
+        throw new Error(
+          `${symbol} 严格回测行情尾部不完整：${prices.issues.join("；") || `仅更新至 ${prices.dataCutoff ?? "未知日期"}`}`,
+        );
+      }
+      if (adjustedBars.tailStatus === "incomplete") {
+        throw new Error(
+          `${symbol} 严格回测 K 线尾部不完整：${adjustedBars.issues.join("；") || `仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}`}`,
+        );
+      }
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
       if (index > 0) {
         await new Promise((resolve) =>
@@ -618,6 +640,14 @@ export class AppService {
           requestedFrom: range.startDate,
           requestedThrough: range.endDate,
         });
+        if (response.tailStatus === "incomplete") {
+          issues.push(
+            `${range.symbol} ${range.startDate}..${range.endDate} 行情尾部不完整：${
+              response.issues.join("；") ||
+              `仅更新至 ${response.dataCutoff ?? "暂无可用日期"}`
+            }`,
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         issues.push(
@@ -653,7 +683,8 @@ export class AppService {
         overview: this.getPositionsOverview(),
         requestedCutoff: null,
         actualCutoff: null,
-        tailComplete: true,
+        tailStatus: "complete",
+        issues: [],
       };
     }
     const endDate = this.completedMarketDate();
@@ -668,6 +699,7 @@ export class AppService {
     }));
     const missing = this.missingLivePriceRanges(requested);
     const snapshots: MarketDataCacheEntry[] = [];
+    const fetchIssues: string[] = [];
     for (const range of missing) {
       const response = await fetchMarketPrices(
         range.symbol,
@@ -682,6 +714,14 @@ export class AppService {
         requestedFrom: range.startDate,
         requestedThrough: range.endDate,
       });
+      if (response.tailStatus === "incomplete") {
+        fetchIssues.push(
+          `${range.symbol} 行情尾部不完整：${
+            response.issues.join("；") ||
+            `仅更新至 ${response.dataCutoff ?? "暂无可用日期"}`
+          }`,
+        );
+      }
     }
     // 持仓刷新仍保持全成功后统一写入，避免半成功估值。
     this.database.saveLiveMarketPriceSnapshots(snapshots);
@@ -709,13 +749,17 @@ export class AppService {
     const refreshIssue = tailComplete
       ? null
       : `行情仅更新至 ${actualCutoff ?? "暂无可用日期"}，请求截止 ${endDate} 的尾部尚未确认完整`;
+    const issues = [
+      ...fetchIssues,
+      ...(refreshIssue ? [refreshIssue] : []),
+    ];
     const resultOverview = refreshIssue
       ? {
           ...overview,
           quality: {
             ...overview.quality,
             status: "partial" as const,
-            issues: [...new Set([...overview.quality.issues, refreshIssue])],
+            issues: [...new Set([...overview.quality.issues, ...issues])],
           },
         }
       : overview;
@@ -729,7 +773,8 @@ export class AppService {
       overview: resultOverview,
       requestedCutoff: endDate,
       actualCutoff,
-      tailComplete,
+      tailStatus: tailComplete ? "complete" : "incomplete",
+      issues,
     };
   }
 

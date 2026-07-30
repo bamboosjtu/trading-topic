@@ -299,6 +299,70 @@ a:focus-visible,
     0 8px 28px -24px rgba(20, 42, 76, 0.22);
 }
 
+.settings-page {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.settings-loading,
+.settings-section {
+  margin-bottom: 14px;
+  padding: 18px 20px;
+}
+
+.settings-section-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 15px;
+  color: var(--color-brand);
+  font-size: 17px;
+}
+
+.settings-section-title h2 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.settings-section-title p {
+  margin: 3px 0 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.settings-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-source-card {
+  min-height: 180px;
+  padding: 15px 16px;
+  border: 1px solid var(--color-stroke-soft);
+  border-radius: 7px;
+  background: #fafcff;
+}
+
+.settings-source-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--color-text-strong);
+  font-size: 13px;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .data-row {
   transition: background-color 140ms ease;
 }

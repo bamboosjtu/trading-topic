@@ -71,7 +71,9 @@ describe("腾讯主源与新浪整段兜底", () => {
         fallback,
         new Date("2026-07-28T08:00:00Z"),
       ),
-    ).rejects.toThrow("无法证明请求区间没有交易数据");
+    ).rejects.toThrow(
+      "腾讯行情不可用（HTTP 503）；新浪完整区间兜底失败（未返回可用行情）",
+    );
   });
 
   it("腾讯结构异常且新浪返回空时拒绝生成永久空覆盖", async () => {
@@ -91,7 +93,9 @@ describe("腾讯主源与新浪整段兜底", () => {
         fallback,
         new Date("2026-07-28T08:00:00Z"),
       ),
-    ).rejects.toThrow("无法证明请求区间没有交易数据");
+    ).rejects.toThrow(
+      "腾讯行情不可用（腾讯行情返回了请求区间之外的交易日）",
+    );
   });
 
   it("两源均空但区间包含正常交易日时保持待重试而不是确认休市", async () => {
@@ -129,7 +133,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         fallback,
         new Date("2026-07-28T08:00:00Z"),
       ),
-    ).rejects.toThrow("无法验证腾讯的异常候选行情");
+    ).rejects.toThrow("腾讯行情不可用（腾讯行情包含非法收盘价）");
   });
 
   it("腾讯 HTTP 失败时由新浪获取同一完整区间并记录原因", async () => {
@@ -193,6 +197,72 @@ describe("腾讯主源与新浪整段兜底", () => {
     expect(result.rows.at(-1)?.date).toBe("2026-07-29");
   });
 
+  it("腾讯尾部不完整且新浪为空时显式返回 incomplete 和兜底问题", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-27",
+      "2026-07-29",
+      primary,
+      fallback,
+      new Date("2026-07-29T08:00:00Z"),
+    );
+
+    expect(result).toMatchObject({
+      requestedThrough: "2026-07-29",
+      dataCutoff: "2026-07-28",
+      tailStatus: "incomplete",
+      issues: expect.arrayContaining([
+        expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
+        "新浪在请求区间返回空数据",
+      ]),
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-29T08:00:00.000Z",
+        dataCutoff: "2026-07-28",
+        adjustment: "none",
+      },
+    });
+  });
+
+  it("新浪非空结果也校验尾部，两源均不完整时选择较新的截止日", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([
+      { date: "2026-07-27", close: 5 },
+      { date: "2026-07-28", close: 5.1 },
+    ]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([
+      { date: "2026-07-27", close: 5 },
+    ]);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-27",
+      "2026-07-30",
+      primary,
+      fallback,
+      new Date("2026-07-30T08:00:00Z"),
+    );
+
+    expect(result.tailStatus).toBe("incomplete");
+    expect(result.dataCutoff).toBe("2026-07-28");
+    expect(result.provenance.source).toBe("tencent");
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
+        expect.stringContaining("新浪行情仅更新至 2026-07-27"),
+      ]),
+    );
+  });
+
   it("收盘前不要求取得尚未完成的当天日线", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
@@ -230,21 +300,41 @@ describe("腾讯主源与新浪整段兜底", () => {
         high: 5.2,
         low: 4.9,
         close: 5.1,
-        volume: -1,
+        volume: 100,
         adjustment: "qfq",
       },
     ]);
     const fallback = provider("sina", 6);
+    vi.mocked(fallback.fetchAdjustedBars).mockResolvedValueOnce([
+      {
+        date: "2026-07-28",
+        open: 6,
+        high: 6.2,
+        low: 5.9,
+        close: 6.1,
+        volume: 100,
+        adjustment: "qfq",
+      },
+      {
+        date: "2026-07-29",
+        open: 6.1,
+        high: 6.3,
+        low: 6,
+        close: 6.2,
+        volume: 100,
+        adjustment: "qfq",
+      },
+    ]);
 
     await expect(
       fetchWithProviderFallback(
         "bars",
         "601398",
         "2026-07-27",
-        "2026-07-28",
+        "2026-07-29",
         primary,
         fallback,
-        new Date("2026-07-28T08:00:00Z"),
+        new Date("2026-07-29T08:00:00Z"),
       ),
     ).rejects.toThrow("腾讯与新浪行情结果不一致");
   });

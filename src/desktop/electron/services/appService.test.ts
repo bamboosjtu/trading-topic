@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BacktestRequest, StockInfo } from "../../shared/contracts";
+import type {
+  BacktestRequest,
+  MarketDataProvenance,
+  MarketFetchResult,
+  StockInfo,
+} from "../../shared/contracts";
 import {
   BACKTEST_CALIBER_VERSION,
   ETF_UNIVERSE_MIN_SIZE,
@@ -78,13 +83,47 @@ function completeStockUniverse(overrides: StockInfo[] = []): StockInfo[] {
   return [...unique.values()];
 }
 
+function seedStockUniverse(
+  database: LocalDatabase,
+  stocks: StockInfo[],
+  source: string,
+  fetchedAt: string,
+): void {
+  for (const securityType of ["stock", "etf"] as const) {
+    const rows = stocks.filter((stock) => stock.securityType === securityType);
+    if (!rows.length) continue;
+    database.replaceStockUniverseType(rows, securityType, {
+      source,
+      primarySource: source,
+      fallbackUsed: false,
+      fetchedAt,
+    });
+  }
+}
+
+function completeMarketResponse<
+  T extends { date: string },
+  P extends MarketDataProvenance,
+>(
+  response: { rows: T[]; provenance: P },
+): MarketFetchResult<T, P> {
+  return {
+    ...response,
+    requestedThrough:
+      response.provenance.dataCutoff ?? response.rows.at(-1)?.date ?? "",
+    dataCutoff: response.provenance.dataCutoff,
+    tailStatus: "complete" as const,
+    issues: [],
+  };
+}
+
 describe("AppService 股票目录", () => {
   it("七天内直接使用完整 A 股 SQLite 快照，不重复联网", async () => {
     const { service, database } = await serviceWithDatabase();
     const snapshot = completeStockUniverse([
-      { symbol: "000001", name: "平安银行" },
+      { symbol: "000001", name: "平安银行", securityType: "stock" },
     ]);
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       snapshot,
       "cached",
       new Date().toISOString(),
@@ -103,20 +142,23 @@ describe("AppService 股票目录", () => {
 
   it("不把新鲜的 7 条旧缓存当成全 A 股目录，并立即重新拉取", async () => {
     const { service, database } = await serviceWithDatabase();
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       Array.from({ length: 7 }, (_, index) => ({
         symbol: String(601000 + index),
         name: `旧银行股${index}`,
+        securityType: "stock" as const,
       })),
       "legacy-fallback",
       new Date().toISOString(),
     );
     const refreshed = completeStockUniverse([
-      { symbol: "000001", name: "平安银行" },
+      { symbol: "000001", name: "平安银行", securityType: "stock" },
     ]).filter((item) => item.securityType !== "etf");
     vi.mocked(fetchAStockUniverse).mockResolvedValue({
       rows: refreshed,
       source: "official-exchanges",
+      primarySource: "official-exchanges",
+      fallbackUsed: false,
       fetchedAt: "2026-07-26T00:00:00Z",
     });
 
@@ -130,9 +172,9 @@ describe("AppService 股票目录", () => {
   it("刷新失败时回退到上次成功的全市场快照", async () => {
     const { service, database } = await serviceWithDatabase();
     const snapshot = completeStockUniverse([
-      { symbol: "601398", name: "工商银行" },
+      { symbol: "601398", name: "工商银行", securityType: "stock" },
     ]);
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       snapshot,
       "cached",
       "2020-01-01T00:00:00Z",
@@ -154,8 +196,8 @@ describe("AppService 股票目录", () => {
 
   it("没有完整快照且刷新失败时明确报错，不回退到 7 只银行股", async () => {
     const { service, database } = await serviceWithDatabase();
-    database.replaceStockUniverse(
-      [{ symbol: "601398", name: "工商银行" }],
+    seedStockUniverse(database,
+      [{ symbol: "601398", name: "工商银行", securityType: "stock" }],
       "legacy-fallback",
       new Date().toISOString(),
     );
@@ -176,6 +218,8 @@ describe("AppService 股票目录", () => {
     vi.mocked(fetchAStockUniverse).mockResolvedValue({
       rows: stocks,
       source: "official-exchanges",
+      primarySource: "official-exchanges",
+      fallbackUsed: false,
       fetchedAt: "2026-07-29T00:00:00Z",
     });
     vi.mocked(fetchDomesticEtfUniverse).mockRejectedValue(
@@ -196,9 +240,17 @@ describe("AppService 股票目录", () => {
     vi.mocked(fetchAStockUniverse).mockResolvedValue({
       rows: stocks,
       source: "official-exchanges",
+      primarySource: "official-exchanges",
+      fallbackUsed: false,
       fetchedAt: "2026-07-29T00:00:00Z",
     });
-    vi.mocked(fetchDomesticEtfUniverse).mockResolvedValue(etfs);
+    vi.mocked(fetchDomesticEtfUniverse).mockResolvedValue({
+      rows: etfs,
+      source: "eastmoney",
+      primarySource: "eastmoney",
+      fallbackUsed: false,
+      fetchedAt: "2026-07-29T00:00:00Z",
+    });
 
     const result = await service.listInstruments();
 
@@ -212,14 +264,14 @@ describe("AppService 股票目录", () => {
 describe("AppService 回测试验", () => {
   it("每次运行返回并保存新的不可变实验", async () => {
     const { service, database } = await serviceWithDatabase();
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       completeStockUniverse([
-        { symbol: "601398", name: "工商银行" },
+      { symbol: "601398", name: "工商银行", securityType: "stock" },
       ]),
       "cached",
       new Date().toISOString(),
     );
-    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(completeMarketResponse({
       rows: [
         { date: "2024-01-02", close: 5 },
         { date: "2024-02-01", close: 5.2 },
@@ -233,8 +285,8 @@ describe("AppService 回测试验", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
-    });
-    vi.mocked(fetchAdjustedBars).mockResolvedValue({
+    }));
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(completeMarketResponse({
       rows: [
         {
           date: "2024-01-02",
@@ -264,7 +316,7 @@ describe("AppService 回测试验", () => {
         adjustment: "qfq",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
-    });
+    }));
     vi.mocked(fetchCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
@@ -350,7 +402,7 @@ describe("AppService 回测试验", () => {
         buyDay: 1,
       }),
     ).rejects.toThrow("历史回测只支持A股股票");
-    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
     expect(fetchAdjustedBars).not.toHaveBeenCalled();
     expect(fetchCorporateActions).not.toHaveBeenCalled();
@@ -400,15 +452,15 @@ describe("AppService 回测试验", () => {
 
   it("展示各自实际区间，并报告配股和非严格同区间比较", async () => {
     const { service, database } = await serviceWithDatabase();
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       completeStockUniverse([
-        { symbol: "601398", name: "工商银行" },
-        { symbol: "601916", name: "浙商银行" },
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+        { symbol: "601916", name: "浙商银行", securityType: "stock" },
       ]),
       "cached",
       new Date().toISOString(),
     );
-    vi.mocked(fetchUnadjustedPrices).mockImplementation(async (symbol) => ({
+    vi.mocked(fetchUnadjustedPrices).mockImplementation(async (symbol) => completeMarketResponse({
       rows:
         symbol === "601398"
           ? [
@@ -431,7 +483,7 @@ describe("AppService 回测试验", () => {
     }));
     vi.mocked(fetchAdjustedBars).mockImplementation(async (symbol) => {
       const close = symbol === "601398" ? 5 : 2.5;
-      return {
+      return completeMarketResponse({
         rows: [
           {
             date: symbol === "601398" ? "2024-01-02" : "2024-01-15",
@@ -452,7 +504,7 @@ describe("AppService 回测试验", () => {
           adjustment: "qfq",
           caliberVersion: BACKTEST_CALIBER_VERSION,
         },
-      };
+      });
     });
     vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => ({
       rows: [],
@@ -517,16 +569,16 @@ describe("AppService 回测试验", () => {
 
   it("任一标的数据获取失败时不写入回测行情缓存", async () => {
     const { service, database } = await serviceWithDatabase();
-    database.replaceStockUniverse(
+    seedStockUniverse(database,
       completeStockUniverse([
-        { symbol: "601398", name: "工商银行" },
-        { symbol: "601916", name: "浙商银行" },
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+        { symbol: "601916", name: "浙商银行", securityType: "stock" },
       ]),
       "cached",
       new Date().toISOString(),
     );
     vi.mocked(fetchUnadjustedPrices)
-      .mockResolvedValueOnce({
+      .mockResolvedValueOnce(completeMarketResponse({
         rows: [{ date: "2024-01-02", close: 5 }],
         provenance: {
           source: "tencent",
@@ -537,9 +589,9 @@ describe("AppService 回测试验", () => {
           adjustment: "none",
           caliberVersion: BACKTEST_CALIBER_VERSION,
         },
-      })
+      }))
       .mockRejectedValueOnce(new Error("第二个标的响应结构损坏"));
-    vi.mocked(fetchAdjustedBars).mockResolvedValue({
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(completeMarketResponse({
       rows: [
         {
           date: "2024-01-02",
@@ -560,7 +612,7 @@ describe("AppService 回测试验", () => {
         adjustment: "qfq",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
-    });
+    }));
     vi.mocked(fetchCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
@@ -588,6 +640,76 @@ describe("AppService 回测试验", () => {
     });
     expect(database.listBacktestExperiments()).toEqual([]);
   });
+
+  it("严格回测拒绝 incomplete 行情尾部且不保存 completed 实验", async () => {
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [{ date: "2024-02-28", close: 5 }],
+      requestedThrough: "2024-02-29",
+      dataCutoff: "2024-02-28",
+      tailStatus: "incomplete",
+      issues: ["腾讯尾部不完整", "新浪兜底失败"],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-30T00:00:00Z",
+        dataCutoff: "2024-02-28",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(
+      completeMarketResponse({
+        rows: [
+          {
+            date: "2024-02-29",
+            open: 5,
+            high: 5,
+            low: 5,
+            close: 5,
+            volume: 100,
+            adjustment: "qfq",
+          },
+        ],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-30T00:00:00Z",
+          dataCutoff: "2024-02-29",
+          adjustment: "qfq",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+    );
+
+    await expect(
+      service.runBacktest({
+        symbols: ["601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-02-29",
+        monthlyAmount: 3_000,
+        buyDay: 1,
+      }),
+    ).rejects.toThrow(
+      "601398 严格回测行情尾部不完整：腾讯尾部不完整；新浪兜底失败",
+    );
+    expect(fetchCorporateActions).not.toHaveBeenCalled();
+    expect(database.listBacktestExperiments()).toEqual([]);
+    expect(database.latestPrices()).toEqual({
+      prices: {},
+      dataCutoff: null,
+    });
+  });
 });
 
 describe("AppService 实盘流水", () => {
@@ -596,8 +718,8 @@ describe("AppService 实盘流水", () => {
 
     const result = service.addDividendReinvestment({
       symbol: "601398",
-      instrumentName: "工商银行",
       securityType: "stock",
+      instrumentName: "工商银行",
       dividendDate: "2026-07-10",
       dividendAmount: 300,
       reinvestmentDate: "2026-07-13",
@@ -656,6 +778,7 @@ describe("AppService 实盘流水", () => {
     expect(() =>
       service.previewDividendReinvestment({
         symbol: "601398",
+        securityType: "stock",
         dividendDate: "2026-07-14",
         dividendAmount: 300,
         reinvestmentDate: "2026-07-13",
@@ -665,6 +788,7 @@ describe("AppService 实盘流水", () => {
     ).toThrow("再投入日期不得早于分红到账日期");
     const preview = service.previewDividendReinvestment({
       symbol: "601398",
+      securityType: "stock",
       dividendDate: "2026-07-10",
       dividendAmount: 300,
       reinvestmentDate: "2026-07-13",
@@ -737,6 +861,7 @@ describe("AppService 实盘流水", () => {
       type: "buy",
       businessDate: "2026-01-05",
       symbol: "601398",
+      securityType: "stock",
       price: 5,
       quantity: 100,
     });
@@ -750,6 +875,7 @@ describe("AppService 实盘流水", () => {
         type: "buy",
         businessDate: "2026-01-05",
         symbol: "601398",
+        securityType: "stock",
         price: 4.9,
         quantity: 100,
       }),
@@ -763,6 +889,7 @@ describe("AppService 实盘流水", () => {
         type: "buy" as const,
         businessDate: "2025-01-02",
         symbol: "601398",
+        securityType: "stock" as const,
         price: 5,
         quantity: 37,
       },
@@ -770,6 +897,7 @@ describe("AppService 实盘流水", () => {
         type: "sell" as const,
         businessDate: "2025-02-05",
         symbol: "601398",
+        securityType: "stock" as const,
         price: 5.2,
         quantity: 37,
       },
@@ -777,6 +905,7 @@ describe("AppService 实盘流水", () => {
         type: "buy" as const,
         businessDate: "2026-05-06",
         symbol: "601398",
+        securityType: "stock" as const,
         price: 5.3,
         quantity: 37,
       },
@@ -784,6 +913,7 @@ describe("AppService 实盘流水", () => {
         type: "sell" as const,
         businessDate: "2026-06-08",
         symbol: "601398",
+        securityType: "stock" as const,
         price: 5.4,
         quantity: 37,
       },
@@ -791,6 +921,7 @@ describe("AppService 实盘流水", () => {
         type: "buy" as const,
         businessDate: "2026-07-01",
         symbol: "601939",
+        securityType: "stock" as const,
         price: 7,
         quantity: 101,
       },
@@ -798,7 +929,7 @@ describe("AppService 实盘流水", () => {
       service.addLedger(input);
     }
     vi.mocked(fetchUnadjustedPrices).mockImplementation(
-      async (symbol, startDate, endDate) => ({
+      async (symbol, startDate, endDate) => completeMarketResponse({
         rows: [
           { date: startDate, close: symbol === "601398" ? 5 : 7 },
           { date: endDate, close: symbol === "601398" ? 5.2 : 7.2 },
@@ -859,10 +990,11 @@ describe("AppService 实盘流水", () => {
       type: "buy",
       businessDate: "2026-05-06",
       symbol: "601398",
+      securityType: "stock",
       price: 5,
       quantity: 100,
     });
-    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(completeMarketResponse({
       rows: [
         { date: "2026-05-06", close: 5 },
         { date: "2026-05-29", close: 5.2 },
@@ -876,7 +1008,7 @@ describe("AppService 实盘流水", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
-    });
+    }));
 
     const view = await service.getIncomeCalendar({
       month: "2026-05",
@@ -902,6 +1034,7 @@ describe("AppService 实盘流水", () => {
       type: "buy",
       businessDate: "2026-06-01",
       symbol: "601398",
+      securityType: "stock",
       price: 5,
       quantity: 100,
     });
@@ -926,7 +1059,7 @@ describe("AppService 实盘流水", () => {
         requestedThrough: "2026-06-30",
       },
     ]);
-    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(completeMarketResponse({
       rows: [{ date: "2026-06-30", close: 5.2 }],
       provenance: {
         source: "tencent",
@@ -937,7 +1070,7 @@ describe("AppService 实盘流水", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
-    });
+    }));
 
     const view = await service.getIncomeCalendar({
       month: "2026-06",
@@ -973,6 +1106,13 @@ describe("AppService 实盘流水", () => {
     });
     vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
       rows: [{ date: "2026-07-28", close: 5.2 }],
+      requestedThrough: "2026-07-29",
+      dataCutoff: "2026-07-28",
+      tailStatus: "incomplete",
+      issues: [
+        "腾讯行情尾部不完整",
+        "新浪兜底失败",
+      ],
       provenance: {
         source: "tencent",
         primarySource: "tencent",
@@ -989,7 +1129,11 @@ describe("AppService 实盘流水", () => {
     expect(result).toMatchObject({
       requestedCutoff: "2026-07-29",
       actualCutoff: "2026-07-28",
-      tailComplete: false,
+      tailStatus: "incomplete",
+      issues: expect.arrayContaining([
+        "601398 行情尾部不完整：腾讯行情尾部不完整；新浪兜底失败",
+        "行情仅更新至 2026-07-28，请求截止 2026-07-29 的尾部尚未确认完整",
+      ]),
     });
     expect(result.overview.quality.status).toBe("partial");
     expect(result.overview.quality.issues).toContain(
