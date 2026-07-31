@@ -15,6 +15,7 @@ import type {
   BacktestWorkspaceState,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
+import { validateBackup } from "../domain/backupValidation";
 import { LocalDatabase } from "./database";
 
 const temporaryDirectories: string[] = [];
@@ -304,16 +305,24 @@ describe("LocalDatabase", () => {
 
     const invalidEmptyBackup = structuredClone(validBackup);
     invalidEmptyBackup.liveMarketCoverage[0].empty_evidence = null;
-    expect(() => restored.restoreBackup(invalidEmptyBackup)).toThrow(
-      "备份包含非法行情覆盖记录",
-    );
+    expect(() =>
+      validateBackup(
+        invalidEmptyBackup,
+        database.getSchemaVersion(),
+        database.getSchemaFingerprint(),
+      ),
+    ).toThrow("备份包含非法行情覆盖记录");
 
     invalidEmptyBackup.liveMarketCoverage[0].empty_evidence =
       "exchange_calendar";
     invalidEmptyBackup.liveMarketCoverage[0].data_cutoff = "2026-02-23";
-    expect(() => restored.restoreBackup(invalidEmptyBackup)).toThrow(
-      "备份包含非法行情覆盖记录",
-    );
+    expect(() =>
+      validateBackup(
+        invalidEmptyBackup,
+        database.getSchemaVersion(),
+        database.getSchemaFingerprint(),
+      ),
+    ).toThrow("备份包含非法行情覆盖记录");
   });
 
   it("拒绝缺失当前设置、资产类型、目录来源或工作区字段的旧备份", async () => {
@@ -346,23 +355,25 @@ describe("LocalDatabase", () => {
     );
     const target = await openDatabase(join(directory, "target.sqlite"));
     const valid = database.exportBackup();
+    const version = target.getSchemaVersion();
+    const fingerprint = target.getSchemaFingerprint();
 
     const missingSettings = structuredClone(valid) as Partial<typeof valid>;
     delete missingSettings.settings;
-    expect(() => target.restoreBackup(missingSettings)).toThrow(
+    expect(() => validateBackup(missingSettings, version, fingerprint)).toThrow(
       "备份结构或 schema 版本不兼容",
     );
 
     const oldFingerprint = structuredClone(valid);
     oldFingerprint.schemaFingerprint =
       "stock-income-r1-schema-2-2026-07-30";
-    expect(() => target.restoreBackup(oldFingerprint)).toThrow(
+    expect(() => validateBackup(oldFingerprint, version, fingerprint)).toThrow(
       "备份结构或 schema 版本不兼容",
     );
 
     const missingWorkspace = structuredClone(valid) as Partial<typeof valid>;
     delete missingWorkspace.backtestWorkspace;
-    expect(() => target.restoreBackup(missingWorkspace)).toThrow(
+    expect(() => validateBackup(missingWorkspace, version, fingerprint)).toThrow(
       "备份结构或 schema 版本不兼容",
     );
 
@@ -372,7 +383,7 @@ describe("LocalDatabase", () => {
         (typeof missingSecurityType.ledgerEntries)[number]
       >
     ).securityType;
-    expect(() => target.restoreBackup(missingSecurityType)).toThrow(
+    expect(() => validateBackup(missingSecurityType, version, fingerprint)).toThrow(
       "不属于当前 R1 schema 的投资事实",
     );
 
@@ -382,9 +393,9 @@ describe("LocalDatabase", () => {
         (typeof missingDirectoryProvenance.stockUniverse)[number]
       >
     ).primarySource;
-    expect(() => target.restoreBackup(missingDirectoryProvenance)).toThrow(
-      "不属于当前 R1 schema 的证券目录",
-    );
+    expect(() =>
+      validateBackup(missingDirectoryProvenance, version, fingerprint),
+    ).toThrow("不属于当前 R1 schema 的证券目录");
   });
 
   it("恢复备份时要求非空行情覆盖具有实际截止日且不带空区间证据", async () => {
@@ -408,16 +419,18 @@ describe("LocalDatabase", () => {
       },
     ]);
     const restored = await openDatabase(join(directory, "restored.sqlite"));
+    const version = restored.getSchemaVersion();
+    const fingerprint = restored.getSchemaFingerprint();
     const missingCutoff = structuredClone(database.exportBackup());
     missingCutoff.liveMarketCoverage[0].data_cutoff = null;
-    expect(() => restored.restoreBackup(missingCutoff)).toThrow(
+    expect(() => validateBackup(missingCutoff, version, fingerprint)).toThrow(
       "备份包含非法行情覆盖记录",
     );
 
     const unexpectedEvidence = structuredClone(database.exportBackup());
     unexpectedEvidence.liveMarketCoverage[0].empty_evidence =
       "exchange_calendar";
-    expect(() => restored.restoreBackup(unexpectedEvidence)).toThrow(
+    expect(() => validateBackup(unexpectedEvidence, version, fingerprint)).toThrow(
       "备份包含非法行情覆盖记录",
     );
   });
@@ -640,6 +653,9 @@ describe("LocalDatabase", () => {
   });
 
   it("恢复前拒绝领域非法的账本、回测、行情、目录和工作区且不触碰现有数据", async () => {
+    // 校验逻辑由 domain/backupValidation.ts 的 validateBackup 负责；
+    // storage 层的 restoreBackup 只接受已校验的 BackupPayload。
+    // 本测试验证：校验失败时（main 进程不会调用 restoreBackup）现有数据不被触碰。
     const directory = mkdtempSync(join(tmpdir(), "stock-income-deep-backup-"));
     temporaryDirectories.push(directory);
     const source = await openDatabase(join(directory, "source.sqlite"));
@@ -876,8 +892,13 @@ describe("LocalDatabase", () => {
       message: "公司行动 JSON 无法解析",
     });
 
+    const version = target.getSchemaVersion();
+    const fingerprint = target.getSchemaFingerprint();
     for (const item of invalidPayloads) {
-      expect(() => target.restoreBackup(item.payload)).toThrow(item.message);
+      expect(() =>
+        validateBackup(item.payload, version, fingerprint),
+      ).toThrow(item.message);
+      // 校验失败时 main 进程不会调用 restoreBackup，target 现有数据不被触碰。
       expect(target.listLedger()).toEqual([
         expect.objectContaining({ id: "preserve-me", amount: 1 }),
       ]);

@@ -1,6 +1,9 @@
 import type { Config } from "tailwindcss";
+import { BRAND, BRAND_STRONG } from "./src/colors";
 
 // Tailwind 与 AntD 共用同一套冷蓝 / 墨蓝语义色。
+// brand-strong 对应 DESIGN_SYSTEM.md 中的主动作强调色，与 brand.600 同值，
+// 显式命名为 token 供 `text-brand-strong` / `bg-brand-strong` 等工具类引用。
 export default {
   content: {
     relative: true,
@@ -16,9 +19,11 @@ export default {
         brand: {
           50: "#edf5ff",
           100: "#dbeafe",
-          500: "#1677ff",
-          600: "#0d5dc3",
+          500: BRAND,
+          600: BRAND_STRONG,
           700: "#0953ad",
+          // 显式 token，供需要语义命名的位置引用，避免散落硬编码色值。
+          strong: BRAND_STRONG,
         },
         surface: {
           canvas: "#f6f8fb",

@@ -86,6 +86,21 @@ function isCompleteAStockUniverse(stocks: readonly StockInfo[]): boolean {
   );
 }
 
+/**
+ * 单个回测标的的市场数据集合：行情、分红、K 线图数据及其来源。
+ * 由 `fetchBacktestMarketData` 收集，供 `computeBacktestResults` 与
+ * `persistBacktestExperiment` 复用。
+ */
+interface BacktestMarketDataBundle {
+  symbol: string;
+  prices: Awaited<ReturnType<typeof fetchMarketPrices>>;
+  dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
+  chartData: BacktestResult["chartData"];
+  chartProvenance: Awaited<
+    ReturnType<typeof fetchMarketAdjustedBars>
+  >["provenance"];
+}
+
 function isCompleteEtfUniverse(stocks: readonly StockInfo[]): boolean {
   return (
     stocks.length >= ETF_UNIVERSE_MIN_SIZE &&
@@ -289,6 +304,31 @@ export class AppService {
   }
 
   async runBacktest(request: BacktestRequest): Promise<BacktestExperiment> {
+    const canonicalRequest = this.validateBacktestRequest(request);
+    const marketData = await this.fetchBacktestMarketData(canonicalRequest);
+    const experimentId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const { results, dataCutoff } = await this.computeBacktestResults(
+      canonicalRequest,
+      marketData,
+      experimentId,
+      createdAt,
+    );
+    return this.persistBacktestExperiment(
+      canonicalRequest,
+      experimentId,
+      createdAt,
+      results,
+      dataCutoff,
+      marketData,
+    );
+  }
+
+  /**
+   * 校验回测请求的口径版本与领域规则，并确认所有标的都是 A 股股票。
+   * 在任何外部请求或缓存写入之前完成，避免无效请求消耗数据源配额。
+   */
+  private validateBacktestRequest(request: BacktestRequest): BacktestRequest {
     const canonicalRequest: BacktestRequest = {
       ...request,
       caliberVersion: request.caliberVersion ?? BACKTEST_CALIBER_VERSION,
@@ -296,8 +336,6 @@ export class AppService {
     if (canonicalRequest.caliberVersion !== BACKTEST_CALIBER_VERSION) {
       throw new Error("回测请求的计算口径版本与当前应用不一致");
     }
-    // 在任何外部请求或缓存写入之前完成领域校验，避免重复标的等无效请求
-    // 消耗数据源配额，或最终才由数据库唯一约束报错。
     assertBacktestRequest(canonicalRequest);
     const cachedInstrumentMap = new Map(
       this.localStockUniverse().map((instrument) => [
@@ -311,6 +349,16 @@ export class AppService {
         throw new Error("历史回测只支持A股股票");
       }
     }
+    return canonicalRequest;
+  }
+
+  /**
+   * 串行获取每个标的的不复权行情、前复权 K 线和分红事件，校验尾部完整性。
+   * 标的之间留出节流窗口，避免数据源限流。
+   */
+  private async fetchBacktestMarketData(
+    canonicalRequest: BacktestRequest,
+  ): Promise<BacktestMarketDataBundle[]> {
     const stocks = await this.listAStocks();
     const instrumentMap = new Map(
       stocks.map((instrument) => [instrument.symbol, instrument]),
@@ -321,16 +369,7 @@ export class AppService {
         throw new Error("历史回测只支持A股股票");
       }
     }
-    const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
-    const marketData: Array<{
-      symbol: string;
-      prices: Awaited<ReturnType<typeof fetchMarketPrices>>;
-      dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
-      chartData: BacktestResult["chartData"];
-      chartProvenance: Awaited<
-        ReturnType<typeof fetchMarketAdjustedBars>
-      >["provenance"];
-    }> = [];
+    const marketData: BacktestMarketDataBundle[] = [];
     for (const [index, symbol] of canonicalRequest.symbols.entries()) {
       const [prices, adjustedBars] = await Promise.all([
         fetchMarketPrices(
@@ -373,7 +412,21 @@ export class AppService {
         chartProvenance: adjustedBars.provenance,
       });
     }
+    return marketData;
+  }
 
+  /**
+   * 计算多标的的共同数据截止日，逐标的执行回测模拟，生成配股警告与
+   * 多标的起始日不一致警告。每个标的计算前让出事件循环，避免阻塞 IPC。
+   */
+  private async computeBacktestResults(
+    canonicalRequest: BacktestRequest,
+    marketData: BacktestMarketDataBundle[],
+    experimentId: string,
+    createdAt: string,
+  ): Promise<{ results: BacktestResult[]; dataCutoff: string }> {
+    const stocks = await this.listAStocks();
+    const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
     const dataCutoff = marketData
       .map(({ prices }) => prices.provenance.dataCutoff)
       .filter((date): date is string => Boolean(date))
@@ -384,8 +437,6 @@ export class AppService {
       throw new Error("至少一个回测标的没有取得正式交易日行情");
     }
     if (!dataCutoff) throw new Error("回测试验没有共同的数据截止时间");
-    const experimentId = randomUUID();
-    const createdAt = new Date().toISOString();
     const effectiveRequest: BacktestRequest = {
       ...canonicalRequest,
       endDate:
@@ -467,6 +518,21 @@ export class AppService {
       const warning = `多标的实际起始日期不一致（${starts}），本次结果属于非严格同区间比较。`;
       for (const result of results) result.warnings.push(warning);
     }
+    return { results, dataCutoff };
+  }
+
+  /**
+   * 将实验与本次获取的回测证据缓存一次性提交。任一标的数据、计算或
+   * 实验写入失败时全部回滚，不留下无对应成功实验的证据快照。
+   */
+  private persistBacktestExperiment(
+    canonicalRequest: BacktestRequest,
+    experimentId: string,
+    createdAt: string,
+    results: BacktestResult[],
+    dataCutoff: string,
+    marketData: BacktestMarketDataBundle[],
+  ): BacktestExperiment {
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,
@@ -476,8 +542,6 @@ export class AppService {
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
     };
-    // 回测试验与本次获取的回测证据缓存一次性提交。任一标的数据、计算或
-    // 实验写入失败时全部回滚，不留下无对应成功实验的证据快照。
     this.database.saveBacktestExperimentWithMarketData(
       experiment,
       marketData.map(({ symbol, prices, dividends }) => ({

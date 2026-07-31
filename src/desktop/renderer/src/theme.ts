@@ -1,14 +1,18 @@
 import type { ThemeConfig } from "antd";
+import { BRAND, BRAND_STRONG } from "./colors";
 
 /**
  * 新版投研工作台基线：冷白画布、深海军蓝文字、亮蓝单一动作色。
  * 页面密度与组件尺寸以 1920 × 1080 的设计稿为基准。
+ *
+ * 颜色常量统一引用 ./colors，与 tailwind.config.ts 共享同一来源，
+ * 避免色值在不同配置间漂移。
  */
 export const theme: ThemeConfig = {
   token: {
-    colorPrimary: "#1677ff",
-    colorInfo: "#1677ff",
-    colorLink: "#0d5dc3",
+    colorPrimary: BRAND,
+    colorInfo: BRAND,
+    colorLink: BRAND_STRONG,
     colorSuccess: "#13a68f",
     colorWarning: "#f5a623",
     colorError: "#f04438",

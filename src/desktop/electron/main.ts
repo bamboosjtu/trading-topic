@@ -22,6 +22,7 @@ import {
   buildLedgerWorkbook,
   buildPositionsWorkbook,
 } from "./export/liveWorkbooks";
+import { validateBackup } from "./domain/backupValidation";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
 
@@ -282,7 +283,14 @@ function registerIpc(): void {
       JSON.stringify(database.exportBackup(), null, 2),
       "utf8",
     );
-    database.restoreBackup(payload);
+    // 领域完整性校验在 storage 层之外完成，避免 storage→domain 反向依赖。
+    // 校验失败时不会进入 restoreBackup，现有数据不被触碰。
+    const backup = validateBackup(
+      payload,
+      database.getSchemaVersion(),
+      database.getSchemaFingerprint(),
+    );
+    database.restoreBackup(backup);
     database.log("info", "已从 JSON 备份恢复");
     return {
       cancelled: false,

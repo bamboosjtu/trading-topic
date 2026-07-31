@@ -13,6 +13,7 @@ import {
   type DecodedSinaBar,
 } from "./sinaKlcDecoder";
 import { fetchWithTimeout } from "./_internal/httpClient";
+import { isValidOhlcv } from "./_internal/validateBars";
 
 const SINA_HISTORY_URL = (symbol: string) =>
   `https://finance.sina.com.cn/realstock/company/${symbol}/hisdata_klc2/klc_kl.js`;
@@ -83,7 +84,8 @@ function normalizeDecodedBar(row: DecodedSinaBar): NormalizedSinaBar | null {
     high === null ||
     low === null ||
     close === null ||
-    volume === null
+    volume === null ||
+    !isValidOhlcv({ open, high, low, close, volume })
   ) {
     return null;
   }

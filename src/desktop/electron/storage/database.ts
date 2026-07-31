@@ -19,7 +19,6 @@ import type {
   StoredStockInfo,
   StockInfo,
 } from "../../shared/contracts";
-import { validateBackup } from "../domain/backupValidation";
 
 const SCHEMA_VERSION = 2;
 const SCHEMA_FINGERPRINT =
@@ -222,6 +221,17 @@ export class LocalDatabase {
 
   getSchemaVersion(): number {
     return SCHEMA_VERSION;
+  }
+
+  /**
+   * 返回当前 Schema 的固定指纹，供调用方在 `validateBackup` 时传入。
+   *
+   * 暴露此方法是为了让 `restoreBackup` 不再反向依赖 `domain/backupValidation`：
+   * 调用方（main 进程）负责先 `validateBackup(payload, version, fingerprint)`，
+   * 再用已校验的 `BackupPayload` 调用 `restoreBackup`。
+   */
+  getSchemaFingerprint(): string {
+    return SCHEMA_FINGERPRINT;
   }
 
   private initializeSchema(): void {
@@ -965,14 +975,16 @@ export class LocalDatabase {
     };
   }
 
-  restoreBackup(payload: unknown): void {
-    // 所有结构、引用和领域完整性校验均发生在覆盖事务之前。
-    // 安全备份是回退手段，不是接受非法输入的替代品。
-    const backup = validateBackup(
-      payload,
-      SCHEMA_VERSION,
-      SCHEMA_FINGERPRINT,
-    );
+  /**
+   * 用已校验的备份覆盖当前数据库。
+   *
+   * **调用方必须在调用前先执行 `validateBackup(payload, schemaVersion,
+   * schemaFingerprint)`**，确保领域完整性。本方法只负责在事务内写入，
+   * 不再做领域校验——这样 storage 层不再反向依赖 domain。
+   *
+   * 安全校验失败时应由调用方（main 进程）拦截，不会进入此方法。
+   */
+  restoreBackup(backup: BackupPayload): void {
     this.database.transaction(() => {
       // 不删除 app_logs 与 schema_metadata：
       // - app_logs 保留恢复操作前后的运行日志，便于审计；

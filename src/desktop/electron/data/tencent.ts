@@ -7,6 +7,7 @@ import type {
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { fetchWithTimeout } from "./_internal/httpClient";
+import { isValidOhlcv } from "./_internal/validateBars";
 
 const TENCENT_URL =
   "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
@@ -407,15 +408,7 @@ function parseTencentSeries(
     const [open, close, high, low, volume] = item
       .slice(1, 6)
       .map(Number);
-    if (
-      ![open, close, high, low, volume].every(Number.isFinite) ||
-      open <= 0 ||
-      close <= 0 ||
-      high < Math.max(open, close) ||
-      low <= 0 ||
-      low > Math.min(open, close) ||
-      volume < 0
-    ) {
+    if (!isValidOhlcv({ open, close, high, low, volume })) {
       throw new Error(`腾讯行情 ${year} 年包含无效 OHLCV 数值`);
     }
   }

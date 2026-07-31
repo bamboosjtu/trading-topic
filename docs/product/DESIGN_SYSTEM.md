@@ -256,3 +256,10 @@ A 股语境采用红涨绿跌：
 - 所有金额和百分比对齐稳定，正负号与颜色一致。
 - Loading、空、过期、错误和部分数据状态均有明确设计。
 - 三个实盘页面在侧栏、页头、指标带、表格、Modal、Drawer 和提示组件上使用同一套规则。
+
+### 12.1 Review Checklist
+
+提交涉及数字渲染或配色的改动前，逐项确认：
+
+- **`tabular-nums`**：任何使用 `money()` / `percent()` / `numberValue()` 格式化结果的 JSX 元素，其 `className` 必须包含 `tabular-nums`（或父元素已包含）。新增直接写数字的 JSX 时同样需要补上，避免数字跳动。
+- **`brand-strong` 色值**：需要亮蓝强调色（Hover、深色链接等）时，Tailwind 侧使用 `text-brand-strong` / `bg-brand-strong` 等 token，AntD 侧通过 `theme.ts` 引用 `BRAND_STRONG` 常量，CSS 侧使用 `var(--color-brand-strong)`。不得在业务页面散落 `#0D5DC3` 硬编码。

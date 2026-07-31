@@ -6,6 +6,7 @@
 
 :root {
   --color-brand: #1677ff;
+  /* 与 src/colors.ts 的 BRAND_STRONG 保持一致；Tailwind 侧通过 brand-strong token 引用。 */
   --color-brand-strong: #0d5dc3;
   --color-text-strong: #112543;
   --color-text: #1e3554;
