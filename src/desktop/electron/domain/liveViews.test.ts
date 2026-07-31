@@ -207,6 +207,223 @@ describe("投资收益视图", () => {
     expect(tradeDay?.events).toHaveLength(1);
   });
 
+  it("收盘前录入独立分红时保留账本累计值，但正式估值、XIRR 和收益进入 partial", () => {
+    const entries = [
+      entry("buy", "buy", "2026-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("dividend-today", "dividend", "2026-07-28", {
+        symbol: "601398",
+        amount: 100,
+      }),
+    ];
+    const prices = [
+      price("601398", "2026-01-02", 5),
+      price("601398", "2026-07-27", 6),
+    ];
+    const boundary = {
+      factAsOfDate: "2026-07-28",
+      valuationCutoff: "2026-07-27",
+    };
+    const overview = buildPositionsOverview(
+      entries,
+      prices,
+      stocks,
+      boundary,
+    );
+
+    expect(overview.metrics).toMatchObject({
+      cumulativeBuySpend: 500,
+      cumulativeDividend: 100,
+      netInvestment: 400,
+      pendingReinvestmentCash: 0,
+      marketValue: null,
+      totalReturn: null,
+      xirr: null,
+      xirrStatus: "missing_valuation",
+    });
+    expect(overview.positions[0]).toMatchObject({
+      cumulativeDividend: 100,
+      netInvestment: 400,
+      marketValue: null,
+      totalReturn: null,
+      xirr: null,
+      xirrStatus: "missing_valuation",
+    });
+    expect(Object.values(overview.portfolioPerformance)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(overview.quality.status).toBe("partial");
+    expect(overview.quality.issues.join("；")).toContain(
+      "存在估值截止日后的投资事实",
+    );
+
+    const calendar = buildIncomeCalendar(
+      entries,
+      prices,
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      boundary,
+    );
+    expect(
+      calendar.days.find((day) => day.date === "2026-07-28"),
+    ).toMatchObject({
+      dividendPnl: 100,
+      totalPnl: null,
+      returnRate: null,
+      isPartial: true,
+    });
+    expect(calendar.metrics.month).toEqual({ amount: null, rate: null });
+    expect(calendar.quality.status).toBe("partial");
+    expect(calendar.quality.issues.join("；")).toContain(
+      "存在估值截止日后的投资事实",
+    );
+  });
+
+  it("收盘前录入关联分红时保留待再投入现金，但不把它放入昨日的 XIRR 期末资产", () => {
+    const overview = buildPositionsOverview(
+      [
+        entry("buy", "buy", "2026-01-02", {
+          symbol: "601398",
+          price: 5,
+          quantity: 100,
+        }),
+        entry("linked-dividend-today", "dividend", "2026-07-28", {
+          symbol: "601398",
+          amount: 100,
+          linkedGroupId: "pending-after-cutoff",
+        }),
+      ],
+      [
+        price("601398", "2026-01-02", 5),
+        price("601398", "2026-07-27", 6),
+      ],
+      stocks,
+      {
+        factAsOfDate: "2026-07-28",
+        valuationCutoff: "2026-07-27",
+      },
+    );
+
+    expect(overview.metrics).toMatchObject({
+      cumulativeDividend: 100,
+      netInvestment: 500,
+      pendingReinvestmentCash: 100,
+      marketValue: null,
+      totalReturn: null,
+      xirr: null,
+      xirrStatus: "missing_valuation",
+    });
+    expect(overview.quality.status).toBe("partial");
+  });
+
+  it("周末录入分红且估值截止为上周五时不生成周末正式收益", () => {
+    const entries = [
+      entry("buy", "buy", "2026-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("weekend-dividend", "dividend", "2026-07-26", {
+        symbol: "601398",
+        amount: 80,
+      }),
+    ];
+    const prices = [
+      price("601398", "2026-01-02", 5),
+      price("601398", "2026-07-24", 6),
+    ];
+    const boundary = {
+      factAsOfDate: "2026-07-26",
+      valuationCutoff: "2026-07-24",
+    };
+    const overview = buildPositionsOverview(
+      entries,
+      prices,
+      stocks,
+      boundary,
+    );
+    const calendar = buildIncomeCalendar(
+      entries,
+      prices,
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      boundary,
+    );
+
+    expect(overview.metrics.cumulativeDividend).toBe(80);
+    expect(overview.metrics.marketValue).toBeNull();
+    expect(overview.metrics.xirr).toBeNull();
+    expect(overview.quality.status).toBe("partial");
+    expect(
+      calendar.days.find((day) => day.date === "2026-07-26"),
+    ).toMatchObject({
+      dividendPnl: 80,
+      totalPnl: null,
+      isPartial: true,
+    });
+  });
+
+  it("分红日期等于估值截止日时正常进入正式估值和收益", () => {
+    const entries = [
+      entry("buy", "buy", "2026-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+      entry("dividend-at-cutoff", "dividend", "2026-07-27", {
+        symbol: "601398",
+        amount: 100,
+      }),
+    ];
+    const prices = [
+      price("601398", "2026-01-02", 5),
+      price("601398", "2026-07-27", 6),
+    ];
+    const boundary = {
+      factAsOfDate: "2026-07-27",
+      valuationCutoff: "2026-07-27",
+    };
+    const overview = buildPositionsOverview(
+      entries,
+      prices,
+      stocks,
+      boundary,
+    );
+    const calendar = buildIncomeCalendar(
+      entries,
+      prices,
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      boundary,
+    );
+
+    expect(overview.metrics).toMatchObject({
+      cumulativeDividend: 100,
+      marketValue: 600,
+      totalReturn: 200,
+    });
+    expect(overview.metrics.xirr).not.toBeNull();
+    expect(overview.quality.status).toBe("ready");
+    expect(
+      calendar.days.find((day) => day.date === "2026-07-27"),
+    ).toMatchObject({
+      dividendPnl: 100,
+      totalPnl: 200,
+      isPartial: false,
+    });
+  });
+
   it("多标的估值要求每个当前持仓都具有截止日精确收盘价", () => {
     const entries = [
       entry("buy-a", "buy", "2026-07-01", {

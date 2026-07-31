@@ -192,13 +192,31 @@ export function buildIncomeCalendar(
   const relevantMissingDates = filteredDaily
     .filter((day) => day.isPartial)
     .map((day) => day.date);
+  const relevantPostValuationFacts = model.postValuationFacts.filter(
+    (entry) => entry.symbol && selectedSymbols.has(entry.symbol),
+  );
   const qualityModel: LiveModel = {
     ...model,
     missingSymbols: relevantMissingSymbols,
     missingDates: relevantMissingDates,
-    issues: relevantMissingSymbols.length
-      ? [`缺少 ${relevantMissingSymbols.length} 个所选标的的本地行情快照`]
-      : [],
+    postValuationFacts: relevantPostValuationFacts,
+    postValuationSymbols: [
+      ...new Set(
+        relevantPostValuationFacts.flatMap(
+          (entry) => entry.symbol ?? [],
+        ),
+      ),
+    ],
+    issues: [
+      ...(relevantMissingSymbols.length
+        ? [`缺少 ${relevantMissingSymbols.length} 个所选标的的本地行情快照`]
+        : []),
+      ...(relevantPostValuationFacts.length
+        ? [
+            `存在估值截止日后的投资事实（${relevantPostValuationFacts.length} 条），正式收益暂不可计算`,
+          ]
+        : []),
+    ],
   };
   const hasScopedFacts = model.effectiveEntries.some(
     (entry) => entry.symbol && selectedSymbols.has(entry.symbol),

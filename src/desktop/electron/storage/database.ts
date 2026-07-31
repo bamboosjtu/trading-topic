@@ -22,7 +22,7 @@ import { validateBackup } from "../domain/backupValidation";
 
 export const SCHEMA_VERSION = 2;
 const SCHEMA_FINGERPRINT =
-  "stock-income-r1-schema-2-2026-07-30-investment-cash-v2";
+  "stock-income-r1-schema-2-2026-07-30-valuation-boundary-v3";
 const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",

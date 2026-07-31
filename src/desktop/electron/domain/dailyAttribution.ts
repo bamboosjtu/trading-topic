@@ -285,12 +285,25 @@ export function buildDailyAttribution(
           entry.symbol === symbol &&
           (entry.type === "buy" || entry.type === "sell"),
       );
+      const hasPostValuationFact =
+        (!valuationCutoff || date > valuationCutoff) &&
+        todaysEntries.some((entry) => entry.symbol === symbol);
       const needsOfficialClose =
         Boolean(todaysPrices?.size) ||
         hasTradeToday ||
         (date === valuationCutoff &&
           (openingQuantity > 1e-8 || closingQuantity > 1e-8));
       const item = contributions.get(symbol) ?? emptyContribution();
+
+      if (hasPostValuationFact) {
+        // 事实仍进入持仓、累计投入与分红等账本指标，但在正式估值截止日
+        // 之后没有同日正式收盘资产，不能沿用前收盘价生成完整收益。
+        item.marketPricePnl = null;
+        item.totalPnl = null;
+        item.returnRate = null;
+        contributions.set(symbol, item);
+        continue;
+      }
 
       if (
         (openingQuantity > 1e-8 && previousPrice === undefined) ||

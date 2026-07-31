@@ -51,7 +51,8 @@ export interface LiveModel {
   priceSource: string;
   provenance: MarketDataProvenance[];
   missingSymbols: string[];
-  unvaluedTradeSymbols: string[];
+  postValuationFacts: LedgerEntry[];
+  postValuationSymbols: string[];
   missingDates: string[];
   issues: string[];
   effectiveEntries: LedgerEntry[];
@@ -150,22 +151,14 @@ export function buildLiveModel(
   const missingSymbols = [
     ...new Set([...symbolsWithoutPrices, ...symbolsWithoutCutoffPrice]),
   ];
-  const unvaluedTradeSymbols = cutoff
-    ? symbols.filter((symbol) =>
-        effective.some(
-          (entry) =>
-            entry.symbol === symbol &&
-            (entry.type === "buy" || entry.type === "sell") &&
-            entry.businessDate > cutoff,
-        ),
-      )
-    : symbols.filter((symbol) =>
-        effective.some(
-          (entry) =>
-            entry.symbol === symbol &&
-            (entry.type === "buy" || entry.type === "sell"),
-        ),
-      );
+  const postValuationFacts = cutoff
+    ? effective.filter((entry) => entry.businessDate > cutoff)
+    : [];
+  const postValuationSymbols = [
+    ...new Set(
+      postValuationFacts.flatMap((entry) => entry.symbol ?? []),
+    ),
+  ];
   const issues = [
     ...(symbolsWithoutPrices.length
       ? [`缺少 ${symbolsWithoutPrices.length} 个标的的本地正式收盘行情`]
@@ -175,9 +168,9 @@ export function buildLiveModel(
           `${symbolsWithoutCutoffPrice.length} 个标的缺少估值截止日 ${cutoff ?? "未知"} 的精确正式收盘价，未使用更早价格代替`,
         ]
       : []),
-    ...(unvaluedTradeSymbols.length
+    ...(postValuationFacts.length
       ? [
-          `${unvaluedTradeSymbols.length} 个标的在估值截止日后存在买卖事实，正式市值和收益暂不可计算`,
+          `存在估值截止日后的投资事实（${postValuationFacts.length} 条），正式市值、投资总收益、XIRR 和期间收益率暂不可计算`,
         ]
       : []),
   ];
@@ -222,7 +215,8 @@ export function buildLiveModel(
     priceSource,
     provenance,
     missingSymbols,
-    unvaluedTradeSymbols,
+    postValuationFacts,
+    postValuationSymbols,
     missingDates: daily.filter((day) => day.isPartial).map((day) => day.date),
     issues,
     effectiveEntries: effective,
@@ -249,7 +243,7 @@ export function qualityFor(
     status: !hasFacts
       ? "empty"
       : model.missingSymbols.length ||
-          model.unvaluedTradeSymbols.length ||
+          model.postValuationFacts.length ||
           model.missingDates.length ||
           additionalIssues.length
         ? "partial"
@@ -374,7 +368,9 @@ export function buildPositionsOverview(
   );
   const positions = currentPositions.map(([symbol, position]) => {
     const quote = model.latestPrices.get(symbol);
-    const marketValue = quote && !model.unvaluedTradeSymbols.includes(symbol)
+    const hasPostValuationFact =
+      model.postValuationSymbols.includes(symbol);
+    const marketValue = quote && !hasPostValuationFact
       ? roundMoney(quote.close * position.quantity)
       : null;
     const unrealizedPnl =
@@ -428,7 +424,9 @@ export function buildPositionsOverview(
       totalReturn,
       xirr: symbolXirr.value,
       xirrStatus: symbolXirr.status,
-      periodPerformance: periodPerformance(model.daily, model.cutoff, symbol),
+      periodPerformance: hasPostValuationFact
+        ? emptyPeriodPerformance()
+        : periodPerformance(model.daily, model.cutoff, symbol),
       recentEntries: entries
         .filter((entry) => entry.symbol === symbol)
         .sort(canonicalLedgerOrderDescending)
@@ -439,7 +437,9 @@ export function buildPositionsOverview(
     };
   });
   const marketValues = positions.map((position) => position.marketValue);
-  const marketValue = marketValues.some((value) => value === null)
+  const marketValue =
+    model.postValuationFacts.length ||
+    marketValues.some((value) => value === null)
     ? null
     : roundMoney(marketValues.reduce<number>((sum, value) => sum + value!, 0));
   const remainingCost = [...state.positions.values()].reduce(
@@ -485,7 +485,9 @@ export function buildPositionsOverview(
       xirr: portfolioXirr.value,
       xirrStatus: portfolioXirr.status,
     },
-    portfolioPerformance: periodPerformance(model.daily, model.cutoff),
+    portfolioPerformance: model.postValuationFacts.length
+      ? emptyPeriodPerformance()
+      : periodPerformance(model.daily, model.cutoff),
     positions,
     valuationSource: model.priceSource,
     provenance: model.provenance,

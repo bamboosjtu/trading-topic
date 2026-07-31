@@ -209,7 +209,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   fallback: MarketDataProvider,
   now = new Date(),
 ): Promise<MarketFetchResult<T>> {
-  assertMarketCalendarOfficialForRange(startDate, endDate, now);
+  assertMarketCalendarOfficialForRange(startDate, endDate);
   interface Candidate {
     rows: T[];
     consistencyRows: PricePoint[];

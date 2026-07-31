@@ -44,7 +44,9 @@ function assertUnique(
 function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
   assertUnique(entries.map((entry) => entry.id), "流水 ID");
   const ids = new Set(entries.map((entry) => entry.id));
+  const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
   const reversedTargets = new Set<string>();
+  const correctedTargets = new Set<string>();
   for (const entry of entries) {
     if (
       !nonEmptyString(entry.id) ||
@@ -71,13 +73,23 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
         !positive(entry.quantity) ||
         !Number.isInteger(entry.quantity) ||
         !finite(entry.fee ?? 0) ||
-        (entry.fee ?? 0) < 0
+        (entry.fee ?? 0) < 0 ||
+        entry.amount !== undefined ||
+        entry.perShare !== undefined ||
+        entry.recordDate !== undefined ||
+        entry.reversesEntryId !== undefined
       ) {
-        throw new Error("备份买卖流水的价格、数量或费用非法");
+        throw new Error(
+          "备份买卖流水的价格、数量或费用非法，或包含不允许的专属字段",
+        );
       }
     } else if (entry.type === "dividend") {
       if (
         !positive(entry.amount) ||
+        entry.price !== undefined ||
+        entry.quantity !== undefined ||
+        entry.fee !== undefined ||
+        entry.reversesEntryId !== undefined ||
         (entry.perShare !== undefined &&
           (!finite(entry.perShare) || entry.perShare < 0)) ||
         (entry.recordDate !== undefined &&
@@ -90,7 +102,8 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
       if (
         !entry.reversesEntryId ||
         entry.reversesEntryId === entry.id ||
-        !ids.has(entry.reversesEntryId)
+        !ids.has(entry.reversesEntryId) ||
+        entriesById.get(entry.reversesEntryId)?.type === "adjustment"
       ) {
         throw new Error("备份冲正流水引用了不存在或非法的原流水");
       }
@@ -104,9 +117,21 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
     if (
       entry.correctsEntryId &&
       (entry.correctsEntryId === entry.id ||
-        !ids.has(entry.correctsEntryId))
+        !ids.has(entry.correctsEntryId) ||
+        entry.type === "adjustment" ||
+        entriesById.get(entry.correctsEntryId)?.type === "adjustment")
     ) {
       throw new Error("备份修正流水引用了不存在或非法的原流水");
+    }
+    if (entry.correctsEntryId) {
+      if (correctedTargets.has(entry.correctsEntryId)) {
+        throw new Error("备份对同一原流水包含多个修正版本");
+      }
+      correctedTargets.add(entry.correctsEntryId);
+      const target = entriesById.get(entry.correctsEntryId)!;
+      if (entry.linkedGroupId !== target.linkedGroupId) {
+        throw new Error("备份修正流水的关联关系与原事实不一致");
+      }
     }
   }
   for (const entry of entries) {

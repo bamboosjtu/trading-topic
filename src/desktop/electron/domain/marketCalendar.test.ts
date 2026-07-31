@@ -96,19 +96,29 @@ describe("正式收盘日边界", () => {
     });
   });
 
-  it("运行期只阻断涉及待发布年度日历的行情能力", () => {
+  it("行情请求要求结束日期所在年度具有官方日历", () => {
     expect(() =>
       assertMarketCalendarOfficialForRange(
         "2026-01-01",
         "2026-12-31",
-        new Date("2026-07-30T08:00:00Z"),
       ),
     ).not.toThrow();
     expect(() =>
       assertMarketCalendarOfficialForRange(
+        "2023-01-01",
+        "2024-01-31",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertMarketCalendarOfficialForRange(
+        "2023-01-01",
+        "2023-10-07",
+      ),
+    ).toThrow("请求结束日期所在年度");
+    expect(() =>
+      assertMarketCalendarOfficialForRange(
         "2026-12-01",
         "2027-01-10",
-        new Date("2027-01-10T08:00:00Z"),
       ),
     ).toThrow("历史数据、备份和日志仍可使用");
     expect(

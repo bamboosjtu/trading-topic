@@ -204,7 +204,7 @@ describe("LocalDatabase", () => {
 
     const backup = database.exportBackup();
     expect(backup.schemaVersion).toBe(2);
-    expect(backup.schemaFingerprint).toContain("investment-cash-v2");
+    expect(backup.schemaFingerprint).toContain("valuation-boundary-v3");
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -732,6 +732,104 @@ describe("LocalDatabase", () => {
     invalidPayloads.push({
       payload: invalidLedger,
       message: "价格、数量或费用非法",
+    });
+    const tradeWithAmount = structuredClone(valid);
+    tradeWithAmount.ledgerEntries[0].amount = 1;
+    invalidPayloads.push({
+      payload: tradeWithAmount,
+      message: "不允许的专属字段",
+    });
+    const dividendWithTradeFields = structuredClone(valid);
+    dividendWithTradeFields.ledgerEntries[0].type = "dividend";
+    dividendWithTradeFields.ledgerEntries[0].amount = 50;
+    invalidPayloads.push({
+      payload: dividendWithTradeFields,
+      message: "分红流水的金额或日期非法",
+    });
+    const multipleCorrections = structuredClone(valid);
+    const original = multipleCorrections.ledgerEntries[0];
+    multipleCorrections.ledgerEntries.push(
+      {
+        id: "reverse-source-buy",
+        type: "adjustment",
+        businessDate: "2026-07-02",
+        recordedAt: "2026-07-02T01:00:00Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        reversesEntryId: original.id,
+      },
+      {
+        ...original,
+        id: "corrected-source-buy-a",
+        recordedAt: "2026-07-02T01:00:01Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        correctsEntryId: original.id,
+        price: 5.1,
+      },
+      {
+        ...original,
+        id: "corrected-source-buy-b",
+        recordedAt: "2026-07-02T01:00:02Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        correctsEntryId: original.id,
+        price: 5.2,
+      },
+    );
+    invalidPayloads.push({
+      payload: multipleCorrections,
+      message: "同一原流水包含多个修正版本",
+    });
+    const correctionOfAdjustment = structuredClone(valid);
+    const correctionTarget = correctionOfAdjustment.ledgerEntries[0];
+    correctionOfAdjustment.ledgerEntries.push(
+      {
+        id: "reverse-before-illegal-correction",
+        type: "adjustment",
+        businessDate: "2026-07-02",
+        recordedAt: "2026-07-02T01:00:00Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        reversesEntryId: correctionTarget.id,
+      },
+      {
+        ...correctionTarget,
+        id: "illegal-adjustment-correction",
+        recordedAt: "2026-07-02T01:00:01Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        correctsEntryId: "reverse-before-illegal-correction",
+      },
+    );
+    invalidPayloads.push({
+      payload: correctionOfAdjustment,
+      message: "修正流水引用了不存在或非法的原流水",
+    });
+    const changedCorrectionLink = structuredClone(valid);
+    const linkedTarget = changedCorrectionLink.ledgerEntries[0];
+    changedCorrectionLink.ledgerEntries.push(
+      {
+        id: "reverse-before-link-change",
+        type: "adjustment",
+        businessDate: "2026-07-02",
+        recordedAt: "2026-07-02T01:00:00Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        currency: "CNY",
+        source: "user",
+        reversesEntryId: linkedTarget.id,
+      },
+      {
+        ...linkedTarget,
+        id: "illegal-link-change",
+        recordedAt: "2026-07-02T01:00:01Z",
+        correctedAt: "2026-07-02T01:00:00Z",
+        correctsEntryId: linkedTarget.id,
+        linkedGroupId: "unexpected-group",
+      },
+    );
+    invalidPayloads.push({
+      payload: changedCorrectionLink,
+      message: "关联关系与原事实不一致",
     });
     const invalidBacktest = structuredClone(valid);
     invalidBacktest.backtestExperiments[0].results[0].actualEndDate =

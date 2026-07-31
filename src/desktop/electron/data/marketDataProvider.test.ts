@@ -31,6 +31,25 @@ function provider(
 }
 
 describe("腾讯主源与新浪整段兜底", () => {
+  it("缺少请求结束年度官方日历时在访问行情源前给出明确原因", async () => {
+    const primary = provider("tencent", 5);
+    const fallback = provider("sina", 5);
+
+    await expect(
+      fetchWithProviderFallback(
+        "prices",
+        "601398",
+        "2022-01-01",
+        "2023-10-07",
+        primary,
+        fallback,
+        new Date("2026-07-30T08:00:00Z"),
+      ),
+    ).rejects.toThrow("请求结束日期所在年度");
+    expect(primary.fetchPrices).not.toHaveBeenCalled();
+    expect(fallback.fetchPrices).not.toHaveBeenCalled();
+  });
+
   it("两个来源均合法返回空区间时保留空结果而不是报数据源失败", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
