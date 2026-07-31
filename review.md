@@ -1060,11 +1060,7 @@ Test Files  17 passed | 1 skipped (18)
 | P1 | desktop | `listLedger()` 全表加载 | [database.ts:443-448](file:///d:/vibe-coding/trading-topic/src/desktop/electron/storage/database.ts#L443-L448) |
 | P1 | desktop | domain 反向依赖 storage | [positionsView.ts:17](file:///d:/vibe-coding/trading-topic/src/desktop/electron/domain/positionsView.ts#L17) 等 |
 | P1 | desktop | `listInstruments` 整条 IPC 链死代码 | 见 [5.2 类别 1](#类别-1未引用的导出生产链路断链) |
-| P1 | labs | Lab 1 文档规划未实现 | `labs/01_银行股定投回测/3-单只银行定投回测.md` |
 | P1 | labs | Lab 2 ETF 分类置信度逻辑可能有误 | [build_notebooks.py:488-492](file:///d:/vibe-coding/trading-topic/labs/02_行业走势相关性研究/build_notebooks.py#L488-L492) |
-| P1 | labs | Lab 1 测试文件缺失 | `labs/01_银行股定投回测/test_bank_dca.py` |
-| P1 | research | `calc_xirr` 缺边界条件测试 | [tests/test_analysis.py](file:///d:/vibe-coding/trading-topic/research/bank-dca/tests/test_analysis.py) |
-| P1 | research | data_fetch.py 缺数据质量校验 | [data_fetch.py](file:///d:/vibe-coding/trading-topic/research/bank-dca/src/bank_dca_research/data_fetch.py) |
 
 #### P2（次要，可在相关文件下次修改时顺手修复）
 
@@ -1083,12 +1079,6 @@ Test Files  17 passed | 1 skipped (18)
 | P2 | desktop | `shape_fingerprint` 对 DDL 空白敏感 | [database.ts:140-159](file:///d:/vibe-coding/trading-topic/src/desktop/electron/storage/database.ts#L140-L159) |
 | P2 | desktop | `runBacktest` 单方法 200 行 | [appService.ts:309-511](file:///d:/vibe-coding/trading-topic/src/desktop/electron/services/appService.ts#L309-L511) |
 | P2 | desktop | `getDirectoryProvenance` 全表扫描 | [database.ts:677-693](file:///d:/vibe-coding/trading-topic/src/desktop/electron/storage/database.ts#L677-L693) |
-| P2 | labs | `data_source_registry.py` 死代码 | [data_source_registry.py:506](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/data_source_registry.py#L506) |
-| P2 | labs | `bank_dca.py` 风格小问题 | [bank_dca.py:757](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L757) |
-| P2 | labs | Lab 3 Rank IC 与 spread 门槛不一致 | [build_notebook.py:576-607](file:///d:/vibe-coding/trading-topic/labs/03_板块周期轮动研究/build_notebook.py#L576-L607) |
-| P2 | research | analysis.py 用 get_loc 设置首行值 | [analysis.py:153](file:///d:/vibe-coding/trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L153) |
-| P2 | research | build_report.py 硬编码日期字符串 | [build_report.py:151-257](file:///d:/vibe-coding/trading-topic/research/bank-dca/src/bank_dca_research/build_report.py#L151-L257) |
-| P2 | research | verification.json 字段类型不一致 | [verification.json:64-72](file:///d:/vibe-coding/trading-topic/research/bank-dca/data/verification.json#L64-L72) |
 
 #### P3（重构机会，按收益排序）
 

@@ -7,6 +7,7 @@ import type {
   PeriodPerformance,
   PositionsOverview,
   StockInfo,
+  StoredMarketPrice,
   XirrStatus,
 } from "../../shared/contracts";
 import {
@@ -14,7 +15,6 @@ import {
   LIVE_PRICE_STALE_AFTER_DAYS,
   LIVE_RECENT_LEDGER_LIMIT,
 } from "../../shared/constants";
-import type { StoredMarketPrice } from "../storage/database";
 import { roundMoney, xirr } from "./finance";
 import {
   addDays,

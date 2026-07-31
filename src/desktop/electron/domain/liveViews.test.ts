@@ -3,8 +3,8 @@ import type {
   EntryType,
   LedgerEntry,
   StockInfo,
+  StoredMarketPrice,
 } from "../../shared/contracts";
-import type { StoredMarketPrice } from "../storage/database";
 import {
   buildDailyAttribution,
   rowsBySymbol,

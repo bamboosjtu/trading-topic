@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { LedgerEntry } from "../../shared/contracts";
-import type { StoredMarketPrice } from "../storage/database";
+import type {
+  LedgerEntry,
+  StoredMarketPrice,
+} from "../../shared/contracts";
 import { xirr } from "./finance";
 import { projectInvestmentCash } from "./investmentCashProjection";
 import { reduceLedger } from "./ledgerReducer";

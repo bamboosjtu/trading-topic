@@ -4,8 +4,8 @@ import type {
   IncomeCalendarView,
   LedgerEntry,
   StockInfo,
+  StoredMarketPrice,
 } from "../../shared/contracts";
-import type { StoredMarketPrice } from "../storage/database";
 import { currentMarketDate, monthEnd } from "./dateUtils";
 import { roundMoney } from "./finance";
 import { reduceLedger } from "./ledgerReducer";

@@ -1,8 +1,8 @@
 import type {
   IncomeCalendarDay,
   LedgerEntry,
+  StoredMarketPrice,
 } from "../../shared/contracts";
-import type { StoredMarketPrice } from "../storage/database";
 import { addDays, validDate } from "./dateUtils";
 import { roundMoney } from "./finance";
 import {

@@ -4,10 +4,10 @@ import type {
   BacktestExperiment,
   BacktestResult,
   BacktestWorkspaceState,
+  BackupPayload,
   DividendEvent,
   LedgerEntry,
 } from "../../shared/contracts";
-import type { BackupPayload } from "../storage/database";
 import { assertBacktestRequest } from "./analysis";
 import { validDate } from "./dateUtils";
 import { reduceLedger } from "./ledgerReducer";

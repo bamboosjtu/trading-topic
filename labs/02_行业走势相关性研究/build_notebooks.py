@@ -488,7 +488,7 @@ classification_cells = [
         etf_universe["classification_confidence"] = np.where(
             etf_universe["industry_initial"].eq("非行业ETF"),
             "中",
-            np.where(etf_universe["industry_initial"].eq("待核验"), "低", "低"),
+            np.where(etf_universe["industry_initial"].eq("待核验"), "低", "高"),
         )
         etf_universe["snapshot_date"] = SNAPSHOT_DATE
         etf_universe = etf_universe.sort_values(

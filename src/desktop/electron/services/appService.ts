@@ -14,6 +14,7 @@ import type {
   IncomeCalendarView,
   LedgerQuery,
   LedgerQueryResult,
+  MarketDataCacheEntry,
   MarketRefreshResult,
   PositionsOverview,
   StockInfo,
@@ -21,6 +22,7 @@ import type {
   DividendReinvestmentPreview,
   DividendReinvestmentResult,
   LedgerRecordView,
+  StoredMarketCoverage,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
@@ -56,11 +58,7 @@ import {
   getLedgerRecordById,
   queryLedgerRecords,
 } from "../domain/ledgerQuery";
-import {
-  LocalDatabase,
-  type MarketDataCacheEntry,
-  type StoredMarketCoverage,
-} from "../storage/database";
+import { LocalDatabase } from "../storage/database";
 import {
   addDays,
   addMonths,
@@ -394,68 +392,70 @@ export class AppService {
           ? dataCutoff
           : canonicalRequest.endDate,
     };
-    const results = marketData.map(
-      ({ symbol, prices, dividends, chartData, chartProvenance }) => {
-        if (!prices.provenance.dataCutoff) {
-          throw new Error(`${symbol} 没有可用于回测的正式行情截止日`);
+    const results: BacktestResult[] = [];
+    for (const { symbol, prices, dividends, chartData, chartProvenance } of marketData) {
+      // 在每个标的的同步回测计算之前让出事件循环，避免多标的串行计算
+      // 长时间阻塞主进程 IPC 队列。
+      await new Promise((resolve) => setImmediate(resolve));
+      if (!prices.provenance.dataCutoff) {
+        throw new Error(`${symbol} 没有可用于回测的正式行情截止日`);
+      }
+      const priceProvenance = {
+        ...prices.provenance,
+        dataCutoff: prices.provenance.dataCutoff,
+      };
+      const chartSource =
+        chartProvenance?.dataCutoff
+          ? [
+              {
+                ...chartProvenance,
+                dataCutoff: chartProvenance.dataCutoff,
+              },
+            ]
+          : [];
+      const result = simulateBacktest(
+        effectiveRequest,
+        symbol,
+        names.get(symbol) ?? symbol,
+        prices.rows,
+        dividends.rows,
+        [
+          priceProvenance,
+          dividends.provenance,
+          ...chartSource,
+        ],
+        { id: experimentId, createdAt },
+      );
+      // 实验保留用户原始请求；共同截止时间单独由 experiment 记录。
+      result.requestedStartDate = canonicalRequest.startDate;
+      result.requestedEndDate = canonicalRequest.endDate;
+      result.rangeYears = canonicalRequest.rangeYears;
+      result.strategyKey = buildBacktestStrategyKey(
+        canonicalRequest,
+        symbol,
+      );
+      for (const action of dividends.reportedActions) {
+        if (
+          action.exDate < result.actualStartDate ||
+          action.exDate > dataCutoff
+        ) {
+          continue;
         }
-        const priceProvenance = {
-          ...prices.provenance,
-          dataCutoff: prices.provenance.dataCutoff,
-        };
-        const chartSource =
-          chartProvenance?.dataCutoff
-            ? [
-                {
-                  ...chartProvenance,
-                  dataCutoff: chartProvenance.dataCutoff,
-                },
-              ]
-            : [];
-        const result = simulateBacktest(
-          effectiveRequest,
-          symbol,
-          names.get(symbol) ?? symbol,
-          prices.rows,
-          dividends.rows,
-          [
-            priceProvenance,
-            dividends.provenance,
-            ...chartSource,
-          ],
-          { id: experimentId, createdAt },
+        result.warnings.push(
+          `配股事件（除权日 ${action.exDate}，每 10 股可配 ${action.ratioPer10} 股，认购价 ${action.subscriptionPrice.toFixed(2)} 元）：R1 假设不参与且不追加资金；不复权行情中的除权后市场价格变化仍计入收益与回撤。`,
         );
-        // 实验保留用户原始请求；共同截止时间单独由 experiment 记录。
-        result.requestedStartDate = canonicalRequest.startDate;
-        result.requestedEndDate = canonicalRequest.endDate;
-        result.rangeYears = canonicalRequest.rangeYears;
-        result.strategyKey = buildBacktestStrategyKey(
-          canonicalRequest,
-          symbol,
-        );
-        for (const action of dividends.reportedActions) {
-          if (
-            action.exDate < result.actualStartDate ||
-            action.exDate > dataCutoff
-          ) {
-            continue;
-          }
-          result.warnings.push(
-            `配股事件（除权日 ${action.exDate}，每 10 股可配 ${action.ratioPer10} 股，认购价 ${action.subscriptionPrice.toFixed(2)} 元）：R1 假设不参与且不追加资金；不复权行情中的除权后市场价格变化仍计入收益与回撤。`,
-          );
-        }
-        result.chartData =
-          chartData.status === "ready"
-            ? {
-                status: "ready",
-                data: chartData.data.filter(
-                  (bar) => bar.date <= dataCutoff,
-                ),
-              }
-            : chartData;
-        return result;
-      },
-    );
+      }
+      result.chartData =
+        chartData.status === "ready"
+          ? {
+              status: "ready",
+              data: chartData.data.filter(
+                (bar) => bar.date <= dataCutoff,
+              ),
+            }
+          : chartData;
+      results.push(result);
+    }
     const actualStartDates = new Set(
       results.map((result) => result.actualStartDate),
     );
@@ -529,17 +529,17 @@ export class AppService {
     return this.database.listStockUniverse();
   }
 
-  private liveDataSnapshot(): {
+  private liveDataSnapshot(entries?: LedgerEntry[]): {
     entries: LedgerEntry[];
     prices: ReturnType<LocalDatabase["listLiveMarketPrices"]>;
   } {
-    const entries = this.database.listLedger();
-    const { effective } = activeLedgerEntries(entries, currentMarketDate());
+    const loaded = entries ?? this.database.listLedger();
+    const { effective } = activeLedgerEntries(loaded, currentMarketDate());
     const symbols = [
       ...new Set(effective.flatMap((entry) => entry.symbol ?? [])),
     ];
     return {
-      entries,
+      entries: loaded,
       prices: this.database.listLiveMarketPrices(symbols),
     };
   }
@@ -762,14 +762,15 @@ export class AppService {
   }
 
   queryLedger(query: LedgerQuery): LedgerQueryResult {
+    const entries = this.database.listLedger();
     let integrityError: string | null = null;
     try {
-      reduceLedger(this.database.listLedger(), currentMarketDate());
+      reduceLedger(entries, currentMarketDate());
     } catch (error) {
       integrityError = error instanceof Error ? error.message : String(error);
     }
     return queryLedgerRecords(
-      this.database.listLedger(),
+      entries,
       this.localStockUniverse(),
       query,
       integrityError,
@@ -793,13 +794,14 @@ export class AppService {
       query.month === currentMarketDate().slice(0, 7)
         ? this.completedMarketDate()
         : monthEnd(query.month);
+    const entries = this.database.listLedger();
     const coverage = incomePriceRanges(
-      this.database.listLedger(),
+      entries,
       query,
       requestedMonthEnd,
     );
     const { issues } = await this.fetchLivePriceRanges(coverage);
-    const snapshot = this.liveDataSnapshot();
+    const snapshot = this.liveDataSnapshot(entries);
     const actualMonthCutoff =
       latestTradingDateInMonth(
         query.month,

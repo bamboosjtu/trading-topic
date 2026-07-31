@@ -10,11 +10,12 @@ import type {
   BacktestExperimentSummary,
   BacktestResult,
   BacktestWorkspaceState,
+  BackupPayload,
   DirectoryProvenance,
-  DividendEvent,
   LedgerEntry,
-  MarketDataProvenance,
-  PricePoint,
+  MarketDataCacheEntry,
+  StoredMarketCoverage,
+  StoredMarketPrice,
   StoredStockInfo,
   StockInfo,
 } from "../../shared/contracts";
@@ -31,103 +32,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   caliberVersion: BACKTEST_CALIBER_VERSION,
 };
 
-export interface BackupPayload {
-  schemaVersion: number;
-  schemaFingerprint: string;
-  exportedAt: string;
-  application: "stock-income-r1";
-  ledgerEntries: LedgerEntry[];
-  backtestExperiments: BacktestExperiment[];
-  marketPrices: Array<{
-    symbol: string;
-    trade_date: string;
-    close: number;
-    source: string;
-    primary_source: string;
-    fallback_used: number;
-    fallback_reason: string | null;
-    fetched_at: string;
-    data_cutoff: string;
-    adjustment: "none" | "qfq";
-  }>;
-  liveMarketPrices: Array<{
-    symbol: string;
-    trade_date: string;
-    close: number;
-    source: string;
-    primary_source: string;
-    fallback_used: number;
-    fallback_reason: string | null;
-    fetched_at: string;
-    data_cutoff: string;
-    adjustment: "none" | "qfq";
-    requested_from: string;
-    requested_through: string;
-  }>;
-  liveMarketCoverage: Array<{
-    symbol: string;
-    requested_from: string;
-    requested_through: string;
-    source: "tencent" | "sina";
-    primary_source: "tencent";
-    fallback_used: number;
-    fallback_reason: string | null;
-    fetched_at: string;
-    data_cutoff: string | null;
-    adjustment: "none" | "qfq";
-    empty_evidence: "exchange_calendar" | "outside_listing" | null;
-    result_status: "data" | "empty";
-  }>;
-  corporateActions: Array<{
-    symbol: string;
-    event_date: string;
-    payload_json: string;
-  }>;
-  settings: AppSettings;
-  stockUniverse: StoredStockInfo[];
-  backtestWorkspace: BacktestWorkspaceState | null;
-}
-
 type SqlParameter = string | number | bigint | Buffer | null;
-
-export interface MarketDataCacheEntry {
-  symbol: string;
-  prices: PricePoint[];
-  dividends: DividendEvent[];
-  provenance: MarketDataProvenance & { caliberVersion: string };
-  requestedFrom?: string;
-  requestedThrough?: string;
-}
-
-export interface StoredMarketPrice {
-  symbol: string;
-  date: string;
-  close: number;
-  source: "tencent" | "sina";
-  primarySource: "tencent";
-  fallbackUsed: boolean;
-  fallbackReason?: string;
-  fetchedAt: string;
-  dataCutoff: string;
-  adjustment: "none" | "qfq";
-  requestedFrom?: string;
-  requestedThrough?: string;
-}
-
-export interface StoredMarketCoverage {
-  symbol: string;
-  requestedFrom: string;
-  requestedThrough: string;
-  source: "tencent" | "sina";
-  primarySource: "tencent";
-  fallbackUsed: boolean;
-  fallbackReason?: string;
-  fetchedAt: string;
-  dataCutoff: string | null;
-  adjustment: "none" | "qfq";
-  emptyEvidence?: "exchange_calendar" | "outside_listing";
-  resultStatus: "data" | "empty";
-}
 
 function rows<T>(
   database: BetterSqlite3.Database,
