@@ -47,6 +47,14 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
   const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
   const reversedTargets = new Set<string>();
   const correctedTargets = new Set<string>();
+  // 预计算所有冲正流水指向的原流水 ID，避免后续对每个 correctsEntryId
+  // 都遍历整个 entries 数组（原实现为 O(N²)）。
+  const reversedTargetIds = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type === "adjustment" && entry.reversesEntryId) {
+      reversedTargetIds.add(entry.reversesEntryId);
+    }
+  }
   for (const entry of entries) {
     if (
       !nonEmptyString(entry.id) ||
@@ -137,11 +145,7 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
   for (const entry of entries) {
     if (
       entry.correctsEntryId &&
-      !entries.some(
-        (candidate) =>
-          candidate.type === "adjustment" &&
-          candidate.reversesEntryId === entry.correctsEntryId,
-      )
+      !reversedTargetIds.has(entry.correctsEntryId)
     ) {
       throw new Error("备份修正流水缺少对应的冲正事实");
     }

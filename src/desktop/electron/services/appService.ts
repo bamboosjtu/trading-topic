@@ -55,6 +55,7 @@ import {
 import { buildPositionsOverview } from "../domain/positionsView";
 import { buildIncomeCalendar } from "../domain/incomeCalendar";
 import {
+  exportLedgerRecords,
   getLedgerRecordById,
   queryLedgerRecords,
 } from "../domain/ledgerQuery";
@@ -770,6 +771,26 @@ export class AppService {
       integrityError = error instanceof Error ? error.message : String(error);
     }
     return queryLedgerRecords(
+      entries,
+      this.localStockUniverse(),
+      query,
+      integrityError,
+    );
+  }
+
+  /**
+   * 导出场景下一次性返回全量匹配流水，避免 `ledger:export` 在 IPC 层
+   * 逐页调用 `queryLedger` 导致 `listLedger` 与完整性校验被重复执行。
+   */
+  exportLedger(query: LedgerQuery): LedgerQueryResult {
+    const entries = this.database.listLedger();
+    let integrityError: string | null = null;
+    try {
+      reduceLedger(entries, currentMarketDate());
+    } catch (error) {
+      integrityError = error instanceof Error ? error.message : String(error);
+    }
+    return exportLedgerRecords(
       entries,
       this.localStockUniverse(),
       query,

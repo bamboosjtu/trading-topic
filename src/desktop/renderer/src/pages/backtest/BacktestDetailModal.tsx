@@ -7,7 +7,7 @@ import {
   type BacktestResult,
   type SimpleBacktestRow,
 } from "../../api/client";
-import { money, percent } from "./formatters";
+import { money, percent, pnlClass } from "./formatters";
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -112,12 +112,7 @@ export function BacktestDetailModal({
               [
                 "当前盈亏率",
                 percent(detail.data?.returnRate ?? null),
-                detail.data?.returnRate === undefined ||
-                detail.data.returnRate === 0
-                  ? ""
-                  : detail.data.returnRate > 0
-                    ? "stock-profit"
-                    : "stock-loss",
+                pnlClass(detail.data?.returnRate ?? null, "stock"),
               ],
             ].map(([label, value, tone]) => (
               <div key={label}>
@@ -262,15 +257,7 @@ export function BacktestDetailModal({
                   align: "right",
                   className: "tabular-nums",
                   render: (value: number) => (
-                    <span
-                      className={
-                        value === 0
-                          ? "stock-flat"
-                          : value > 0
-                            ? "stock-profit"
-                            : "stock-loss"
-                      }
-                    >
+                    <span className={pnlClass(value, "stock")}>
                       {percent(value)}
                     </span>
                   ),

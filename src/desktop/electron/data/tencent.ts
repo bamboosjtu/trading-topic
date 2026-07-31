@@ -6,6 +6,7 @@ import type {
   ReportedCorporateAction,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
+import { fetchWithTimeout } from "./_internal/httpClient";
 
 const TENCENT_URL =
   "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get";
@@ -294,22 +295,13 @@ export function parseReportedCorporateActions(
 }
 
 async function fetchJson(url: URL, timeoutMs = 15_000): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: "https://data.eastmoney.com/",
-      },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await fetchWithTimeout(url, {
+    timeoutMs,
+    label: "东方财富",
+    headers: { Referer: "https://data.eastmoney.com/" },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return await response.json();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -454,34 +446,25 @@ async function fetchTencentDailyRows(
       }`,
     );
     url.searchParams.set("r", String(Date.now()));
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
-    try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          Referer: `https://gu.qq.com/${code}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`腾讯行情请求失败：HTTP ${response.status}`);
-      }
-      const text = await response.text();
-      const series = parseTencentSeries(text, code, adjustment, year);
-      let acceptedRows = 0;
-      for (const item of series) {
-        const date = String(item[0]);
-        if (date >= startDate && date <= endDate) {
-          rows.set(date, item);
-          acceptedRows += 1;
-        }
-      }
-      rowCountsByYear.set(year, acceptedRows);
-    } finally {
-      clearTimeout(timeout);
+    const response = await fetchWithTimeout(url, {
+      timeoutMs: 15_000,
+      label: "腾讯行情",
+      headers: { Referer: `https://gu.qq.com/${code}` },
+    });
+    if (!response.ok) {
+      throw new Error(`腾讯行情请求失败：HTTP ${response.status}`);
     }
+    const text = await response.text();
+    const series = parseTencentSeries(text, code, adjustment, year);
+    let acceptedRows = 0;
+    for (const item of series) {
+      const date = String(item[0]);
+      if (date >= startDate && date <= endDate) {
+        rows.set(date, item);
+        acceptedRows += 1;
+      }
+    }
+    rowCountsByYear.set(year, acceptedRows);
   }
   if (rows.size) {
     const dates = [...rows.keys()].sort();

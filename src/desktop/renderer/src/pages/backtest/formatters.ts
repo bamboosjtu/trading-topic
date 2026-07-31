@@ -1,13 +1,5 @@
-const CNY_FORMATTER = new Intl.NumberFormat("zh-CN", {
-  style: "currency",
-  currency: "CNY",
-  maximumFractionDigits: 2,
-});
-
-export function money(value: number): string {
-  return CNY_FORMATTER.format(value);
-}
-
-export function percent(value: number | null): string {
-  return value === null ? "—" : `${(value * 100).toFixed(2)}%`;
-}
+/**
+ * backtest 页面格式化入口：统一从 _shared/format 复用，
+ * 保留本模块作为 backtest 域的稳定导入路径，避免各组件直接依赖 _shared。
+ */
+export { money, percent, pnlClass } from "../_shared/format";

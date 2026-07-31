@@ -1,37 +1,14 @@
 import type { ReactNode } from "react";
 import { Alert, Empty, Skeleton } from "antd";
 import type { LiveDataQuality } from "../../api/client";
+import {
+  money,
+  numberValue,
+  percent,
+  pnlClass,
+} from "../_shared/format";
 
-export function money(value: number | null, signed = false): string {
-  if (value === null || !Number.isFinite(value)) return "—";
-  const prefix = signed && value > 0 ? "+" : "";
-  return `${prefix}¥${value.toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-export function numberValue(
-  value: number | null,
-  digits = 2,
-): string {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return value.toLocaleString("zh-CN", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
-export function percent(value: number | null, signed = false): string {
-  if (value === null || !Number.isFinite(value)) return "—";
-  const prefix = signed && value > 0 ? "+" : "";
-  return `${prefix}${(value * 100).toFixed(2)}%`;
-}
-
-export function pnlClass(value: number | null): string {
-  if (value === null || value === 0) return "finance-flat";
-  return value > 0 ? "finance-profit" : "finance-loss";
-}
+export { money, numberValue, percent, pnlClass };
 
 export function QualityNotice({
   quality,

@@ -95,12 +95,7 @@ function matchesQuery(
   return true;
 }
 
-export function queryLedgerRecords(
-  entries: readonly LedgerEntry[],
-  stocks: readonly StockInfo[],
-  query: LedgerQuery,
-  integrityError: string | null = null,
-): LedgerQueryResult {
+function assertLedgerQuery(query: LedgerQuery): void {
   if (![20, 50, 100].includes(query.pageSize)) {
     throw new Error("流水分页大小只支持 20、50 或 100");
   }
@@ -117,6 +112,21 @@ export function queryLedgerRecords(
   ) {
     throw new Error("流水开始日期不能晚于结束日期");
   }
+}
+
+interface LedgerQueryComputation {
+  allRows: LedgerRecordView[];
+  quality: LiveDataQuality;
+  metrics: LedgerQueryResult["metrics"];
+  symbolOptions: LedgerQueryResult["symbolOptions"];
+}
+
+function computeLedgerQuery(
+  entries: readonly LedgerEntry[],
+  stocks: readonly StockInfo[],
+  query: LedgerQuery,
+  integrityError: string | null,
+): LedgerQueryComputation {
   const { effective } = activeLedgerEntries(entries);
   const allRows = toLedgerRecords(entries, stocks)
     .filter((row) => matchesQuery(row, query));
@@ -162,9 +172,6 @@ export function queryLedgerRecords(
       )
       .reduce((sum, entry) => sum + (entry.amount ?? 0), 0),
   );
-  const page = Math.max(1, Math.floor(query.page));
-  const pageSize = query.pageSize;
-  const offset = (page - 1) * pageSize;
   const symbols = [...new Set(entries.flatMap((entry) => entry.symbol ?? []))];
   const quality: LiveDataQuality = {
     status: entries.length ? (integrityError ? "partial" : "ready") : "empty",
@@ -178,8 +185,8 @@ export function queryLedgerRecords(
   const reversedCount = allRows.filter((row) => row.isReversed).length;
   const effectiveCount = aggregateRows.length;
   return {
+    allRows,
     quality,
-    integrityError,
     metrics: {
       recordCount: allRows.length,
       effectiveCount,
@@ -203,10 +210,6 @@ export function queryLedgerRecords(
         selectedBuySpend - selectedSellIncome - selectedExternalDividend,
       ),
     },
-    rows: allRows.slice(offset, offset + pageSize),
-    total: allRows.length,
-    page,
-    pageSize,
     symbolOptions: symbols
       .sort()
       .map((symbol) => ({
@@ -214,6 +217,67 @@ export function queryLedgerRecords(
         name: names.get(symbol) ?? symbol,
         securityType: requiredSecurityType(symbol, securityTypes),
       })),
+  };
+}
+
+export function queryLedgerRecords(
+  entries: readonly LedgerEntry[],
+  stocks: readonly StockInfo[],
+  query: LedgerQuery,
+  integrityError: string | null = null,
+): LedgerQueryResult {
+  assertLedgerQuery(query);
+  const page = Math.max(1, Math.floor(query.page));
+  const pageSize = query.pageSize;
+  const offset = (page - 1) * pageSize;
+  const computation = computeLedgerQuery(
+    entries,
+    stocks,
+    query,
+    integrityError,
+  );
+  return {
+    quality: computation.quality,
+    integrityError,
+    metrics: computation.metrics,
+    rows: computation.allRows.slice(offset, offset + pageSize),
+    total: computation.allRows.length,
+    page,
+    pageSize,
+    symbolOptions: computation.symbolOptions,
+  };
+}
+
+/**
+ * 导出场景下的全量流水查询：与 `queryLedgerRecords` 共享同一份计算逻辑，
+ * 但不做分页切片，避免逐页调用导致 `listLedger` + 完整性校验 + 指标
+ * 计算被重复执行 N 次。
+ *
+ * 返回的 `rows` 为全量匹配记录；`page`/`pageSize` 仅用于填充契约结构，
+ * 调用方不应据此做分页解释。
+ */
+export function exportLedgerRecords(
+  entries: readonly LedgerEntry[],
+  stocks: readonly StockInfo[],
+  query: LedgerQuery,
+  integrityError: string | null = null,
+): LedgerQueryResult {
+  assertLedgerQuery(query);
+  const computation = computeLedgerQuery(
+    entries,
+    stocks,
+    query,
+    integrityError,
+  );
+  return {
+    quality: computation.quality,
+    integrityError,
+    metrics: computation.metrics,
+    rows: computation.allRows,
+    total: computation.allRows.length,
+    page: 1,
+    pageSize: query.pageSize,
+    symbolOptions: computation.symbolOptions,
   };
 }
 

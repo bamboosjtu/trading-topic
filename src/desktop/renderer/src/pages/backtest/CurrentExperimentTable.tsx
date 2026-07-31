@@ -1,7 +1,7 @@
 import { Alert, Button, Table } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
-import { money, percent } from "./formatters";
+import { money, percent, pnlClass } from "./formatters";
 
 interface CurrentExperimentTableProps {
   experiment: BacktestExperiment | undefined;
@@ -134,15 +134,7 @@ export function CurrentExperimentTable({
             width: 92,
             className: "tabular-nums",
             render: (_, row) => (
-              <span
-                className={
-                  row.metrics.xirr === null || row.metrics.xirr === 0
-                    ? "stock-flat"
-                    : row.metrics.xirr > 0
-                      ? "stock-profit"
-                      : "stock-loss"
-                }
-              >
+              <span className={pnlClass(row.metrics.xirr, "stock")}>
                 {percent(row.metrics.xirr)}
               </span>
             ),

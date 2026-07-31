@@ -42,6 +42,133 @@ function rows<T>(
   return database.prepare(sql).all(...parameters) as T[];
 }
 
+/**
+ * market_prices / live_market_prices 共享的列定义与行映射。
+ *
+ * 两张表的非 live 列完全一致（symbol..adjustment），live 表额外包含
+ * requested_from / requested_through。集中列定义避免 INSERT 与 SELECT
+ * 在多处各写一份、漂移后不易发现。
+ */
+const MARKET_PRICE_COLUMNS = [
+  "symbol",
+  "trade_date",
+  "close",
+  "source",
+  "primary_source",
+  "fallback_used",
+  "fallback_reason",
+  "fetched_at",
+  "data_cutoff",
+  "adjustment",
+] as const;
+const LIVE_MARKET_PRICE_COLUMNS = [
+  ...MARKET_PRICE_COLUMNS,
+  "requested_from",
+  "requested_through",
+] as const;
+const LIVE_MARKET_COVERAGE_COLUMNS = [
+  "symbol",
+  "requested_from",
+  "requested_through",
+  "source",
+  "primary_source",
+  "fallback_used",
+  "fallback_reason",
+  "fetched_at",
+  "data_cutoff",
+  "adjustment",
+  "empty_evidence",
+  "result_status",
+] as const;
+
+/** 生成 `INSERT [OR REPLACE] INTO table(cols) VALUES (?, ...)` 语句。 */
+function buildInsertSql(
+  table: string,
+  columns: readonly string[],
+  orReplace = false,
+): string {
+  const conflict = orReplace ? "OR REPLACE " : "";
+  return `INSERT ${conflict}INTO ${table}(${columns.join(", ")}) VALUES (${columns
+    .map(() => "?")
+    .join(", ")})`;
+}
+
+interface MarketPriceRow {
+  symbol: string;
+  trade_date: string;
+  close: number;
+  source: string;
+  primary_source: string;
+  fallback_used: number;
+  fallback_reason: string | null;
+  fetched_at: string;
+  data_cutoff: string;
+  adjustment: "none" | "qfq";
+  requested_from?: string;
+  requested_through?: string;
+}
+
+/** 将 live_market_prices SQL 行映射为 StoredMarketPrice。 */
+function mapStoredMarketPrice(row: MarketPriceRow): StoredMarketPrice {
+  return {
+    symbol: row.symbol,
+    date: row.trade_date,
+    close: row.close,
+    source: row.source as "tencent" | "sina",
+    primarySource: row.primary_source as "tencent",
+    fallbackUsed: Boolean(row.fallback_used),
+    ...(row.fallback_reason
+      ? { fallbackReason: row.fallback_reason }
+      : {}),
+    fetchedAt: row.fetched_at,
+    dataCutoff: row.data_cutoff,
+    adjustment: row.adjustment,
+    ...(row.requested_from
+      ? { requestedFrom: row.requested_from }
+      : {}),
+    ...(row.requested_through
+      ? { requestedThrough: row.requested_through }
+      : {}),
+  };
+}
+
+interface MarketCoverageRow {
+  symbol: string;
+  requested_from: string;
+  requested_through: string;
+  source: "tencent" | "sina";
+  primary_source: "tencent";
+  fallback_used: number;
+  fallback_reason: string | null;
+  fetched_at: string;
+  data_cutoff: string | null;
+  adjustment: "none" | "qfq";
+  empty_evidence: "exchange_calendar" | "outside_listing" | null;
+  result_status: "data" | "empty";
+}
+
+/** 将 live_market_coverage SQL 行映射为 StoredMarketCoverage。 */
+function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
+  return {
+    symbol: row.symbol,
+    requestedFrom: row.requested_from,
+    requestedThrough: row.requested_through,
+    source: row.source,
+    primarySource: row.primary_source,
+    fallbackUsed: Boolean(row.fallback_used),
+    ...(row.fallback_reason
+      ? { fallbackReason: row.fallback_reason }
+      : {}),
+    fetchedAt: row.fetched_at,
+    dataCutoff: row.data_cutoff,
+    adjustment: row.adjustment,
+    ...(row.empty_evidence
+      ? { emptyEvidence: row.empty_evidence }
+      : {}),
+    resultStatus: row.result_status,
+  };
+}
+
 function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
   const schema = rows<{
     type: string;
@@ -56,6 +183,12 @@ function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
      ORDER BY type, name`,
   ).map((item) => ({
     ...item,
+    // 空白归一化：将连续空白折叠为单空格并去除首尾空白。
+    // 注意：此归一化不处理括号/逗号周边的空格（如 `foo (x)` 与 `foo(x)`），
+    // 因此对 DDL 排版仍有较弱敏感。MVP 阶段 DDL 由本仓库唯一写入，
+    // SQLite 存储的 sql 文本在创建与重开时一致，指纹匹配可保证；
+    // 若未来需要跨工具/跨版本导出兼容，可在此扩展更激进的归一化，
+    // 但需同步 bump SCHEMA_FINGERPRINT 以失效旧库。
     sql: item.sql?.replace(/\s+/g, " ").trim() ?? null,
   }));
   return createHash("sha256")
@@ -289,8 +422,16 @@ export class LocalDatabase {
   }
 
   log(level: "info" | "warn" | "error", message: string): void {
+    // 脱敏规则覆盖常见密钥/凭证形式，避免 token、API key、密码、
+    // Authorization 头等敏感信息进入持久化日志。规则按"前缀+值"匹配，
+    // 命中后整体替换为 [REDACTED]。
     const sanitized = message
-      .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, "Bearer [REDACTED]")
+      .replace(/Bearer\s+[A-Za-z0-9._~+-]+/gi, "Bearer [REDACTED]")
+      .replace(
+        /(api[_-]?key|secret|token|password|passwd|authorization)\s*[:=]\s*['"]?[A-Za-z0-9._~+-]{8,}['"]?/gi,
+        "$1=[REDACTED]",
+      )
+      .replace(/sk-[A-Za-z0-9]{16,}/g, "sk-[REDACTED]")
       .slice(0, 2_000);
     this.database
       .prepare(
@@ -578,18 +719,33 @@ export class LocalDatabase {
   getDirectoryProvenance(
     securityType: "stock" | "etf",
   ): DirectoryProvenance | null {
-    const row = this.listStockUniverse().find(
-      (item) => item.securityType === securityType,
-    );
+    // 直接按 security_type 索引读取单行，避免 listStockUniverse() 全表加载
+    // 后在内存中 find。stock_universe 表存在主键索引，但 security_type
+    // 没有索引；查询仍能利用 SQLite 的早期终止，返回首条匹配即结束。
+    const row = rows<{
+      source: string;
+      primary_source: string;
+      fallback_used: number;
+      fallback_reason: string | null;
+      fetched_at: string;
+    }>(
+      this.database,
+      `SELECT source, primary_source, fallback_used, fallback_reason,
+              fetched_at
+         FROM stock_universe
+        WHERE security_type = ?
+        LIMIT 1`,
+      [securityType],
+    )[0];
     if (!row) return null;
     return {
       source: row.source,
-      primarySource: row.primarySource,
-      fallbackUsed: row.fallbackUsed,
-      ...(row.fallbackReason
-        ? { fallbackReason: row.fallbackReason }
+      primarySource: row.primary_source,
+      fallbackUsed: Boolean(row.fallback_used),
+      ...(row.fallback_reason
+        ? { fallbackReason: row.fallback_reason }
         : {}),
-      fetchedAt: row.fetchedAt,
+      fetchedAt: row.fetched_at,
     };
   }
 
@@ -619,10 +775,7 @@ export class LocalDatabase {
       throw new Error("行情快照包含价格但缺少实际数据截止日");
     }
     const insertPrice = this.database.prepare(
-      `INSERT OR REPLACE INTO market_prices(
-         symbol, trade_date, close, source, primary_source, fallback_used,
-         fallback_reason, fetched_at, data_cutoff, adjustment
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      buildInsertSql("market_prices", MARKET_PRICE_COLUMNS, true),
     );
     const insertAction = this.database.prepare(
       "INSERT OR REPLACE INTO corporate_actions(symbol, event_date, payload_json) VALUES (?, ?, ?)",
@@ -648,18 +801,14 @@ export class LocalDatabase {
 
   saveLiveMarketPriceSnapshots(entries: MarketDataCacheEntry[]): void {
     const insertPrice = this.database.prepare(
-      `INSERT OR REPLACE INTO live_market_prices(
-         symbol, trade_date, close, source, primary_source, fallback_used,
-         fallback_reason, fetched_at, data_cutoff, adjustment,
-         requested_from, requested_through
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      buildInsertSql("live_market_prices", LIVE_MARKET_PRICE_COLUMNS, true),
     );
     const insertCoverage = this.database.prepare(
-      `INSERT OR REPLACE INTO live_market_coverage(
-         symbol, requested_from, requested_through, source, primary_source,
-         fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
-         empty_evidence, result_status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      buildInsertSql(
+        "live_market_coverage",
+        LIVE_MARKET_COVERAGE_COLUMNS,
+        true,
+      ),
     );
     this.database.transaction(() => {
       for (const entry of entries) {
@@ -740,44 +889,14 @@ export class LocalDatabase {
     const where = symbols
       ? `WHERE symbol IN (${symbols.map(() => "?").join(", ")})`
       : "";
-    return rows<{
-      symbol: string;
-      trade_date: string;
-      close: number;
-      source: string;
-      primary_source: string;
-      fallback_used: number;
-      fallback_reason: string | null;
-      fetched_at: string;
-      data_cutoff: string;
-      adjustment: "none" | "qfq";
-      requested_from: string;
-      requested_through: string;
-    }>(
+    return rows<MarketPriceRow>(
       this.database,
-      `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
-              fallback_reason, fetched_at, data_cutoff, adjustment,
-              requested_from, requested_through
+      `SELECT ${LIVE_MARKET_PRICE_COLUMNS.join(", ")}
        FROM live_market_prices
        ${where}
        ORDER BY symbol, trade_date`,
       parameters,
-    ).map((row) => ({
-      symbol: row.symbol,
-      date: row.trade_date,
-      close: row.close,
-      source: row.source as "tencent" | "sina",
-      primarySource: row.primary_source as "tencent",
-      fallbackUsed: Boolean(row.fallback_used),
-      ...(row.fallback_reason
-        ? { fallbackReason: row.fallback_reason }
-        : {}),
-      fetchedAt: row.fetched_at,
-      dataCutoff: row.data_cutoff,
-      adjustment: row.adjustment,
-      requestedFrom: row.requested_from,
-      requestedThrough: row.requested_through,
-    }));
+    ).map(mapStoredMarketPrice);
   }
 
   listLiveMarketCoverage(
@@ -788,46 +907,14 @@ export class LocalDatabase {
     const where = symbols
       ? `WHERE symbol IN (${symbols.map(() => "?").join(", ")})`
       : "";
-    return rows<{
-      symbol: string;
-      requested_from: string;
-      requested_through: string;
-      source: "tencent" | "sina";
-      primary_source: "tencent";
-      fallback_used: number;
-      fallback_reason: string | null;
-      fetched_at: string;
-      data_cutoff: string | null;
-      adjustment: "none" | "qfq";
-      empty_evidence: "exchange_calendar" | "outside_listing" | null;
-      result_status: "data" | "empty";
-    }>(
+    return rows<MarketCoverageRow>(
       this.database,
-      `SELECT symbol, requested_from, requested_through, source,
-              primary_source, fallback_used, fallback_reason, fetched_at,
-              data_cutoff, adjustment, empty_evidence, result_status
+      `SELECT ${LIVE_MARKET_COVERAGE_COLUMNS.join(", ")}
        FROM live_market_coverage
        ${where}
        ORDER BY symbol, requested_from, requested_through`,
       parameters,
-    ).map((row) => ({
-      symbol: row.symbol,
-      requestedFrom: row.requested_from,
-      requestedThrough: row.requested_through,
-      source: row.source,
-      primarySource: row.primary_source,
-      fallbackUsed: Boolean(row.fallback_used),
-      ...(row.fallback_reason
-        ? { fallbackReason: row.fallback_reason }
-        : {}),
-      fetchedAt: row.fetched_at,
-      dataCutoff: row.data_cutoff,
-      adjustment: row.adjustment,
-      ...(row.empty_evidence
-        ? { emptyEvidence: row.empty_evidence }
-        : {}),
-      resultStatus: row.result_status,
-    }));
+    ).map(mapStoredMarketCoverage);
   }
 
   listLiveMarketDates(): string[] {
@@ -838,6 +925,11 @@ export class LocalDatabase {
   }
 
   exportBackup(): BackupPayload {
+    // 备份范围：业务数据（流水、回测、行情、公司行动、设置、证券目录、工作区）。
+    // 刻意排除：
+    // - app_logs：运行日志与设备/时点相关，恢复到另一实例无意义；
+    // - schema_metadata：schema 指纹由目标库自身在初始化时写入，
+    //   从备份恢复会破坏本地指纹一致性校验。
     return {
       schemaVersion: SCHEMA_VERSION,
       schemaFingerprint: SCHEMA_FINGERPRINT,
@@ -849,23 +941,17 @@ export class LocalDatabase {
       ).map((summary) => this.getBacktestExperiment(summary.experimentId)!),
       marketPrices: rows(
         this.database,
-        `SELECT symbol, trade_date, close, source, primary_source,
-                fallback_used, fallback_reason, fetched_at, data_cutoff,
-                adjustment
+        `SELECT ${MARKET_PRICE_COLUMNS.join(", ")}
          FROM market_prices ORDER BY symbol, trade_date`,
       ),
       liveMarketPrices: rows(
         this.database,
-        `SELECT symbol, trade_date, close, source, primary_source,
-                fallback_used, fallback_reason, fetched_at, data_cutoff,
-                adjustment, requested_from, requested_through
+        `SELECT ${LIVE_MARKET_PRICE_COLUMNS.join(", ")}
          FROM live_market_prices ORDER BY symbol, trade_date`,
       ),
       liveMarketCoverage: rows(
         this.database,
-        `SELECT symbol, requested_from, requested_through, source,
-                primary_source, fallback_used, fallback_reason, fetched_at,
-                data_cutoff, adjustment, empty_evidence, result_status
+        `SELECT ${LIVE_MARKET_COVERAGE_COLUMNS.join(", ")}
          FROM live_market_coverage
          ORDER BY symbol, requested_from, requested_through`,
       ),
@@ -888,6 +974,9 @@ export class LocalDatabase {
       SCHEMA_FINGERPRINT,
     );
     this.database.transaction(() => {
+      // 不删除 app_logs 与 schema_metadata：
+      // - app_logs 保留恢复操作前后的运行日志，便于审计；
+      // - schema_metadata 保存目标库自身的指纹，删除会破坏后续启动校验。
       this.database.exec(`
         DELETE FROM ledger_entries;
         DELETE FROM backtest_results;
@@ -916,10 +1005,7 @@ export class LocalDatabase {
         this.insertExperiment(experiment);
       }
       const insertPrice = this.database.prepare(
-        `INSERT INTO market_prices(
-           symbol, trade_date, close, source, primary_source, fallback_used,
-           fallback_reason, fetched_at, data_cutoff, adjustment
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        buildInsertSql("market_prices", MARKET_PRICE_COLUMNS),
       );
       for (const row of backup.marketPrices) {
         insertPrice.run(
@@ -936,11 +1022,7 @@ export class LocalDatabase {
         );
       }
       const insertLivePrice = this.database.prepare(
-        `INSERT INTO live_market_prices(
-           symbol, trade_date, close, source, primary_source, fallback_used,
-           fallback_reason, fetched_at, data_cutoff, adjustment,
-           requested_from, requested_through
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        buildInsertSql("live_market_prices", LIVE_MARKET_PRICE_COLUMNS),
       );
       for (const row of backup.liveMarketPrices) {
         insertLivePrice.run(
@@ -959,11 +1041,10 @@ export class LocalDatabase {
         );
       }
       const insertCoverage = this.database.prepare(
-        `INSERT INTO live_market_coverage(
-           symbol, requested_from, requested_through, source, primary_source,
-           fallback_used, fallback_reason, fetched_at, data_cutoff, adjustment,
-           empty_evidence, result_status
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        buildInsertSql(
+          "live_market_coverage",
+          LIVE_MARKET_COVERAGE_COLUMNS,
+        ),
       );
       for (const row of backup.liveMarketCoverage) {
         insertCoverage.run(

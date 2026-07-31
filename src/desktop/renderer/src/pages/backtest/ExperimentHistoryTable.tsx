@@ -9,7 +9,7 @@ import {
   RECENT_BACKTEST_EXPERIMENT_LIMIT,
 } from "../../../../shared/constants";
 import type { BacktestExperimentSummary } from "../../api/client";
-import { money, percent } from "./formatters";
+import { money, percent, pnlClass } from "./formatters";
 
 interface ExperimentHistoryTableProps {
   experiments: BacktestExperimentSummary[];
@@ -122,15 +122,7 @@ export function ExperimentHistoryTable({
             width: 120,
             className: "tabular-nums",
             render: (value: number | null) => (
-              <span
-                className={
-                  value === null || value === 0
-                    ? "stock-flat"
-                    : value > 0
-                      ? "stock-profit"
-                      : "stock-loss"
-                }
-              >
+              <span className={pnlClass(value, "stock")}>
                 {percent(value)}
               </span>
             ),

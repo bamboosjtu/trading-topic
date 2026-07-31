@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   App,
@@ -22,7 +22,10 @@ import type {
 } from "../../api/client";
 import { api } from "../../api/client";
 import { currentMarketDate } from "../../../../shared/marketDate";
-import { securityTypeForInstrument } from "../../../../shared/instruments";
+import {
+  useInstrumentPicker,
+  type InstrumentCatalogStatus,
+} from "../_shared/useInstrumentPicker";
 import { DIRECT_ENTRY_TYPE_OPTIONS } from "./liveConstants";
 import { money, numberValue } from "./liveFormat";
 
@@ -39,17 +42,6 @@ interface LedgerFormValues {
   perShare?: number;
   recordDate?: Dayjs;
   note?: string;
-}
-
-interface InstrumentCatalogStatus {
-  loading: boolean;
-  error?: string;
-}
-
-interface InstrumentOption {
-  value: string;
-  label: string;
-  disabled?: boolean;
 }
 
 function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
@@ -128,45 +120,19 @@ export function LedgerEntryModal({
   const { message } = App.useApp();
   const [form] = Form.useForm<LedgerFormValues>();
   const entryType = Form.useWatch("type", form);
-  const securityType = Form.useWatch("securityType", form);
   const [preview, setPreview] = useState<LedgerImpactPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const isSecurityEntry = ["buy", "sell", "dividend"].includes(entryType);
   const isTrade = entryType === "buy" || entryType === "sell";
-  const stockBySymbol = useMemo(
-    () => new Map(stocks.map((stock) => [stock.symbol, stock])),
-    [stocks],
-  );
-  const symbolOptions = useMemo<InstrumentOption[]>(
-    () =>
-      stocks
-        .filter(
-          (stock) =>
-            !securityType ||
-            securityTypeForInstrument(stock) === securityType,
-        )
-        .map((stock) => ({
-          value: stock.symbol,
-          label: `${stock.name} ${stock.symbol}`,
-        })),
-    [securityType, stocks],
-  );
-  const activeSecurityType = securityType ?? "stock";
-  const activeCatalogStatus = catalogStatus[activeSecurityType];
-  const displayedSymbolOptions: InstrumentOption[] = symbolOptions.length
-    ? symbolOptions
-    : [
-        {
-          value: "__catalog_status__",
-          label: activeCatalogStatus.loading
-            ? "正在加载证券目录…"
-            : activeCatalogStatus.error
-              ? "证券目录加载失败，点击重试"
-              : "当前资产类型暂无可用标的",
-          disabled: true,
-        },
-      ];
+  const { autoCompleteProps } = useInstrumentPicker({
+    form,
+    stocks,
+    catalogStatus,
+    onRetryCatalog,
+    // LedgerEntryModal 历史上 onSelect 与 onChange 行为一致，保留之。
+    syncOnChange: true,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -320,42 +286,7 @@ export function LedgerEntryModal({
                 extra="A 股股票与境内交易所 ETF 均可从完整目录搜索；未缓存标的仍可直接输入代码。"
               >
                 <AutoComplete
-                  options={displayedSymbolOptions}
-                  filterOption={(input, option) =>
-                    Boolean(option?.disabled) ||
-                    String(option?.label ?? "")
-                      .toLowerCase()
-                      .includes(input.toLowerCase())
-                  }
-                  onSelect={(value) => {
-                    const stock = stockBySymbol.get(value);
-                    if (stock) {
-                      form.setFieldValue("instrumentName", stock.name);
-                      form.setFieldValue(
-                        "securityType",
-                        securityTypeForInstrument(stock),
-                      );
-                    }
-                  }}
-                  onChange={(value) => {
-                    const stock = stockBySymbol.get(value);
-                    if (stock) {
-                      form.setFieldValue("instrumentName", stock.name);
-                      form.setFieldValue(
-                        "securityType",
-                        securityTypeForInstrument(stock),
-                      );
-                    }
-                  }}
-                  onDropdownVisibleChange={(visible) => {
-                    if (
-                      visible &&
-                      activeCatalogStatus.error &&
-                      !activeCatalogStatus.loading
-                    ) {
-                      onRetryCatalog(activeSecurityType);
-                    }
-                  }}
+                  {...autoCompleteProps}
                 />
               </Form.Item>
               <Form.Item

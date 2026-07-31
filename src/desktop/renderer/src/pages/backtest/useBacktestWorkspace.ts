@@ -73,7 +73,8 @@ export function useBacktestWorkspace({
         .catch((error: unknown) => {
           const reason =
             error instanceof Error ? error.message : String(error);
-          console.error("保存回测工作区失败", error);
+          // 错误已通过 saveError 状态向用户呈现；不再向控制台打印
+          // 原始异常，避免在生产构建中残留调试输出。
           if (sequence === saveSequence.current) {
             setSaveError(`工作区未能保存：${reason}`);
           }

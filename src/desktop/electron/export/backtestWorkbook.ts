@@ -6,6 +6,13 @@ import type {
   SimpleBacktestRow,
 } from "../../shared/contracts";
 import { backtestResultToSimpleResult } from "../domain/analysis";
+import {
+  createWorkbook,
+  MONEY_NUM_FMT,
+  PERCENT_NUM_FMT,
+  styleWorksheet,
+  workbookToBuffer,
+} from "./workbookInternals";
 
 const SUMMARY_SHEET_NAME = "回测结果对比";
 const INVALID_SHEET_NAME_CHARACTERS = /[\\/*?:[\]]/g;
@@ -47,23 +54,6 @@ function eventLabel(event: SimpleBacktestRow["event"]): string {
     dividend_reinvest: "分红回购",
     share_adjustment: "送股/转增",
   }[event];
-}
-
-function styleWorksheet(worksheet: ExcelJS.Worksheet): void {
-  worksheet.views = [{ state: "frozen", ySplit: 1 }];
-  worksheet.autoFilter = {
-    from: "A1",
-    to: worksheet.getRow(1).getCell(worksheet.columnCount).address,
-  };
-  worksheet.getRow(1).font = { bold: true, color: { argb: "FF0F2747" } };
-  worksheet.getRow(1).fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFF3F7FC" },
-  };
-  worksheet.eachRow((row) => {
-    row.alignment = { vertical: "middle" };
-  });
 }
 
 function addSummarySheet(
@@ -137,10 +127,10 @@ function addSummarySheet(
     "totalDividend",
     "endingCash",
   ]) {
-    worksheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
+    worksheet.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
-  worksheet.getColumn("xirr").numFmt = "0.00%;[Green]-0.00%";
-  worksheet.getColumn("maxDrawdown").numFmt = "0.00%;[Green]-0.00%";
+  worksheet.getColumn("xirr").numFmt = PERCENT_NUM_FMT;
+  worksheet.getColumn("maxDrawdown").numFmt = PERCENT_NUM_FMT;
   styleWorksheet(worksheet);
 }
 
@@ -195,12 +185,12 @@ function addDetailSheet(
     "cumulativeDividend",
     "endingCash",
   ]) {
-    worksheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
+    worksheet.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
   worksheet.getColumn("price").numFmt = "0.00";
   worksheet.getColumn("shares").numFmt = "0.00";
   worksheet.getColumn("cumulativeShares").numFmt = "0.00";
-  worksheet.getColumn("returnRate").numFmt = "0.00%;[Green]-0.00%";
+  worksheet.getColumn("returnRate").numFmt = PERCENT_NUM_FMT;
   styleWorksheet(worksheet);
 }
 
@@ -216,14 +206,9 @@ export async function buildBacktestWorkbook(
   ) {
     throw new Error("导出结果不属于同一个回测试验");
   }
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "攒股收息";
-  workbook.created = new Date();
+  const workbook = createWorkbook();
   addSummarySheet(workbook, results);
   const usedNames = new Set([SUMMARY_SHEET_NAME]);
   for (const result of results) addDetailSheet(workbook, result, usedNames);
-  const output = await workbook.xlsx.writeBuffer();
-  const arrayBuffer = new ArrayBuffer(output.byteLength);
-  new Uint8Array(arrayBuffer).set(new Uint8Array(output));
-  return Buffer.from(arrayBuffer);
+  return workbookToBuffer(workbook);
 }

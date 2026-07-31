@@ -1,5 +1,9 @@
 import type { LedgerEntry, SecurityType } from "../../shared/contracts";
 import { roundMoney } from "./finance";
+import {
+  canonicalLedgerOrder,
+  ledgerEntryAmount,
+} from "./ledgerReducer";
 
 interface InvestmentCashflow {
   date: string;
@@ -23,26 +27,6 @@ interface LinkedReinvestmentGroup {
   securityType: SecurityType;
   dividend?: LedgerEntry;
   buy?: LedgerEntry;
-}
-
-function entryAmount(entry: LedgerEntry): number {
-  if (entry.amount !== undefined) return roundMoney(entry.amount);
-  if (
-    (entry.type === "buy" || entry.type === "sell") &&
-    entry.price !== undefined &&
-    entry.quantity !== undefined
-  ) {
-    return roundMoney(entry.price * entry.quantity);
-  }
-  return 0;
-}
-
-function entryOrder(left: LedgerEntry, right: LedgerEntry): number {
-  return (
-    left.businessDate.localeCompare(right.businessDate) ||
-    left.recordedAt.localeCompare(right.recordedAt) ||
-    left.id.localeCompare(right.id)
-  );
 }
 
 function addAmount(
@@ -118,17 +102,17 @@ export function projectInvestmentCash(
 ): InvestmentCashProjection {
   const ordered = [...entries]
     .filter((entry) => entry.type !== "adjustment")
-    .sort(entryOrder);
+    .sort(canonicalLedgerOrder);
   const groups = validateLinkedReinvestmentGroups(ordered);
   const internalFundingByBuy = new Map<string, number>();
   const pendingReinvestmentCashBySymbol = new Map<string, number>();
 
   for (const group of groups.values()) {
     const dividendAmount = group.dividend
-      ? entryAmount(group.dividend)
+      ? ledgerEntryAmount(group.dividend)
       : 0;
     const buySpend = group.buy
-      ? roundMoney(entryAmount(group.buy) + (group.buy.fee ?? 0))
+      ? roundMoney(ledgerEntryAmount(group.buy) + (group.buy.fee ?? 0))
       : 0;
     const internalFunding = roundMoney(
       Math.max(0, Math.min(dividendAmount, buySpend)),
@@ -158,7 +142,7 @@ export function projectInvestmentCash(
 
   for (const entry of ordered) {
     if (!entry.symbol) continue;
-    const amount = entryAmount(entry);
+    const amount = ledgerEntryAmount(entry);
     if (entry.type === "buy") {
       const spend = roundMoney(amount + (entry.fee ?? 0));
       const externalSpend = roundMoney(

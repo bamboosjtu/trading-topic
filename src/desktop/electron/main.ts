@@ -1,5 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -22,6 +28,9 @@ import { LocalDatabase } from "./storage/database";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = app.isPackaged ? process.resourcesPath : process.cwd();
 const DEV_USER_DATA_DIR = resolve(PROJECT_ROOT, ".userData");
+// 备份恢复文件大小上限：256 MiB。覆盖典型历史流水 + 行情快照 + 回测试验，
+// 同时拒绝明显异常的大型文件，避免 JSON.parse 消耗过多内存。
+const BACKUP_RESTORE_MAX_BYTES = 256 * 1024 * 1024;
 
 if (!app.isPackaged) app.setPath("userData", DEV_USER_DATA_DIR);
 if (!existsSync(app.getPath("userData"))) {
@@ -55,7 +64,16 @@ function createWindow(): void {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    // 仅允许 http/https 在外部浏览器打开，避免 file://、javascript:、
+    // 自定义协议等被 shell.openExternal 转交给系统处理而引入风险。
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        void shell.openExternal(parsed.href);
+      }
+    } catch {
+      // 非法 URL 直接忽略，不抛出到主进程。
+    }
     return { action: "deny" };
   });
 
@@ -144,14 +162,7 @@ function registerIpc(): void {
     service.getLedgerRecord(entryId),
   );
   ipcMain.handle("ledger:export", async (_event, query: LedgerQuery) => {
-    const firstPage = service.queryLedger({ ...query, page: 1, pageSize: 100 });
-    const rows = [...firstPage.rows];
-    const pages = Math.ceil(firstPage.total / 100);
-    for (let page = 2; page <= pages; page += 1) {
-      rows.push(
-        ...service.queryLedger({ ...query, page, pageSize: 100 }).rows,
-      );
-    }
+    const exportResult = service.exportLedger({ ...query, page: 1, pageSize: 100 });
     const result = await dialog.showSaveDialog({
       title: "导出交易流水",
       defaultPath: `攒股收息-交易流水-${timestamp()}.xlsx`,
@@ -160,9 +171,9 @@ function registerIpc(): void {
     if (result.canceled || !result.filePath) return { cancelled: true };
     writeFileSync(
       result.filePath,
-      await buildLedgerWorkbook({ ...firstPage, rows }),
+      await buildLedgerWorkbook(exportResult),
     );
-    database.log("info", `已导出 ${rows.length} 条交易流水`);
+    database.log("info", `已导出 ${exportResult.rows.length} 条交易流水`);
     return { cancelled: false, path: result.filePath };
   });
   ipcMain.handle(
@@ -239,6 +250,18 @@ function registerIpc(): void {
     });
     const filePath = selected.filePaths[0];
     if (selected.canceled || !filePath) return { cancelled: true };
+    const fileSize = statSync(filePath).size;
+    if (fileSize > BACKUP_RESTORE_MAX_BYTES) {
+      await dialog.showMessageBox({
+        type: "error",
+        title: "备份文件过大",
+        message: `备份文件 ${fileSize.toLocaleString()} 字节超出 ${BACKUP_RESTORE_MAX_BYTES.toLocaleString()} 字节上限。`,
+        detail: "请确认选择的是应用导出的 JSON 备份，而非其他大型文件。",
+        buttons: ["关闭"],
+        defaultId: 0,
+      });
+      return { cancelled: true };
+    }
     const payload = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     const confirmation = await dialog.showMessageBox({
       type: "warning",

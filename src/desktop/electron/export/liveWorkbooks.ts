@@ -1,40 +1,21 @@
-import ExcelJS from "exceljs";
 import type {
   IncomeCalendarView,
   LedgerQueryResult,
   PositionsOverview,
 } from "../../shared/contracts";
-
-function styleWorksheet(worksheet: ExcelJS.Worksheet): void {
-  worksheet.views = [{ state: "frozen", ySplit: 1 }];
-  worksheet.autoFilter = {
-    from: "A1",
-    to: worksheet.getRow(1).getCell(worksheet.columnCount).address,
-  };
-  worksheet.getRow(1).font = { bold: true, color: { argb: "FF112543" } };
-  worksheet.getRow(1).fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FFF3F7FC" },
-  };
-  worksheet.eachRow((row) => {
-    row.alignment = { vertical: "middle" };
-  });
-}
-
-async function toBuffer(workbook: ExcelJS.Workbook): Promise<Buffer<ArrayBuffer>> {
-  const output = await workbook.xlsx.writeBuffer();
-  const arrayBuffer = new ArrayBuffer(output.byteLength);
-  new Uint8Array(arrayBuffer).set(new Uint8Array(output));
-  return Buffer.from(arrayBuffer);
-}
+import {
+  addProvenanceSheet,
+  createWorkbook,
+  MONEY_NUM_FMT,
+  PERCENT_NUM_FMT,
+  styleWorksheet,
+  workbookToBuffer,
+} from "./workbookInternals";
 
 export async function buildPositionsWorkbook(
   overview: PositionsOverview,
 ): Promise<Buffer<ArrayBuffer>> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "攒股收息";
-  workbook.created = new Date();
+  const workbook = createWorkbook();
   const sheet = workbook.addWorksheet("持仓明细");
   sheet.columns = [
     { header: "证券代码", key: "symbol", width: 12 },
@@ -77,43 +58,22 @@ export async function buildPositionsWorkbook(
     "cumulativeDividend",
     "totalReturn",
   ]) {
-    sheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
+    sheet.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
   for (const key of ["averageCost", "lastPrice"]) {
     sheet.getColumn(key).numFmt = "0.000";
   }
   sheet.getColumn("quantity").numFmt = "#,##0.00";
-  sheet.getColumn("xirr").numFmt = "0.00%;[Green]-0.00%";
+  sheet.getColumn("xirr").numFmt = PERCENT_NUM_FMT;
   styleWorksheet(sheet);
-  const provenance = workbook.addWorksheet("行情来源");
-  provenance.columns = [
-    { header: "实际来源", key: "source", width: 14 },
-    { header: "主来源", key: "primarySource", width: 14 },
-    { header: "是否兜底", key: "fallbackUsed", width: 12 },
-    { header: "切换原因", key: "fallbackReason", width: 60 },
-    { header: "获取时间", key: "fetchedAt", width: 26 },
-    { header: "数据截止", key: "dataCutoff", width: 14 },
-    { header: "复权方式", key: "adjustment", width: 12 },
-  ];
-  for (const row of overview.provenance) {
-    provenance.addRow({
-      ...row,
-      source: row.source === "tencent" ? "腾讯" : "新浪",
-      primarySource: "腾讯",
-      fallbackUsed: row.fallbackUsed ? "是" : "否",
-      adjustment: row.adjustment === "qfq" ? "前复权" : "不复权",
-    });
-  }
-  styleWorksheet(provenance);
-  return toBuffer(workbook);
+  addProvenanceSheet(workbook, overview.provenance);
+  return workbookToBuffer(workbook);
 }
 
 export async function buildIncomeCalendarWorkbook(
   view: IncomeCalendarView,
 ): Promise<Buffer<ArrayBuffer>> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "攒股收息";
-  workbook.created = new Date();
+  const workbook = createWorkbook();
   const days = workbook.addWorksheet(`${view.month}收益日历`);
   days.columns = [
     { header: "日期", key: "date", width: 14 },
@@ -144,9 +104,9 @@ export async function buildIncomeCalendarWorkbook(
     "dividendPnl",
     "tradingCostPnl",
   ]) {
-    days.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
+    days.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
-  days.getColumn("returnRate").numFmt = "0.00%;[Green]-0.00%";
+  days.getColumn("returnRate").numFmt = PERCENT_NUM_FMT;
   styleWorksheet(days);
 
   const contributions = workbook.addWorksheet("标的贡献");
@@ -171,39 +131,17 @@ export async function buildIncomeCalendarWorkbook(
     "tradingCostPnl",
     "totalPnl",
   ]) {
-    contributions.getColumn(key).numFmt =
-      '¥#,##0.00;[Red]-¥#,##0.00';
+    contributions.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
   styleWorksheet(contributions);
-  const provenance = workbook.addWorksheet("行情来源");
-  provenance.columns = [
-    { header: "实际来源", key: "source", width: 14 },
-    { header: "主来源", key: "primarySource", width: 14 },
-    { header: "是否兜底", key: "fallbackUsed", width: 12 },
-    { header: "切换原因", key: "fallbackReason", width: 60 },
-    { header: "获取时间", key: "fetchedAt", width: 26 },
-    { header: "数据截止", key: "dataCutoff", width: 14 },
-    { header: "复权方式", key: "adjustment", width: 12 },
-  ];
-  for (const row of view.provenance) {
-    provenance.addRow({
-      ...row,
-      source: row.source === "tencent" ? "腾讯" : "新浪",
-      primarySource: "腾讯",
-      fallbackUsed: row.fallbackUsed ? "是" : "否",
-      adjustment: row.adjustment === "qfq" ? "前复权" : "不复权",
-    });
-  }
-  styleWorksheet(provenance);
-  return toBuffer(workbook);
+  addProvenanceSheet(workbook, view.provenance);
+  return workbookToBuffer(workbook);
 }
 
 export async function buildLedgerWorkbook(
   result: LedgerQueryResult,
 ): Promise<Buffer<ArrayBuffer>> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "攒股收息";
-  workbook.created = new Date();
+  const workbook = createWorkbook();
   const sheet = workbook.addWorksheet("交易流水");
   sheet.columns = [
     { header: "业务日期", key: "businessDate", width: 14 },
@@ -249,10 +187,10 @@ export async function buildLedgerWorkbook(
     });
   }
   for (const key of ["amount", "fee", "perShare"]) {
-    sheet.getColumn(key).numFmt = '¥#,##0.00;[Red]-¥#,##0.00';
+    sheet.getColumn(key).numFmt = MONEY_NUM_FMT;
   }
   sheet.getColumn("price").numFmt = "0.000";
   sheet.getColumn("quantity").numFmt = "#,##0.00";
   styleWorksheet(sheet);
-  return toBuffer(workbook);
+  return workbookToBuffer(workbook);
 }

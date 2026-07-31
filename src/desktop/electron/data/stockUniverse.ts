@@ -7,6 +7,7 @@ import {
   ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
+import { fetchWithTimeout } from "./_internal/httpClient";
 
 const SSE_STOCK_LIST_URL =
   "https://query.sse.com.cn/sseQuery/commonQuery.do";
@@ -69,30 +70,15 @@ async function request(
   init?: RequestInit,
   acceptedRedirectStatus?: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        ...init?.headers,
-      },
-    });
-    if (!response.ok && response.status !== acceptedRedirectStatus) {
-      throw new Error(`${label}请求失败：HTTP ${response.status}`);
-    }
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`${label}请求超时`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+  const response = await fetchWithTimeout(url, {
+    ...init,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    label,
+  });
+  if (!response.ok && response.status !== acceptedRedirectStatus) {
+    throw new Error(`${label}请求失败：HTTP ${response.status}`);
   }
+  return response;
 }
 
 export function parseShanghaiStocks(payload: unknown): StockInfo[] {

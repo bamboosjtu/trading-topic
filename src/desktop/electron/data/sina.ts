@@ -12,6 +12,7 @@ import {
   decodeSinaKlc,
   type DecodedSinaBar,
 } from "./sinaKlcDecoder";
+import { fetchWithTimeout } from "./_internal/httpClient";
 
 const SINA_HISTORY_URL = (symbol: string) =>
   `https://finance.sina.com.cn/realstock/company/${symbol}/hisdata_klc2/klc_kl.js`;
@@ -93,32 +94,18 @@ async function executeTextRequest(
   url: string,
   label: string,
 ): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Referer: "https://finance.sina.com.cn/",
-      },
-    });
-    if (!response.ok) {
-      throw new HttpStatusError(
-        `${label}请求失败：HTTP ${response.status}`,
-        response.status,
-      );
-    }
-    return await response.text();
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`${label}请求超时`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+  const response = await fetchWithTimeout(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    label,
+    headers: { Referer: "https://finance.sina.com.cn/" },
+  });
+  if (!response.ok) {
+    throw new HttpStatusError(
+      `${label}请求失败：HTTP ${response.status}`,
+      response.status,
+    );
   }
+  return await response.text();
 }
 
 function fetchText(url: string, label: string): Promise<string> {
