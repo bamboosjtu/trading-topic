@@ -78,7 +78,6 @@ function registerIpc(): void {
   );
   ipcMain.handle("stocks:list", () => service.listAStocks());
   ipcMain.handle("etfs:list", () => service.listEtfs());
-  ipcMain.handle("instruments:list", () => service.listInstruments());
   ipcMain.handle("backtest:experiments:list", () =>
     service.listBacktestExperiments(),
   );

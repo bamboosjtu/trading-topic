@@ -231,34 +231,6 @@ describe("AppService 股票目录", () => {
     );
     expect(fetchDomesticEtfUniverse).not.toHaveBeenCalled();
   });
-
-  it("实盘证券目录分别加载 A 股和境内 ETF", async () => {
-    const { service } = await serviceWithDatabase();
-    const universe = completeStockUniverse();
-    const stocks = universe.filter((item) => item.securityType !== "etf");
-    const etfs = universe.filter((item) => item.securityType === "etf");
-    vi.mocked(fetchAStockUniverse).mockResolvedValue({
-      rows: stocks,
-      source: "official-exchanges",
-      primarySource: "official-exchanges",
-      fallbackUsed: false,
-      fetchedAt: "2026-07-29T00:00:00Z",
-    });
-    vi.mocked(fetchDomesticEtfUniverse).mockResolvedValue({
-      rows: etfs,
-      source: "eastmoney",
-      primarySource: "eastmoney",
-      fallbackUsed: false,
-      fetchedAt: "2026-07-29T00:00:00Z",
-    });
-
-    const result = await service.listInstruments();
-
-    expect(result).toHaveLength(stocks.length + etfs.length);
-    expect(result.some((item) => item.securityType === "etf")).toBe(true);
-    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
-    expect(fetchDomesticEtfUniverse).toHaveBeenCalledOnce();
-  });
 });
 
 describe("AppService 回测试验", () => {
@@ -634,10 +606,7 @@ describe("AppService 回测试验", () => {
         buyDay: 1,
       }),
     ).rejects.toThrow("第二个标的响应结构损坏");
-    expect(database.latestPrices()).toEqual({
-      prices: {},
-      dataCutoff: null,
-    });
+    expect(database.listLiveMarketPrices()).toHaveLength(0);
     expect(database.listBacktestExperiments()).toEqual([]);
   });
 
@@ -705,10 +674,7 @@ describe("AppService 回测试验", () => {
     );
     expect(fetchCorporateActions).not.toHaveBeenCalled();
     expect(database.listBacktestExperiments()).toEqual([]);
-    expect(database.latestPrices()).toEqual({
-      prices: {},
-      dataCutoff: null,
-    });
+    expect(database.listLiveMarketPrices()).toHaveLength(0);
   });
 });
 
@@ -1014,7 +980,6 @@ describe("AppService 实盘流水", () => {
       "2025-02-03",
       "2026-05-06",
     );
-    expect(database.listMarketPrices()).toHaveLength(0);
     expect(database.listLiveMarketPrices()).toHaveLength(6);
     expect(view.quality.dataCutoff).toBe(expectedCurrentCutoff);
 

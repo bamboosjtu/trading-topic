@@ -12,7 +12,7 @@ import {
 } from "./ledgerReducer";
 import { projectInvestmentCash } from "./investmentCashProjection";
 
-export interface ContributionAttribution {
+interface ContributionAttribution {
   holdingChange: number;
   marketPricePnl: number | null;
   dividendPnl: number;

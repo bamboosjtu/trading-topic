@@ -182,8 +182,9 @@ describe("LocalDatabase", () => {
       quantity: 200,
       fee: 5,
     });
-    database.saveBacktestExperiment(
+    database.saveBacktestExperimentWithMarketData(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
+      [],
     );
     database.saveLiveMarketPriceSnapshots([
       {
@@ -506,11 +507,13 @@ describe("LocalDatabase", () => {
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
 
-    database.saveBacktestExperiment(
+    database.saveBacktestExperimentWithMarketData(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
+      [],
     );
-    database.saveBacktestExperiment(
+    database.saveBacktestExperimentWithMarketData(
       experiment("experiment-2", "2026-07-25T09:30:00Z", 160000),
+      [],
     );
 
     const summaries = database.listBacktestExperiments();
@@ -559,10 +562,7 @@ describe("LocalDatabase", () => {
         },
       ]),
     ).toThrow();
-    expect(database.latestPrices()).toEqual({
-      prices: {},
-      dataCutoff: null,
-    });
+    expect(database.listLiveMarketPrices()).toHaveLength(0);
     expect(database.getBacktestExperiment("experiment-invalid")).toBeNull();
   });
 
@@ -570,8 +570,9 @@ describe("LocalDatabase", () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-delete-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
-    database.saveBacktestExperiment(
+    database.saveBacktestExperimentWithMarketData(
       experiment("experiment-1", "2026-07-24T09:30:00Z", 150000),
+      [],
     );
     database.saveBacktestWorkspace(workspace("experiment-1"));
 

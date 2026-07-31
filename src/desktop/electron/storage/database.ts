@@ -20,7 +20,7 @@ import type {
 } from "../../shared/contracts";
 import { validateBackup } from "../domain/backupValidation";
 
-export const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 2;
 const SCHEMA_FINGERPRINT =
   "stock-income-r1-schema-2-2026-07-30-valuation-boundary-v3";
 const DEFAULT_SETTINGS: AppSettings = {
@@ -481,10 +481,6 @@ export class LocalDatabase {
     }
   }
 
-  saveBacktestExperiment(experiment: BacktestExperiment): void {
-    this.database.transaction(() => this.insertExperiment(experiment))();
-  }
-
   saveBacktestExperimentWithMarketData(
     experiment: BacktestExperiment,
     marketData: MarketDataCacheEntry[],
@@ -934,95 +930,6 @@ export class LocalDatabase {
       this.database,
       "SELECT DISTINCT trade_date FROM live_market_prices ORDER BY trade_date",
     ).map((row) => row.trade_date);
-  }
-
-  listMarketPrices(symbols?: readonly string[]): StoredMarketPrice[] {
-    if (symbols !== undefined) {
-      if (!symbols.length) return [];
-      const placeholders = symbols.map(() => "?").join(", ");
-      return rows<{
-        symbol: string;
-        trade_date: string;
-        close: number;
-        source: string;
-        primary_source: string;
-        fallback_used: number;
-        fallback_reason: string | null;
-        fetched_at: string;
-        data_cutoff: string;
-        adjustment: "none" | "qfq";
-      }>(
-        this.database,
-        `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
-                fallback_reason, fetched_at, data_cutoff, adjustment
-         FROM market_prices
-         WHERE symbol IN (${placeholders})
-         ORDER BY symbol, trade_date`,
-        [...symbols],
-      ).map((row) => ({
-        symbol: row.symbol,
-        date: row.trade_date,
-        close: row.close,
-        source: row.source as "tencent" | "sina",
-        primarySource: row.primary_source as "tencent",
-        fallbackUsed: Boolean(row.fallback_used),
-        ...(row.fallback_reason
-          ? { fallbackReason: row.fallback_reason }
-          : {}),
-        fetchedAt: row.fetched_at,
-        dataCutoff: row.data_cutoff,
-        adjustment: row.adjustment,
-      }));
-    }
-    return rows<{
-      symbol: string;
-      trade_date: string;
-      close: number;
-      source: string;
-      primary_source: string;
-      fallback_used: number;
-      fallback_reason: string | null;
-      fetched_at: string;
-      data_cutoff: string;
-      adjustment: "none" | "qfq";
-    }>(
-      this.database,
-      `SELECT symbol, trade_date, close, source, primary_source, fallback_used,
-              fallback_reason, fetched_at, data_cutoff, adjustment
-       FROM market_prices
-       ORDER BY symbol, trade_date`,
-    ).map((row) => ({
-      symbol: row.symbol,
-      date: row.trade_date,
-      close: row.close,
-      source: row.source as "tencent" | "sina",
-      primarySource: row.primary_source as "tencent",
-      fallbackUsed: Boolean(row.fallback_used),
-      ...(row.fallback_reason
-        ? { fallbackReason: row.fallback_reason }
-        : {}),
-      fetchedAt: row.fetched_at,
-      dataCutoff: row.data_cutoff,
-      adjustment: row.adjustment,
-    }));
-  }
-
-  latestPrices(): { prices: Record<string, number>; dataCutoff: string | null } {
-    const result = rows<{ symbol: string; trade_date: string; close: number }>(
-      this.database,
-      `SELECT p.symbol, p.trade_date, p.close
-       FROM market_prices p
-       JOIN (
-         SELECT symbol, MAX(trade_date) AS max_date
-         FROM market_prices GROUP BY symbol
-       ) latest ON latest.symbol = p.symbol AND latest.max_date = p.trade_date`,
-    );
-    return {
-      prices: Object.fromEntries(result.map((row) => [row.symbol, row.close])),
-      dataCutoff: result.length
-        ? result.map((row) => row.trade_date).sort().at(-1)!
-        : null,
-    };
   }
 
   exportBackup(): BackupPayload {

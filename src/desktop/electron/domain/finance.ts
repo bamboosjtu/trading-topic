@@ -51,7 +51,7 @@ export function xirr(
   return (low + high) / 2;
 }
 
-export interface DrawdownProfile {
+interface DrawdownProfile {
   maxDrawdown: number;
   maxDrawdownPeakDate: string;
   maxDrawdownTroughDate: string;

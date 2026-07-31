@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertCurrentYearCalendarOfficial,
   assertMarketCalendarOfficialForRange,
   isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
@@ -81,7 +80,9 @@ describe("正式收盘日边界", () => {
   });
 
   it("当前发布年度必须具有官方日历，并公开年度来源诊断", () => {
-    expect(() => assertCurrentYearCalendarOfficial()).not.toThrow();
+    expect(() =>
+      assertMarketCalendarOfficialForRange("2026-01-01", "2026-12-31"),
+    ).not.toThrow();
     expect(
       marketCalendarDiagnostics().find((item) => item.year === 2026),
     ).toMatchObject({

@@ -105,15 +105,6 @@ function isFreshUniverseSnapshot(
   );
 }
 
-function mergeInstrumentUniverse(
-  stocks: readonly StockInfo[],
-  etfs: readonly StockInfo[],
-): StockInfo[] {
-  return [...stocks, ...etfs].sort((left, right) =>
-    left.symbol.localeCompare(right.symbol),
-  );
-}
-
 function confirmedCoverageThrough(
   coverage: StoredMarketCoverage,
 ): string | null {
@@ -296,14 +287,6 @@ export class AppService {
       );
       throw new Error(`无法加载完整的境内 ETF 代码表：${message}`);
     }
-  }
-
-  async listInstruments(): Promise<StockInfo[]> {
-    const [stocks, etfs] = await Promise.all([
-      this.listAStocks(),
-      this.listEtfs(),
-    ]);
-    return mergeInstrumentUniverse(stocks, etfs);
   }
 
   async runBacktest(request: BacktestRequest): Promise<BacktestExperiment> {

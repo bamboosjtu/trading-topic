@@ -117,7 +117,7 @@ export function LiveEmpty({
   );
 }
 
-export interface LiveMetricItem {
+interface LiveMetricItem {
   label: string;
   value: string;
   helper?: string;

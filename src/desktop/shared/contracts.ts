@@ -297,7 +297,7 @@ export interface LedgerEntry extends LedgerEntryInput {
   source: "user" | "system" | "restore";
 }
 
-export type LiveDataStatus = "ready" | "empty" | "stale" | "partial";
+type LiveDataStatus = "ready" | "empty" | "stale" | "partial";
 export type SecurityType = "stock" | "etf";
 export type PerformancePeriod =
   | "day"
@@ -479,7 +479,7 @@ export interface IncomeContribution {
   totalPnl: number | null;
 }
 
-export interface IncomeCalendarEvent {
+interface IncomeCalendarEvent {
   type: EntryType;
   symbol: string | null;
   name: string | null;
@@ -502,7 +502,7 @@ export interface IncomeCalendarDay {
   events: IncomeCalendarEvent[];
 }
 
-export interface IncomeMetric {
+interface IncomeMetric {
   amount: number | null;
   rate: number | null;
 }
@@ -574,12 +574,12 @@ export interface HealthResponse {
   storage: "sqlite";
 }
 
-export interface ExportResult {
+interface ExportResult {
   cancelled: boolean;
   path?: string;
 }
 
-export interface RestoreResult extends ExportResult {
+interface RestoreResult extends ExportResult {
   restored?: boolean;
   safetyBackupPath?: string;
 }
@@ -615,7 +615,7 @@ export interface AppDiagnostics {
 
 export type BacktestChartMetric = "kline" | "return" | "drawdown";
 export type BacktestCandlePeriod = "day" | "week" | "month";
-export type BacktestExperimentStatus = "completed";
+type BacktestExperimentStatus = "completed";
 
 export interface BacktestExperimentSummary {
   experimentId: string;
@@ -650,7 +650,6 @@ export interface DesktopApi {
   health(): Promise<HealthResponse>;
   listAStocks(): Promise<StockInfo[]>;
   listEtfs(): Promise<StockInfo[]>;
-  listInstruments(): Promise<StockInfo[]>;
   runBacktest(request: BacktestRequest): Promise<BacktestExperiment>;
   listBacktestExperiments(): Promise<BacktestExperimentSummary[]>;
   getBacktestExperiment(experimentId: string): Promise<BacktestExperiment>;

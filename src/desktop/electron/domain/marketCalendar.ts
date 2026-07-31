@@ -53,18 +53,6 @@ export function marketCalendarDiagnostics(
   return diagnostics.sort((left, right) => left.year - right.year);
 }
 
-export function assertCurrentYearCalendarOfficial(now = new Date()): void {
-  const currentYear = Number(currentMarketDate(now).slice(0, 4));
-  const calendar = ANNUAL_MARKET_CALENDARS.find(
-    (item) => item.year === currentYear,
-  );
-  if (!calendar || calendar.status !== "official") {
-    throw new Error(
-      `${currentYear} 年交易日历尚未更新为官方安排，拒绝生成发布版本`,
-    );
-  }
-}
-
 /**
  * 行情尾部只能由请求结束日期所在年度的官方日历确认。历史区间内部允许
  * 缺少年度日历，因为内部缺口仍由行情结构校验负责，不能据此推断休市。

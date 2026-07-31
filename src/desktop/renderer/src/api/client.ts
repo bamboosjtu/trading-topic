@@ -19,7 +19,6 @@ export const api = {
   health: () => bridge().health(),
   listAStocks: () => bridge().listAStocks(),
   listEtfs: () => bridge().listEtfs(),
-  listInstruments: () => bridge().listInstruments(),
   runBacktest: (request: BacktestRequest) => bridge().runBacktest(request),
   listBacktestExperiments: () => bridge().listBacktestExperiments(),
   getBacktestExperiment: (experimentId: string) =>

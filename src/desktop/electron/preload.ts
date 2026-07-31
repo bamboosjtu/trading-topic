@@ -13,7 +13,6 @@ const api: DesktopApi = {
   health: () => ipcRenderer.invoke("app:health"),
   listAStocks: () => ipcRenderer.invoke("stocks:list"),
   listEtfs: () => ipcRenderer.invoke("etfs:list"),
-  listInstruments: () => ipcRenderer.invoke("instruments:list"),
   runBacktest: (request: BacktestRequest) =>
     ipcRenderer.invoke("backtest:run", request),
   listBacktestExperiments: () =>

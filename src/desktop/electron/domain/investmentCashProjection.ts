@@ -1,12 +1,12 @@
 import type { LedgerEntry, SecurityType } from "../../shared/contracts";
 import { roundMoney } from "./finance";
 
-export interface InvestmentCashflow {
+interface InvestmentCashflow {
   date: string;
   amount: number;
 }
 
-export interface InvestmentCashProjection {
+interface InvestmentCashProjection {
   externalBuySpend: number;
   externalDividendIncome: number;
   pendingReinvestmentCash: number;
