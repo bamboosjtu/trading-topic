@@ -361,24 +361,22 @@ export function PositionsPage() {
                 rowKey="symbol"
                 columns={columns}
                 dataSource={rows}
-                pagination={
-                  rows.length > pageSize
-                    ? {
-                        current: currentPage,
-                        pageSize,
-                        showSizeChanger: true,
-                        pageSizeOptions: [10, 20, 50],
-                        onChange: (page, size) => {
-                          setCurrentPage(page);
-                          setPageSize(size);
-                        },
-                        onShowSizeChange: (_page, size) => {
-                          setPageSize(size);
-                          setCurrentPage(1);
-                        },
-                      }
-                    : false
-                }
+                pagination={{
+                  current: currentPage,
+                  pageSize,
+                  showSizeChanger: true,
+                  pageSizeOptions: [10, 20, 50],
+                  showTotal: (total) => `共 ${total} 个标的`,
+                  position: ["bottomCenter"],
+                  onChange: (page, size) => {
+                    setCurrentPage(page);
+                    setPageSize(size);
+                  },
+                  onShowSizeChange: (_page, size) => {
+                    setPageSize(size);
+                    setCurrentPage(1);
+                  },
+                }}
                 rowClassName={(row) => row.symbol === selectedSymbol ? "live-selected-row" : ""}
                 onRow={(row) => ({ onClick: () => setSelectedSymbol(row.symbol) })}
               />

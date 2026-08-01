@@ -416,6 +416,7 @@ export function TradesPage() {
                   showSizeChanger: true,
                   pageSizeOptions: [...LIVE_LEDGER_PAGE_SIZES],
                   showTotal: (total) => `共 ${total} 条`,
+                  position: ["bottomCenter"],
                 }}
                 rowClassName={(row) =>
                   row.isReversed ? "ledger-row-reversed" : ""
