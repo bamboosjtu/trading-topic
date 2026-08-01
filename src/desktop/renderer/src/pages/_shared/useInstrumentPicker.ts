@@ -10,13 +10,13 @@ export interface InstrumentCatalogStatus {
 }
 
 /** AutoComplete 选项。两个 Modal 共享同一形状。 */
-export interface InstrumentOption {
+interface InstrumentOption {
   value: string;
   label: string;
   disabled?: boolean;
 }
 
-export interface UseInstrumentPickerArgs {
+interface UseInstrumentPickerArgs {
   /** 当前 Modal 的 Form 实例。Hook 会通过 `Form.useWatch("securityType", form)` 跟踪资产类型。 */
   form: FormInstance;
   stocks: readonly StockInfo[];
@@ -35,7 +35,7 @@ export interface UseInstrumentPickerArgs {
   syncOnChange?: boolean;
 }
 
-export interface UseInstrumentPickerResult {
+interface UseInstrumentPickerResult {
   /** 当前表单中选中的 `securityType`（可能为 `undefined`）。 */
   securityType: SecurityType | undefined;
   /** 实际生效的 `securityType`（表单未选时回退为 `"stock"`）。 */

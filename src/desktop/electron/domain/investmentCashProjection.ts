@@ -47,7 +47,7 @@ function addCashflow(
   target.set(symbol, rows);
 }
 
-export function validateLinkedReinvestmentGroups(
+function validateLinkedReinvestmentGroups(
   entries: readonly LedgerEntry[],
 ): Map<string, LinkedReinvestmentGroup> {
   const groups = new Map<string, LinkedReinvestmentGroup>();

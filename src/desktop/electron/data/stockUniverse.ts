@@ -505,30 +505,4 @@ export async function fetchAStockUniverse(): Promise<{
   };
 }
 
-/**
- * 产品证券目录：回测只消费其中的 A 股，实盘记录可按资产类型消费 A 股或
- * 境内交易所 ETF。两个目录都通过完整性校验后才允许替换 SQLite 快照。
- */
-export async function fetchInstrumentUniverse(): Promise<{
-  rows: StockInfo[];
-} & DirectoryProvenance> {
-  const [stocks, etfs] = await Promise.all([
-    fetchAStockUniverse(),
-    fetchDomesticEtfUniverse(),
-  ]);
-  const unique = new Map<string, StockInfo>();
-  for (const row of [...stocks.rows, ...etfs.rows]) unique.set(row.symbol, row);
-  return {
-    rows: [...unique.values()].sort((left, right) =>
-      left.symbol.localeCompare(right.symbol),
-    ),
-    fetchedAt: new Date().toISOString(),
-    source:
-      "上交所、深交所、北交所 A 股代码表 + 境内交易所 ETF 代码表（产品域独立适配）",
-    primarySource: "official-exchanges+eastmoney",
-    fallbackUsed: etfs.fallbackUsed,
-    ...(etfs.fallbackReason
-      ? { fallbackReason: etfs.fallbackReason }
-      : {}),
-  };
-}
+

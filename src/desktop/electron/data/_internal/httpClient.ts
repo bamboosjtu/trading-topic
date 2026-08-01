@@ -12,7 +12,7 @@
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-export interface FetchWithTimeoutOptions extends RequestInit {
+interface FetchWithTimeoutOptions extends RequestInit {
   /** 超时毫秒数，默认 15000。 */
   timeoutMs?: number;
   /** 用于构造超时错误信息的来源标签，例如 "腾讯行情"。 */

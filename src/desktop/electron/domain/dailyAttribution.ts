@@ -52,7 +52,7 @@ export function rowsBySymbol(
   return result;
 }
 
-export function priceOnOrBefore(
+function priceOnOrBefore(
   rows: readonly StoredMarketPrice[],
   date: string,
 ): StoredMarketPrice | undefined {

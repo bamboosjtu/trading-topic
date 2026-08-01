@@ -69,30 +69,6 @@ export function assertValidMarketDateRange(
   }
 }
 
-/**
- * 行情尾部只能由请求结束日期所在年度的官方日历确认。历史区间内部允许
- * 缺少年度日历，因为内部缺口仍由行情结构校验负责，不能据此推断休市。
- * 历史浏览、备份、日志和设置不调用此门禁，应用本身也不会因此退出。
- *
- * @deprecated 新调用方应使用 {@link assertValidMarketDateRange}；
- * 年度日历检查已改为后置判断，见 `marketTailStatus`。
- */
-export function assertMarketCalendarOfficialForRange(
-  startDate: string,
-  endDate: string,
-): void {
-  assertValidMarketDateRange(startDate, endDate);
-  const endYear = Number(endDate.slice(0, 4));
-  const endCalendar = ANNUAL_MARKET_CALENDARS.find(
-    (item) => item.year === endYear,
-  );
-  if (!endCalendar || endCalendar.status !== "official") {
-    throw new Error(
-      `${endYear} 年是请求结束日期所在年度，但缺少官方交易日历，无法确认行情尾部属于合法休市；历史数据、备份和日志仍可使用，请更新该年度日历或将结束日期调整到受支持年度`,
-    );
-  }
-}
-
 function isWeekend(date: string): boolean {
   const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
   return weekday === 0 || weekday === 6;

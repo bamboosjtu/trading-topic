@@ -35,10 +35,7 @@ export function daysBetween(a: string, b: string): number {
   );
 }
 
-export {
-  A_SHARE_MARKET_TIME_ZONE,
-  currentMarketDate,
-} from "../../shared/marketDate";
+export { currentMarketDate } from "../../shared/marketDate";
 
 /** 返回 `YYYY-MM-DD` 所在月份向前若干个月的同一日，并自动夹到月末。 */
 export function addMonths(value: string, months: number): string {
@@ -54,7 +51,7 @@ export function addMonths(value: string, months: number): string {
   return target.toISOString().slice(0, 10);
 }
 
-export function monthStart(month: string): string {
+function monthStart(month: string): string {
   if (!/^\d{4}-\d{2}$/.test(month)) {
     throw new Error("月份必须使用 YYYY-MM 格式");
   }

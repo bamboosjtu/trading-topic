@@ -6,6 +6,5 @@ export {
   money,
   percent,
   pnlClass,
-  beijingDate,
   beijingTimestamp,
 } from "../_shared/format";

@@ -7,7 +7,6 @@ import {
 import {
   fetchAStockUniverse,
   fetchDomesticEtfUniverse,
-  fetchInstrumentUniverse,
   mergeAStockUniverse,
   parseBeijingStockPage,
   parseDomesticEtfs,
@@ -190,75 +189,5 @@ describe("A 股代码表", () => {
     );
     expect(result.source).toContain("上交所、深交所、北交所");
     expect(fetchMock).toHaveBeenCalledTimes(5);
-  });
-
-  it("证券目录同时包含完整 A 股和境内 ETF", async () => {
-    const shenzhen = await shenzhenFixture();
-    const shMain = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
-      A_STOCK_CODE: String(600000 + index),
-      SEC_NAME_CN: `沪市股票${index}`,
-    }));
-    const etfs = Array.from({ length: ETF_UNIVERSE_MIN_SIZE }, (_, index) => ({
-      f12: String(510000 + index),
-      f14: `ETF示例${index}`,
-    }));
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = new URL(String(input));
-      if (url.hostname === "query.sse.com.cn") {
-        return new Response(
-          JSON.stringify({
-            result:
-              url.searchParams.get("STOCK_TYPE") === "8"
-                ? [{ A_STOCK_CODE: "688001", SEC_NAME_CN: "科创示例" }]
-                : shMain,
-          }),
-        );
-      }
-      if (url.hostname === "www.szse.cn") return new Response(shenzhen);
-      if (url.hostname === "www.bse.cn") {
-        const headers = new Headers(init?.headers);
-        if (!headers.has("Cookie")) {
-          return new Response("", {
-            status: 307,
-            headers: {
-              Location: String(url),
-              "Set-Cookie": "C3VK=test-cookie; Max-Age=300; Path=/",
-            },
-          });
-        }
-        return new Response(
-          `callback(${JSON.stringify([
-            {
-              totalPages: 1,
-              content: [{ xxzqdm: "920001", xxzqjc: "北交所示例" }],
-            },
-          ])})`,
-        );
-      }
-      if (url.hostname === "push2.eastmoney.com") {
-        const page = Number(url.searchParams.get("pn"));
-        const pageSize = Number(url.searchParams.get("pz"));
-        return new Response(
-          JSON.stringify({
-            rc: 0,
-            data: {
-              total: ETF_UNIVERSE_MIN_SIZE,
-              diff: etfs.slice((page - 1) * pageSize, page * pageSize),
-            },
-          }),
-        );
-      }
-      throw new Error(`unexpected request: ${url}`);
-    });
-
-    const result = await fetchInstrumentUniverse();
-    expect(
-      result.rows.filter((row) => row.securityType === "etf"),
-    ).toHaveLength(ETF_UNIVERSE_MIN_SIZE);
-    expect(result.rows).toContainEqual({
-      symbol: "510000",
-      name: "ETF示例0",
-      securityType: "etf",
-    });
   });
 });

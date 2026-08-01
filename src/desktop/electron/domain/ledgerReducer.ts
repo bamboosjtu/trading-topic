@@ -15,7 +15,7 @@ export interface LedgerPositionState {
   realizedPnl: number;
 }
 
-export interface LedgerState {
+interface LedgerState {
   asOfDate: string;
   effectiveEntries: LedgerEntry[];
   reversedIds: Set<string>;

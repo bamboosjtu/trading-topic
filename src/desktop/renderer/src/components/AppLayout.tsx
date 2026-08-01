@@ -24,7 +24,7 @@ interface NavigationGroup {
   items: NavigationItem[];
 }
 
-export const NAV_GROUPS: NavigationGroup[] = [
+const NAV_GROUPS: NavigationGroup[] = [
   {
     label: "研究",
     items: [

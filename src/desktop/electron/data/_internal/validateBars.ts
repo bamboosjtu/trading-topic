@@ -10,7 +10,7 @@
  * 但同一域内（src/desktop）的 tencent 与 sina 之间的重复应收敛于此。
  */
 
-export interface OhlcvValues {
+interface OhlcvValues {
   open: number;
   high: number;
   low: number;
