@@ -302,6 +302,8 @@ function registerIpc(): void {
     // P2-5：JSON 解析和领域校验在 worker 线程完成，避免冻结主进程。
     // 领域完整性校验在 storage 层之外完成，避免 storage→domain 反向依赖。
     // 校验失败时不会进入 restoreBackup，现有数据不被触碰。
+    // P2-4：补充 exit 兜底和超时，避免 worker 异常退出但未触发 message/error
+    // 时 Promise 永远悬挂。
     const schemaVersion = database.getSchemaVersion();
     const schemaFingerprint = database.getSchemaFingerprint();
     const backup = await new Promise<ValidatedBackupPayload>(
@@ -312,17 +314,45 @@ function registerIpc(): void {
             workerData: { fileContent, schemaVersion, schemaFingerprint },
           },
         );
+        let settled = false;
+        // P2-4：timer 先声明，cleanup 通过闭包引用，避免 TDZ。
+        let timer: NodeJS.Timeout | null = null;
+        const cleanup = (reason: "done" | "error" | "exit" | "timeout") => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          worker.removeAllListeners();
+          if (reason !== "done") {
+            worker.terminate().catch(() => {});
+          }
+        };
+        timer = setTimeout(() => {
+          cleanup("timeout");
+          rejectPromise(new Error("备份校验超时（60 秒）"));
+        }, 60_000);
         worker.on("message", (message: { success: boolean; data?: ValidatedBackupPayload; error?: string }) => {
+          if (settled) return;
           if (message.success && message.data) {
+            cleanup("done");
+            worker.terminate().catch(() => {});
             resolvePromise(message.data);
           } else {
+            cleanup("error");
             rejectPromise(new Error(message.error ?? "备份校验失败"));
           }
-          worker.terminate().catch(() => {});
         });
         worker.on("error", (error) => {
+          if (settled) return;
+          cleanup("error");
           rejectPromise(error);
-          worker.terminate().catch(() => {});
+        });
+        // P2-4：worker 异常退出但未触发 message/error 时，通过 exit 兜底拒绝。
+        worker.on("exit", (code) => {
+          if (settled) return;
+          cleanup("exit");
+          rejectPromise(
+            new Error(`备份校验 worker 异常退出（code=${code}）`),
+          );
         });
       },
     );

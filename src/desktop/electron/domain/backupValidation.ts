@@ -266,6 +266,14 @@ function assertBacktestResult(
   ) {
     throw new Error("备份回测结果明细结构非法");
   }
+  // P2-3：实际成功的回测必然包含价格序列与权益曲线；
+  // 缺失二者之一的备份视为不完整，拒绝恢复。
+  if (result.priceSeries.length === 0) {
+    throw new Error("备份回测价格序列为空，无法恢复成功回测");
+  }
+  if (result.equityCurve.length === 0) {
+    throw new Error("备份回测权益曲线为空，无法恢复成功回测");
+  }
   let previousPriceDate = "";
   for (const row of result.priceSeries) {
     if (
@@ -367,23 +375,39 @@ function assertBacktestResult(
       `备份回测财务恒等式不成立：totalPnl(${metric.totalPnl}) ≠ endingAsset(${metric.endingAsset}) - totalContribution(${metric.totalContribution})`,
     );
   }
-  // 2. actualEndDate 必须等于价格序列最后一个交易日（价格序列非空时）
-  if (result.priceSeries.length) {
-    const lastPriceDate = result.priceSeries[result.priceSeries.length - 1]!.date;
-    if (lastPriceDate !== result.actualEndDate) {
-      throw new Error(
-        `备份回测 actualEndDate(${result.actualEndDate}) 与价格序列截止日(${lastPriceDate})不一致`,
-      );
-    }
+  // 2. actualStartDate / actualEndDate 必须等于价格序列首尾交易日。
+  //    上方已要求 priceSeries 非空，可直接索引首尾元素。
+  const firstPriceDate = result.priceSeries[0]!.date;
+  const lastPriceDate = result.priceSeries[result.priceSeries.length - 1]!.date;
+  if (firstPriceDate !== result.actualStartDate) {
+    throw new Error(
+      `备份回测 actualStartDate(${result.actualStartDate}) 与价格序列首日(${firstPriceDate})不一致`,
+    );
   }
-  // 3. endingAsset 必须等于权益曲线最后一个资产值（权益曲线非空时）
-  if (result.equityCurve.length) {
-    const lastEquity = result.equityCurve[result.equityCurve.length - 1]!;
-    if (Math.abs(lastEquity.asset - metric.endingAsset) > 0.01) {
-      throw new Error(
-        `备份回测 endingAsset(${metric.endingAsset}) 与权益曲线期末资产(${lastEquity.asset})不一致`,
-      );
-    }
+  if (lastPriceDate !== result.actualEndDate) {
+    throw new Error(
+      `备份回测 actualEndDate(${result.actualEndDate}) 与价格序列截止日(${lastPriceDate})不一致`,
+    );
+  }
+  // 3. endingAsset 必须等于权益曲线最后一个资产值（允许 0.01 舍入误差）。
+  //    上方已要求 equityCurve 非空，可直接索引末元素。
+  const lastEquity = result.equityCurve[result.equityCurve.length - 1]!;
+  if (Math.abs(lastEquity.asset - metric.endingAsset) > 0.01) {
+    throw new Error(
+      `备份回测 endingAsset(${metric.endingAsset}) 与权益曲线期末资产(${lastEquity.asset})不一致`,
+    );
+  }
+  // 4. 权益曲线首尾日期必须与 actualStartDate / actualEndDate 一致。
+  const firstEquityDate = result.equityCurve[0]!.date;
+  if (firstEquityDate !== result.actualStartDate) {
+    throw new Error(
+      `备份回测权益曲线首日(${firstEquityDate})与 actualStartDate(${result.actualStartDate})不一致`,
+    );
+  }
+  if (lastEquity.date !== result.actualEndDate) {
+    throw new Error(
+      `备份回测权益曲线末日(${lastEquity.date})与 actualEndDate(${result.actualEndDate})不一致`,
+    );
   }
 }
 
@@ -506,13 +530,21 @@ function assertMarketSnapshots(backup: BackupPayload): void {
       row.requested_from <= row.requested_through;
     if (
       !validRange ||
-      !["data", "empty"].includes(row.result_status) ||
+      !["data", "empty", "partial"].includes(row.result_status) ||
       (row.result_status === "empty" &&
         (!["exchange_calendar", "outside_listing"].includes(
           row.empty_evidence ?? "",
         ) ||
           row.data_cutoff !== null)) ||
       (row.result_status === "data" &&
+        (row.empty_evidence !== null ||
+          !row.data_cutoff ||
+          !validDate(row.data_cutoff) ||
+          row.data_cutoff < row.requested_from ||
+          row.data_cutoff > row.requested_through)) ||
+      // P1-3：partial 表示请求范围内存在 error 级别问题，prices 仍保存。
+      // partial 必须有价格行、有 data_cutoff、不能有 empty_evidence。
+      (row.result_status === "partial" &&
         (row.empty_evidence !== null ||
           !row.data_cutoff ||
           !validDate(row.data_cutoff) ||
@@ -531,7 +563,7 @@ function assertMarketSnapshots(backup: BackupPayload): void {
       matching.map((price) => price.trade_date).sort().at(-1) ?? null;
     if (
       (row.result_status === "empty" && matching.length) ||
-      (row.result_status === "data" &&
+      ((row.result_status === "data" || row.result_status === "partial") &&
         (!matching.length || actualCutoff !== row.data_cutoff))
     ) {
       throw new Error("备份行情覆盖与价格行不一致");

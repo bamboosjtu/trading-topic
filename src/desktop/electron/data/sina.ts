@@ -265,7 +265,23 @@ async function recentKline(
       `${symbol} 新浪短日线只能覆盖至 ${rows[0]!.date}，无法完整兜底请求区间`,
     );
   }
-  return { rows: inRequestedRange(rows, startDate, endDate), droppedDates };
+  // P2-1：在适配器边界把 droppedDates 过滤到当前请求区间，
+  // 避免全量历史缓存中的旧坏行影响持仓刷新等只关心当前区间的调用方。
+  return {
+    rows: inRequestedRange(rows, startDate, endDate),
+    droppedDates: filterDatesInRange(droppedDates, startDate, endDate),
+  };
+}
+
+/** P2-1：仅保留落在请求区间内的日期，供 droppedDates 边界过滤使用。 */
+function filterDatesInRange(
+  dates: readonly string[],
+  startDate: string,
+  endDate: string,
+): string[] {
+  return dates.filter(
+    (date) => date >= startDate && date <= endDate,
+  );
 }
 
 export function extractSinaKlcPayload(text: string): string {
@@ -405,7 +421,8 @@ export async function fetchSinaUnadjustedPrices(
   try {
     const full = await fullHistory(symbol);
     rows = inRequestedRange(full.rows, startDate, endDate);
-    droppedDates = full.droppedDates;
+    // P2-1：全量历史缓存中的 droppedDates 必须在适配器边界过滤到请求区间。
+    droppedDates = filterDatesInRange(full.droppedDates, startDate, endDate);
   } catch (error) {
     if (!(error instanceof HttpStatusError) || error.status !== 404) {
       throw error;
@@ -441,7 +458,8 @@ export async function fetchSinaAdjustedBars(
       qfqFactors(symbol),
     ]);
     history = full.rows;
-    droppedDates = full.droppedDates;
+    // P2-1：全量历史缓存中的 droppedDates 必须在适配器边界过滤到请求区间。
+    droppedDates = filterDatesInRange(full.droppedDates, startDate, endDate);
     factors = factorData;
   } catch (error) {
     if (!(error instanceof HttpStatusError) || error.status !== 404) {

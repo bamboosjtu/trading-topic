@@ -634,6 +634,13 @@ export interface MarketDataCacheEntry {
   provenance: MarketDataProvenance & { caliberVersion: string };
   requestedFrom?: string;
   requestedThrough?: string;
+  /**
+   * P1-3：标记本次覆盖的完整性状态。
+   * - `partial`：请求范围内存在 error 级别行情问题，prices 仍保存但覆盖不确认完整，
+   *   `missingLivePriceRanges` 会重新请求该区间。
+   * 省略时由 `saveLiveMarketPriceSnapshots` 根据是否有价格推导为 `data` / `empty`。
+   */
+  resultStatus?: "data" | "empty" | "partial";
 }
 
 export interface StoredMarketPrice {
@@ -662,7 +669,11 @@ export interface StoredMarketCoverage {
   dataCutoff: string | null;
   adjustment: "none" | "qfq";
   emptyEvidence?: "exchange_calendar" | "outside_listing";
-  resultStatus: "data" | "empty";
+  /**
+   * P1-3：`partial` 表示请求范围内存在 error 级别行情问题，
+   * prices 已保存但覆盖不确认完整，`missingLivePriceRanges` 会重新请求。
+   */
+  resultStatus: "data" | "empty" | "partial";
 }
 
 export interface BackupPayload {
@@ -710,7 +721,7 @@ export interface BackupPayload {
     data_cutoff: string | null;
     adjustment: "none" | "qfq";
     empty_evidence: "exchange_calendar" | "outside_listing" | null;
-    result_status: "data" | "empty";
+    result_status: "data" | "empty" | "partial";
   }>;
   corporateActions: Array<{
     symbol: string;

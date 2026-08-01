@@ -75,8 +75,16 @@ function result(
       endingCash: 0,
     },
     transactions: [],
-    equityCurve: [],
-    priceSeries: [],
+    // P2-3：备份校验要求 priceSeries / equityCurve 非空，
+    // 且首尾日期与 actualStartDate / actualEndDate 一致。
+    equityCurve: [
+      { date: "2023-07-24", asset: 3000, contribution: 3000, returnRate: 0, drawdown: 0 },
+      { date: "2026-07-24", asset: endingAsset, contribution: 108000, returnRate: (endingAsset - 108000) / 108000, drawdown: -0.2 },
+    ],
+    priceSeries: [
+      { date: "2023-07-24", close: 5 },
+      { date: "2026-07-24", close: 6 },
+    ],
     chartData: { status: "unavailable", reason: "test" },
     warnings: [],
     provenance: [
@@ -279,7 +287,13 @@ describe("LocalDatabase", () => {
       strategyKey: `601398|3|3000|1|ex_date|${BACKTEST_CALIBER_VERSION}`,
       metrics: overrides.metrics,
       transactions: [],
-      equityCurve: [],
+      // P2-3：备份校验要求 equityCurve 非空，且首尾日期与 actualStartDate/actualEndDate 一致。
+      equityCurve: [
+        { date: overrides.actualStartDate, asset: overrides.metrics.endingAsset, contribution: overrides.metrics.totalContribution, returnRate: overrides.metrics.totalPnl / overrides.metrics.totalContribution, drawdown: overrides.metrics.maxDrawdown },
+        ...(overrides.actualStartDate !== overrides.actualEndDate
+          ? [{ date: overrides.actualEndDate, asset: overrides.metrics.endingAsset, contribution: overrides.metrics.totalContribution, returnRate: overrides.metrics.totalPnl / overrides.metrics.totalContribution, drawdown: overrides.metrics.maxDrawdown }]
+          : []),
+      ],
       priceSeries: [
         {
           date: overrides.actualStartDate,

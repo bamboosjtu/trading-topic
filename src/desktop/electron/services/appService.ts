@@ -113,9 +113,28 @@ function hasErrorInRequestRange(
 }
 
 /**
+ * P1-2：筛选出请求区间内的 warning 级别问题，用于写入回测结果 warnings。
+ * 无日期的 warning 视为通用问题，一并保留。
+ */
+function warningsInRequestRange(
+  issues: readonly MarketDataIssue[],
+  startDate: string,
+  endDate: string,
+): MarketDataIssue[] {
+  return issues.filter((issue) => {
+    if (issue.severity !== "warning") return false;
+    if (!issue.date) return true;
+    return issue.date >= startDate && issue.date <= endDate;
+  });
+}
+
+/**
  * 单个回测标的的市场数据集合：行情、分红、K 线图数据及其来源。
  * 由 `fetchBacktestMarketData` 收集，供 `computeBacktestResults` 与
  * `persistBacktestExperiment` 复用。
+ *
+ * P1-1：前复权 K 线（chartData / chartProvenance / chartIssues）允许失败，
+ * 失败时 chartData 标记为 error/unavailable，仍可继续回测。
  */
 interface BacktestMarketDataBundle {
   symbol: string;
@@ -123,9 +142,9 @@ interface BacktestMarketDataBundle {
   prices: Awaited<ReturnType<typeof fetchMarketPrices>>;
   dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
   chartData: BacktestResult["chartData"];
-  chartProvenance: Awaited<
-    ReturnType<typeof fetchMarketAdjustedBars>
-  >["provenance"];
+  chartProvenance:
+    | Awaited<ReturnType<typeof fetchMarketAdjustedBars>>["provenance"]
+    | undefined;
   /** 前复权 K 线的问题列表；errors 不阻断回测但写入 warnings。 */
   chartIssues: MarketDataIssue[];
 }
@@ -153,6 +172,11 @@ function confirmedCoverageThrough(
 ): string | null {
   if (coverage.resultStatus === "empty") {
     return coverage.emptyEvidence ? coverage.requestedThrough : null;
+  }
+  // P1-3：partial 状态表示请求范围内存在 error 级别行情问题，
+  // 覆盖不确认完整，返回 null 让 missingLivePriceRanges 重新请求该区间。
+  if (coverage.resultStatus === "partial") {
+    return null;
   }
   if (!coverage.dataCutoff) return null;
   if (coverage.dataCutoff >= coverage.requestedThrough) {
@@ -384,6 +408,10 @@ export class AppService {
   /**
    * 串行获取每个标的的不复权行情、前复权 K 线和分红事件，校验尾部完整性。
    * 标的之间留出节流窗口，避免数据源限流。
+   *
+   * P1-1：不复权价格用于严格回测证据，失败或不完整必须终止；
+   * 前复权 K 线只用于图表浏览，失败或尾部不完整时降级为 error / unavailable
+   * 并写入 warnings，不阻断回测。
    */
   private async fetchBacktestMarketData(
     canonicalRequest: BacktestRequest,
@@ -400,7 +428,10 @@ export class AppService {
     }
     const marketData: BacktestMarketDataBundle[] = [];
     for (const [index, symbol] of canonicalRequest.symbols.entries()) {
-      const [prices, adjustedBars] = await Promise.all([
+      // P1-1：不复权价格与前复权 K 线使用不同失败策略。
+      // - 不复权价格失败或不完整 → 阻断回测
+      // - 前复权 K 线失败或不完整 → 回测继续，chartData 降级
+      const [pricesSettled, adjustedBarsSettled] = await Promise.allSettled([
         fetchMarketPrices(
           symbol,
           canonicalRequest.startDate,
@@ -412,6 +443,12 @@ export class AppService {
           canonicalRequest.endDate,
         ),
       ]);
+      if (pricesSettled.status === "rejected") {
+        throw pricesSettled.reason instanceof Error
+          ? pricesSettled.reason
+          : new Error(String(pricesSettled.reason));
+      }
+      const prices = pricesSettled.value;
       if (prices.tailStatus === "incomplete") {
         throw new Error(
           `${symbol} 严格回测行情尾部不完整：${formatMarketIssues(prices.issues).join("；") || `仅更新至 ${prices.dataCutoff ?? "未知日期"}`}`,
@@ -434,10 +471,49 @@ export class AppService {
           `${symbol} 严格回测行情存在数据质量问题，拒绝继续：${errors}`,
         );
       }
-      if (adjustedBars.tailStatus === "incomplete") {
-        throw new Error(
-          `${symbol} 严格回测 K 线尾部不完整：${formatMarketIssues(adjustedBars.issues).join("；") || `仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}`}`,
-        );
+      // P1-1：前复权 K 线失败或尾部不完整时降级，不阻断回测。
+      let chartData: BacktestResult["chartData"];
+      let chartProvenance:
+        | Awaited<ReturnType<typeof fetchMarketAdjustedBars>>["provenance"]
+        | undefined;
+      let chartIssues: MarketDataIssue[] = [];
+      if (adjustedBarsSettled.status === "fulfilled") {
+        const adjustedBars = adjustedBarsSettled.value;
+        chartProvenance = adjustedBars.provenance;
+        chartIssues = adjustedBars.issues;
+        if (adjustedBars.tailStatus === "incomplete") {
+          // P1-1：前复权 K 线尾部不完整属于图表降级，不阻断回测。
+          chartIssues = [
+            ...chartIssues,
+            {
+              type: "gap",
+              severity: "warning",
+              message: `${symbol} 前复权 K 线尾部不完整，仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}；图表降级展示`,
+            },
+          ];
+          chartData = {
+            status: "unavailable",
+            reason: `前复权 K 线尾部不完整，仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}`,
+          };
+        } else {
+          chartData = { status: "ready", data: adjustedBars.rows };
+        }
+      } else {
+        const reason =
+          adjustedBarsSettled.reason instanceof Error
+            ? adjustedBarsSettled.reason.message
+            : String(adjustedBarsSettled.reason);
+        chartData = {
+          status: "error",
+          message: `前复权 K 线获取失败：${reason}`,
+        };
+        chartIssues = [
+          {
+            type: "gap",
+            severity: "warning",
+            message: `${symbol} 前复权 K 线获取失败：${reason}`,
+          },
+        ];
       }
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
       if (index > 0) {
@@ -455,9 +531,9 @@ export class AppService {
         name: instrumentMap.get(symbol)?.name ?? symbol,
         prices,
         dividends,
-        chartData: { status: "ready", data: adjustedBars.rows },
-        chartProvenance: adjustedBars.provenance,
-        chartIssues: adjustedBars.issues,
+        chartData,
+        chartProvenance,
+        chartIssues,
       });
     }
     return marketData;
@@ -558,6 +634,15 @@ export class AppService {
         result.warnings.push(
           `前复权 K 线${issue.severity === "error" ? "数据质量" : "完整性"}问题：${issue.message}`,
         );
+      }
+      // P1-2：不复权行情的 warning 级别问题（如正式日历年度中缺失交易日）
+      // 不阻断回测，但必须写入 result.warnings，避免实验结果和备份中没有任何提示。
+      for (const issue of warningsInRequestRange(
+        prices.issues,
+        effectiveRequest.startDate,
+        effectiveRequest.endDate,
+      )) {
+        result.warnings.push(`回测行情完整性问题：${issue.message}`);
       }
       results.push(result);
     }
@@ -733,6 +818,15 @@ export class AppService {
           range.startDate,
           range.endDate,
         );
+        // P1-3：检测请求区间内的 error 级别行情问题。
+        // 即使尾部完整，只要请求范围内存在 error（如被丢弃的非法 OHLCV 行），
+        // 覆盖标记为 partial，confirmedCoverageThrough 返回 null，
+        // missingLivePriceRanges 后续会重新请求该区间。
+        const hasError = hasErrorInRequestRange(
+          response.issues,
+          range.startDate,
+          range.endDate,
+        );
         snapshots.push({
           symbol: range.symbol,
           prices: response.rows,
@@ -740,6 +834,7 @@ export class AppService {
           provenance: response.provenance,
           requestedFrom: range.startDate,
           requestedThrough: range.endDate,
+          ...(hasError ? { resultStatus: "partial" as const } : {}),
         });
         if (response.tailStatus === "incomplete") {
           issues.push(
@@ -747,6 +842,14 @@ export class AppService {
               formatMarketIssues(response.issues).join("；") ||
               `仅更新至 ${response.dataCutoff ?? "暂无可用日期"}`
             }`,
+          );
+        }
+        if (hasError) {
+          const errorIssues = response.issues.filter(
+            (issue) => issue.severity === "error",
+          );
+          issues.push(
+            `${range.symbol} ${range.startDate}..${range.endDate} 行情存在 error 级别问题，覆盖标记为 partial：${formatMarketIssues(errorIssues).join("；")}`,
           );
         }
       } catch (error) {
@@ -808,6 +911,12 @@ export class AppService {
         range.startDate,
         range.endDate,
       );
+      // P1-3：检测请求区间内的 error 级别行情问题，标记覆盖为 partial。
+      const hasError = hasErrorInRequestRange(
+        response.issues,
+        range.startDate,
+        range.endDate,
+      );
       snapshots.push({
         symbol: range.symbol,
         prices: response.rows,
@@ -815,6 +924,7 @@ export class AppService {
         provenance: response.provenance,
         requestedFrom: range.startDate,
         requestedThrough: range.endDate,
+        ...(hasError ? { resultStatus: "partial" as const } : {}),
       });
       if (response.tailStatus === "incomplete") {
         fetchIssues.push(

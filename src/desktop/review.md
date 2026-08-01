@@ -1,6 +1,6 @@
 # 攒股收息 R1 桌面应用评审报告
 
-> 评审日期：2026-08-01（第四轮，P1/P2 修复后收敛）
+> 评审日期：2026-08-01（第五轮，P1/P2 修复后收敛）
 >
 > 评审范围：`src/desktop/` 全量源码、`docs/product/` 文档一致性、`AGENTS.md` 工程约束
 >
@@ -26,7 +26,7 @@
 | --- | --- | --- | --- |
 | P1-1 | 严格回测接受"已知丢失行情行"的新浪数据 | [shared/contracts.ts:41-47](shared/contracts.ts#L41-L47)、[services/appService.ts](electron/services/appService.ts)、[data/sina.ts](electron/data/sina.ts) | `MarketDataIssue` 改为结构化 `{date?, type, severity, message}`；新浪返回被丢弃 OHLCV 行的具体日期；`AppService.fetchBacktestMarketData()` 在请求范围内存在任何 `severity: "error"` 时立即终止严格回测；前复权问题降级为 warning 但写入结果 `warnings` |
 | P1-2 | 无回撤的合法回测备份无法恢复 | [domain/finance.ts](electron/domain/finance.ts)、[domain/backupValidation.ts](electron/domain/backupValidation.ts) | `DrawdownProfile` 的四个日期字段改为 `string \| null`；`maxDrawdown === 0` 时日期必须为 `null`，`maxDrawdown < 0` 时必须为合法日期；最长回撤阶段按是否存在条件校验 |
-| P2-1 | 严格行情只检查尾部，没有逐交易日验证内部完整性 | [data/marketDataProvider.ts:103](electron/data/marketDataProvider.ts#L103) | 新增 `detectDateCompletenessIssues()`，对 2024 年起有官方日历的区间按预期交易日逐日核对，更早区间至少进行腾讯/新浪日期集合交叉校验；工作日缺口生成 `warning` |
+| P2-1 | 严格行情只检查尾部，没有逐交易日验证内部完整性 | [data/marketDataProvider.ts:103](electron/data/marketDataProvider.ts#L103) | 新增 `detectDateCompletenessIssues()`，对 2024 年起有官方日历的区间按预期交易日逐日核对；工作日缺口生成 `warning`。**注意**：2024 年以前的区间没有官方逐日日历，仅依赖严格升序、非周末、单段缺口不超过 120 天、两源重叠日期价格一致性（`assertCrossProviderConsistency`）等启发式校验；该函数只比较两源共同日期的价格，不比较完整日期集合，且主源尾部完整时不访问备用源。R1 接受旧年份没有官方逐日日历的限制 |
 | P2-2 | 行情校验只排除周末，没有排除已确认法定休市日 | [data/marketDataProvider.ts:85](electron/data/marketDataProvider.ts#L85)、[domain/marketCalendar.ts:77](electron/domain/marketCalendar.ts#L77) | `assertDates()` 调用 `isConfirmedMarketClosureDate()`，对已有官方日历年度同时拒绝周末和确认休市日 |
 | P2-3 | 备份校验验证结构，但没有验证核心财务恒等式 | [domain/backupValidation.ts](electron/domain/backupValidation.ts) | 新增低成本恒等式校验：`totalPnl === endingAsset - totalContribution`、`actualEndDate === priceSeries 最后日期`、`endingAsset === equityCurve 最后资产`；XIRR 重算留作后续审计模式 |
 | P2-4 | 实盘行情表依赖"请求区间永不重叠"的隐含前提 | [storage/schema.ts](electron/storage/schema.ts)、[storage/marketRepository.ts](electron/storage/marketRepository.ts) | 拆分为 `live_market_prices`（行级来源 + `coverage_id` 外键）和 `live_market_coverage`（请求区间主键）；价格行不再携带请求区间归属 |
@@ -35,6 +35,20 @@
 | P2-7 | `database.ts` 承担过多职责（约 1100 行） | [storage/schema.ts](electron/storage/schema.ts)、[storage/dbUtil.ts](electron/storage/dbUtil.ts)、[storage/ledgerRepository.ts](electron/storage/ledgerRepository.ts)、[storage/backtestRepository.ts](electron/storage/backtestRepository.ts)、[storage/marketRepository.ts](electron/storage/marketRepository.ts)、[storage/backupRepository.ts](electron/storage/backupRepository.ts)、[storage/database.ts](electron/storage/database.ts) | 一次性结构性拆分：`schema`（版本与指纹）、`dbUtil`（SQL helper）、四个领域仓库、`database` 仅保留门面与设置/目录/日志。未做跨仓库的公共工具抽取 |
 
 附带收敛：第三轮评审中"设置页 UI 缺失"的待处理项已在本轮之前完成。[SettingsPage.tsx](renderer/src/pages/SettingsPage.tsx) 已实现 Schema、固定费用/口径、A 股与 ETF 目录来源、年度交易日历状态、JSON 备份恢复和脱敏日志导出；[README.md:64](README.md#L64) 与 [docs/product/desktop_ui/本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 描述与实现一致。
+
+## 2.1 第五轮新增修复
+
+| 编号 | 问题 | 修复位置 | 修复方式 |
+| --- | --- | --- | --- |
+| P1-1 | 辅助前复权 K 线阻断严格回测 | [services/appService.ts](electron/services/appService.ts) | `fetchBacktestMarketData` 改用 `Promise.allSettled`；不复权价格失败/不完整仍阻断回测，前复权 K 线失败或不完整降级为 `chartData = error/unavailable` 并写入 `warnings` |
+| P1-2 | 已检测到的价格缺口没有写入实验警告 | [services/appService.ts](electron/services/appService.ts) | 新增 `warningsInRequestRange()`，`computeBacktestResults` 将请求区间内的 `warning` 级别行情问题写入 `result.warnings` |
+| P1-3 | 存在错误行的行情永久登记为完整覆盖 | [storage/schema.ts](electron/storage/schema.ts)、[storage/marketRepository.ts](electron/storage/marketRepository.ts)、[services/appService.ts](electron/services/appService.ts)、[domain/backupValidation.ts](electron/domain/backupValidation.ts) | `result_status` 新增 `partial`；`fetchLivePriceRanges` / `refreshPositionsMarket` 检测请求区间内 `error` 级别问题时标记 `partial`；`confirmedCoverageThrough` 对 `partial` 返回 `null`，`missingLivePriceRanges` 后续重新请求；备份校验接受 `partial` 状态 |
+| P2-1 | 新浪问题列表没有在适配器边界过滤到请求区间 | [data/sina.ts](electron/data/sina.ts) | 新增 `filterDatesInRange()`，返回前将 `droppedDates` 过滤到 `[startDate, endDate]` |
+| P2-2 | 行情覆盖与价格行单归属导致重叠覆盖破坏备份 | [storage/marketRepository.ts](electron/storage/marketRepository.ts) | `saveLiveMarketPriceSnapshots` 写入前检测新价格行是否与已有价格行冲突（同 `symbol + trade_date`）；旧 `partial` 覆盖允许删除替换，旧 `data/empty` 覆盖禁止价格行冲突 |
+| P2-3 | 备份恒等式允许空价格序列和空权益曲线 | [domain/backupValidation.ts](electron/domain/backupValidation.ts) | 新增 `priceSeries.length > 0`、`equityCurve.length > 0`、首尾日期与 `actualStartDate/actualEndDate` 一致的校验 |
+| P2-4 | 备份 Worker 缺少退出兜底和超时 | [main.ts](electron/main.ts) | 新增 `worker.on("exit")` 监听和 60 秒超时；`message` / `error` / `exit` / `timeout` 统一 cleanup 并 resolve/reject |
+| P2-5 | 2024 年以前未实现跨源日期集合完整性校验（文档与实现不一致） | [review.md](review.md) | 修正 §2 P2-1 描述：明确 2024 年以前只有启发式校验（升序/非周末/缺口上限/重叠价格一致性），不比较完整日期集合，主源尾部完整时不访问备用源 |
+| P2-6 | 日历使用英文 | [renderer/src/main.tsx](renderer/src/main.tsx) | `dayjs.locale("zh-cn")`，DatePicker 等组件月份选择面板显示中文 |
 
 ## 3. 仍待处理的问题
 
@@ -83,7 +97,7 @@
 | 文档链接 | PASS |
 | 文档与实现一致性 | **本地设置 UI 简述两处仍写 Schema 2**（见 §3.2） |
 | 类型检查 / 测试 / 构建 | PASS |
-| P1/P2 修复 | 9 项全部完成（P1-1、P1-2、P2-1～P2-7） |
+| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项全部完成 |
 | 发布前真实行情与便携包验证 | **未执行**（见 §3.1） |
 
-**总体**：本轮 P1/P2 问题清单的代码层修复已全部收敛，单元测试与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。
+**总体**：第四、五轮 P1/P2 问题清单的代码层修复已全部收敛，单元测试与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。

@@ -90,7 +90,7 @@ interface MarketCoverageRow {
   data_cutoff: string | null;
   adjustment: "none" | "qfq";
   empty_evidence: "exchange_calendar" | "outside_listing" | null;
-  result_status: "data" | "empty";
+  result_status: "data" | "empty" | "partial";
 }
 
 /** 将 live_market_coverage SQL 行映射为 StoredMarketCoverage。 */
@@ -164,6 +164,14 @@ export function saveLiveMarketPriceSnapshots(
       true,
     ),
   );
+  // P2-2：写入前检测新价格行是否与已有价格行冲突（同 symbol + trade_date）。
+  // live_market_prices 主键为 (symbol, trade_date)，INSERT OR REPLACE 会将
+  // 已有价格行的 coverage_id 切换到新覆盖，导致旧覆盖失去价格行、备份校验失败。
+  // - 旧 partial 覆盖未确认完整，允许删除后替换。
+  // - 旧 data/empty 覆盖已确认，禁止价格行冲突。
+  const deleteCoverage = database.prepare(
+    "DELETE FROM live_market_coverage WHERE coverage_id = ?",
+  );
   database.transaction(() => {
     for (const entry of entries) {
       const requestedFrom =
@@ -203,6 +211,50 @@ export function saveLiveMarketPriceSnapshots(
           "非空行情覆盖的实际数据截止日或空区间证据不一致",
         );
       }
+      // P1-3：resultStatus 优先取 entry 显式标记；未标记时按是否有价格推导。
+      // partial 仅在非空（有价格）时有效；空覆盖不允许 partial。
+      const resultStatus: "data" | "empty" | "partial" =
+        entry.resultStatus === "partial" && entry.prices.length
+          ? "partial"
+          : entry.prices.length
+            ? "data"
+            : "empty";
+      // P2-2：检测新价格行是否与已有价格行冲突（同 symbol + trade_date）。
+      if (entry.prices.length) {
+        const dates = entry.prices.map((row) => row.date);
+        const placeholders = dates.map(() => "?").join(", ");
+        const existing = database
+          .prepare(
+            `SELECT p.trade_date, p.coverage_id, c.result_status
+             FROM live_market_prices p
+             JOIN live_market_coverage c ON p.coverage_id = c.coverage_id
+             WHERE p.symbol = ? AND p.trade_date IN (${placeholders})`,
+          )
+          .all(entry.symbol, ...dates) as Array<{
+            trade_date: string;
+            coverage_id: number;
+            result_status: "data" | "empty" | "partial";
+          }>;
+        const partialsToDelete = new Set<number>();
+        const conflicts: string[] = [];
+        for (const row of existing) {
+          if (row.result_status === "partial") {
+            // P1-3：旧 partial 覆盖未确认完整，允许被新覆盖替换。
+            partialsToDelete.add(row.coverage_id);
+          } else {
+            conflicts.push(`${row.trade_date}（覆盖 ${row.coverage_id}）`);
+          }
+        }
+        if (conflicts.length) {
+          throw new Error(
+            `行情价格行冲突：${entry.symbol} 日期 ${conflicts.join("、")} ` +
+              `已属于已确认覆盖；禁止写入以避免价格行归属漂移`,
+          );
+        }
+        for (const id of partialsToDelete) {
+          deleteCoverage.run(id);
+        }
+      }
       const coverageResult = insertCoverage.run(
         null,
         entry.symbol,
@@ -216,7 +268,7 @@ export function saveLiveMarketPriceSnapshots(
         actualDataCutoff,
         entry.provenance.adjustment,
         entry.provenance.emptyEvidence ?? null,
-        entry.prices.length ? "data" : "empty",
+        resultStatus,
       );
       const coverageId = Number(coverageResult.lastInsertRowid);
       for (const row of entry.prices) {
