@@ -49,6 +49,7 @@ import {
 } from "./live/liveFormat";
 import { LedgerEntryModal } from "./live/LedgerEntryModal";
 import { DividendReinvestmentModal } from "./live/DividendReinvestmentModal";
+import { beijingDate, beijingTimestamp } from "./_shared/format";
 
 const { RangePicker } = DatePicker;
 type LedgerPageSize = (typeof LIVE_LEDGER_PAGE_SIZES)[number];
@@ -240,7 +241,7 @@ export function TradesPage() {
           <>
             <span className="live-cutoff">
               数据截止：{ledger.data?.quality.updatedAt
-                ? dayjs(ledger.data.quality.updatedAt).format("YYYY-MM-DD")
+                ? beijingDate(ledger.data.quality.updatedAt)
                 : "暂无记录"}
             </span>
             <Button
@@ -399,7 +400,7 @@ export function TradesPage() {
                 <span>按业务日期倒序，同日记录保持稳定顺序</span>
               </div>
               <span className="live-cutoff">
-                最近记录：{ledger.data.quality.updatedAt ? dayjs(ledger.data.quality.updatedAt).format("YYYY-MM-DD HH:mm") : "暂无"}
+                最近记录：{ledger.data.quality.updatedAt ? beijingTimestamp(ledger.data.quality.updatedAt) : "暂无"}
               </span>
             </div>
             {ledger.data.rows.length ? (
@@ -502,8 +503,8 @@ export function TradesPage() {
               <div><dt>交易费用</dt><dd>{money(detail.fee)}</dd></div>
               <div><dt>每股分红</dt><dd>{numberValue(detail.perShare, 4)}</dd></div>
               <div><dt>登记日</dt><dd>{detail.recordDate ?? "—"}</dd></div>
-              <div><dt>录入时间</dt><dd>{dayjs(detail.recordedAt).format("YYYY-MM-DD HH:mm:ss")}</dd></div>
-              <div><dt>修正时间</dt><dd>{detail.correctedAt ? dayjs(detail.correctedAt).format("YYYY-MM-DD HH:mm:ss") : "—"}</dd></div>
+              <div><dt>录入时间</dt><dd>{beijingTimestamp(detail.recordedAt)}</dd></div>
+              <div><dt>修正时间</dt><dd>{detail.correctedAt ? beijingTimestamp(detail.correctedAt) : "—"}</dd></div>
               <div>
                 <dt>关联操作</dt>
                 <dd>

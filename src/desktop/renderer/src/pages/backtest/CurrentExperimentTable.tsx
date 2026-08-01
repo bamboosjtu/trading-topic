@@ -1,7 +1,7 @@
 import { Alert, Button, Table } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
-import { money, percent, pnlClass } from "./formatters";
+import { beijingTimestamp, money, percent, pnlClass } from "./formatters";
 
 interface CurrentExperimentTableProps {
   experiment: BacktestExperiment | undefined;
@@ -43,7 +43,7 @@ export function CurrentExperimentTable({
         </div>
         {experiment ? (
           <small className="tabular-nums">
-            运行于 {new Date(experiment.createdAt).toLocaleString("zh-CN")}
+            运行于 {beijingTimestamp(experiment.createdAt)}
             {" · "}
             数据截止 {experiment.dataCutoff}
           </small>

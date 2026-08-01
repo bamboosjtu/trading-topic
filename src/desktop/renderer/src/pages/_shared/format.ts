@@ -64,3 +64,45 @@ export function pnlClass(
   if (value === null || value === 0) return `${prefix}-flat`;
   return value > 0 ? `${prefix}-profit` : `${prefix}-loss`;
 }
+
+const BEIJING_DATETIME = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+function beijingPart(date: Date, type: Intl.DateTimeFormatPartTypes): string {
+  const value = BEIJING_DATETIME.formatToParts(date).find(
+    (item) => item.type === type,
+  )?.value;
+  if (!value) throw new Error(`无法格式化北京时间：缺少 ${type}`);
+  return value;
+}
+
+/**
+ * 将 UTC ISO 时间戳格式化为北京时间（Asia/Shanghai）的 `YYYY-MM-DD HH:mm:ss`。
+ *
+ * 存储层统一保存 UTC（`toISOString()`）保证无歧义；展示层统一经本函数换算为
+ * 北京时间，避免应用运行在不同系统时区时时间显示漂移。
+ */
+export function beijingTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return `${beijingPart(date, "year")}-${beijingPart(date, "month")}-${beijingPart(
+    date,
+    "day",
+  )} ${beijingPart(date, "hour")}:${beijingPart(date, "minute")}:${beijingPart(
+    date,
+    "second",
+  )}`;
+}
+
+/** 北京时间（Asia/Shanghai）的日期部分 `YYYY-MM-DD`。 */
+export function beijingDate(value: string): string {
+  return beijingTimestamp(value).slice(0, 10);
+}

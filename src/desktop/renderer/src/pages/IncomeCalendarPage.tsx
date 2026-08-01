@@ -29,6 +29,7 @@ import {
   type IncomeCalendarScope,
   type IncomeContribution,
 } from "../api/client";
+import { currentMarketDate } from "../../../shared/marketDate";
 import { ENTRY_TYPE_LABELS, ENTRY_TYPE_TONES } from "./live/liveConstants";
 import {
   LiveEmpty,
@@ -66,7 +67,7 @@ const WEEKDAY_LABELS = [
 export function IncomeCalendarPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
-  const [month, setMonth] = useState(dayjs().format("YYYY-MM"));
+  const [month, setMonth] = useState(currentMarketDate().slice(0, 7));
   const [scope, setScope] = useState<IncomeCalendarScope>("all");
   const [symbol, setSymbol] = useState<string>();
   const [selectedDate, setSelectedDate] = useState<string>();

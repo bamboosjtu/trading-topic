@@ -22,16 +22,10 @@ import {
   type DirectoryProvenance,
   type MarketCalendarDiagnostic,
 } from "../api/client";
+import { beijingTimestamp } from "./_shared/format";
 
 function fetchedAt(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat("zh-CN", {
-        dateStyle: "medium",
-        timeStyle: "medium",
-        hour12: false,
-      }).format(date);
+  return beijingTimestamp(value);
 }
 
 function DirectoryDetails({

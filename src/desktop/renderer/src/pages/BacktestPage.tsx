@@ -24,6 +24,7 @@ import { useActiveExperiment } from "./backtest/useActiveExperiment";
 import { useBacktestWorkspace } from "./backtest/useBacktestWorkspace";
 import { useMarketBars } from "./backtest/useMarketBars";
 import { securityTypeForInstrument } from "../../../shared/instruments";
+import { beijingTimestamp } from "./_shared/format";
 
 export function BacktestPage() {
   const { message } = App.useApp();
@@ -224,10 +225,8 @@ export function BacktestPage() {
         <div>
           <strong>正在查看历史实验</strong>
           <span>
-            {new Date(active.activeExperiment.createdAt).toLocaleString(
-              "zh-CN",
-            )}{" "}
-            · 数据截止 {active.activeExperiment.dataCutoff} · 参数与结果只读
+            {beijingTimestamp(active.activeExperiment.createdAt)} · 数据截止{" "}
+            {active.activeExperiment.dataCutoff} · 参数与结果只读
           </span>
         </div>
         <Button

@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import type {
   EntryType,
   LedgerEntry,
@@ -70,6 +77,16 @@ function dailyAttribution(
 }
 
 describe("投资收益视图", () => {
+  // 视图构建依赖"当前市场日"（currentMarketDate）判断 stale 与当前月份；
+  // 注入固定日期使断言不受真实时钟漂移影响（2026-07 被视为当前月）。
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-30T08:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("仅凭投资现金流即可计算持仓与总收益", () => {
     const entries = [
       entry("buy", "buy", "2026-07-01", {

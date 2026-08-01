@@ -41,8 +41,21 @@ if (!existsSync(app.getPath("userData"))) {
 let database: LocalDatabase;
 let service: AppService;
 
+// 导出/备份文件名时间戳统一使用北京时间，与界面显示保持一致。
 function timestamp(): string {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}-${value("hour")}-${value("minute")}-${value("second")}`;
 }
 
 function createWindow(): void {
