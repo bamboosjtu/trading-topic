@@ -105,7 +105,17 @@ function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
         issues = parsed as StoredMarketCoverage["issues"];
       }
     } catch {
-      // 损坏的 issues_json 不影响基本读模型，忽略并降级为无问题详情。
+      // P2：损坏的 issues_json 不能静默降级为无问题详情。
+      // partial 覆盖必须保留至少一个通用 error，否则读模型会错误恢复为 ready。
+      if (row.result_status === "partial") {
+        issues = [
+          {
+            type: "invalid_ohlcv",
+            severity: "error",
+            message: "覆盖问题详情损坏，无法解析 issues_json",
+          },
+        ];
+      }
     }
   }
   return {
@@ -233,6 +243,23 @@ export function saveLiveMarketPriceSnapshots(
           : entry.prices.length
             ? "data"
             : "empty";
+      // P2：写入时强制校验 issues 完整性，防止导出备份又无法通过自己的恢复校验。
+      // - partial 必须至少有一个 severity: error 的问题
+      // - 非 partial 禁止携带 issues
+      if (resultStatus === "partial") {
+        const errorIssues = (entry.issues ?? []).filter(
+          (issue) => issue.severity === "error",
+        );
+        if (errorIssues.length === 0) {
+          throw new Error(
+            `partial 覆盖必须至少包含一个 error 级别问题：${entry.symbol} ${requestedFrom}..${requestedThrough}`,
+          );
+        }
+      } else if (entry.issues && entry.issues.length) {
+        throw new Error(
+          `非 partial 覆盖禁止携带 issues：${entry.symbol} ${requestedFrom}..${requestedThrough}`,
+        );
+      }
       // P2-2：检测新价格行是否与已有价格行冲突（同 symbol + trade_date）。
       if (entry.prices.length) {
         const dates = entry.prices.map((row) => row.date);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   App,
@@ -73,6 +73,8 @@ export function PositionsPage() {
   const [sort, setSort] = useState<PositionSort>("marketValue");
   const [selectedSymbol, setSelectedSymbol] = useState<string>();
   const [detail, setDetail] = useState<PositionView | null>(null);
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const overview = useQuery({
     queryKey: ["positions:overview"],
     queryFn: api.getPositionsOverview,
@@ -116,6 +118,16 @@ export function PositionsPage() {
           (left[sort] ?? Number.NEGATIVE_INFINITY);
       });
   }, [assetFilter, keyword, overview.data?.positions, sort]);
+  // P-UI：搜索或筛选变化时返回第1页
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [assetFilter, keyword, sort]);
+  // P-UI：选中证券被过滤掉时清除区间表现的单标的选择
+  useEffect(() => {
+    if (selectedSymbol && !rows.some((row) => row.symbol === selectedSymbol)) {
+      setSelectedSymbol(undefined);
+    }
+  }, [rows, selectedSymbol]);
   const selected =
     overview.data?.positions.find((row) => row.symbol === selectedSymbol) ??
     null;
@@ -164,11 +176,22 @@ export function PositionsPage() {
       render: (value: number | null) => <strong className="tabular-nums">{money(value)}</strong>,
     },
     {
-      title: "累计买入支出",
-      dataIndex: "cumulativeBuySpend",
-      width: 140,
+      title: "持仓占比",
+      dataIndex: "weight",
+      width: 100,
       align: "right",
-      render: (value: number) => <span className="tabular-nums">{money(value)}</span>,
+      render: (value: number | null) => (
+        <span className="tabular-nums">{value === null ? "—" : percent(value)}</span>
+      ),
+    },
+    {
+      title: "当日盈亏",
+      dataIndex: "dayPnl",
+      width: 120,
+      align: "right",
+      render: (value: number | null) => (
+        <span className={`tabular-nums ${pnlClass(value)}`}>{money(value, true)}</span>
+      ),
     },
     {
       title: "浮动盈亏",
@@ -178,13 +201,6 @@ export function PositionsPage() {
       render: (value: number | null) => (
         <span className={`tabular-nums ${pnlClass(value)}`}>{money(value, true)}</span>
       ),
-    },
-    {
-      title: "累计分红",
-      dataIndex: "cumulativeDividend",
-      width: 130,
-      align: "right",
-      render: (value: number) => <span className="tabular-nums">{money(value)}</span>,
     },
     {
       title: "总收益",
@@ -244,18 +260,23 @@ export function PositionsPage() {
       ) : overview.data ? (
         <>
           <QualityNotice quality={overview.data.quality} />
+          {/* P-UI：指标分两行。第一行6项核心指标，第二行4项对账指标。 */}
           <LiveMetricStrip
             items={[
               { label: "持仓市值", value: money(overview.data.metrics.marketValue), helper: overview.data.valuationSource, icon: <StockOutlined />, tone: "blue" },
-              { label: "累计买入", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
-              { label: "累计卖出", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
               { label: "累计净投入", value: money(overview.data.metrics.netInvestment), helper: "买入 − 卖出 − 外部分红", icon: <FundOutlined />, tone: "indigo" },
-              { label: "累计分红", value: money(overview.data.metrics.cumulativeDividend), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
-              { label: "待再投入", value: money(overview.data.metrics.pendingReinvestmentCash), helper: "组合内分红现金", icon: <GiftOutlined />, tone: "orange" },
+              { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
               { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
               { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
-              { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
               { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: XIRR_STATUS_TEXT[overview.data.metrics.xirrStatus], icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
+            ]}
+          />
+          <LiveMetricStrip
+            items={[
+              { label: "累计买入", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
+              { label: "累计卖出", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
+              { label: "累计分红", value: money(overview.data.metrics.cumulativeDividend), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
+              { label: "待再投入", value: money(overview.data.metrics.pendingReinvestmentCash), helper: "组合内分红现金", icon: <GiftOutlined />, tone: "orange" },
             ]}
           />
           <section className="workspace-panel live-performance-panel">
@@ -288,7 +309,7 @@ export function PositionsPage() {
             <div className="live-table-toolbar">
               <div>
                 <strong>当前持仓</strong>
-                <span>共 {overview.data.positions.length} 个标的</span>
+                <span>共 {rows.length} 个标的</span>
               </div>
               <div className="live-filter-row">
                 <Segmented
@@ -340,7 +361,24 @@ export function PositionsPage() {
                 rowKey="symbol"
                 columns={columns}
                 dataSource={rows}
-                pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false}
+                pagination={
+                  rows.length > pageSize
+                    ? {
+                        current: currentPage,
+                        pageSize,
+                        showSizeChanger: true,
+                        pageSizeOptions: [10, 20, 50],
+                        onChange: (page, size) => {
+                          setCurrentPage(page);
+                          setPageSize(size);
+                        },
+                        onShowSizeChange: (_page, size) => {
+                          setPageSize(size);
+                          setCurrentPage(1);
+                        },
+                      }
+                    : false
+                }
                 rowClassName={(row) => row.symbol === selectedSymbol ? "live-selected-row" : ""}
                 onRow={(row) => ({ onClick: () => setSelectedSymbol(row.symbol) })}
               />

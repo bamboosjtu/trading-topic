@@ -192,3 +192,77 @@ export function reduceLedger(
     positions,
   };
 }
+
+/**
+ * 持仓区间：从有效投资事实中按数量变化推导每个证券的持仓时间段。
+ *
+ * 数量 0→正：记录区间开始日；数量 正→0：关闭区间。
+ * 遍历结束后仍持有的区间以 asOfDate 作为结束日。
+ *
+ * 用于行情请求区间生成、收益日历归因和持仓页 partial 覆盖筛选，
+ * 避免各处各写一套持仓周期逻辑导致口径漂移。
+ */
+export interface HoldingInterval {
+  startDate: string;
+  endDate: string;
+}
+
+export function holdingIntervals(
+  entries: readonly LedgerEntry[],
+  asOfDate = currentMarketDate(),
+): Map<string, HoldingInterval[]> {
+  const { effective } = activeLedgerEntries(entries, asOfDate);
+  const result = new Map<string, HoldingInterval[]>();
+  const quantities = new Map<string, number>();
+  const starts = new Map<string, string>();
+  for (const entry of [...effective].sort(canonicalLedgerOrder)) {
+    if (
+      entry.businessDate > asOfDate ||
+      !entry.symbol ||
+      (entry.type !== "buy" && entry.type !== "sell")
+    ) {
+      continue;
+    }
+    const before = quantities.get(entry.symbol) ?? 0;
+    const after =
+      before +
+      (entry.type === "buy"
+        ? (entry.quantity ?? 0)
+        : -(entry.quantity ?? 0));
+    if (before <= QUANTITY_EPSILON && after > QUANTITY_EPSILON) {
+      starts.set(entry.symbol, entry.businessDate);
+    }
+    if (before > QUANTITY_EPSILON && after <= QUANTITY_EPSILON) {
+      const startDate = starts.get(entry.symbol);
+      if (startDate) {
+        const current = result.get(entry.symbol) ?? [];
+        current.push({ startDate, endDate: entry.businessDate });
+        result.set(entry.symbol, current);
+      }
+      starts.delete(entry.symbol);
+    }
+    quantities.set(entry.symbol, Math.max(0, after));
+  }
+  for (const [symbol, startDate] of starts) {
+    const current = result.get(symbol) ?? [];
+    current.push({ startDate, endDate: asOfDate });
+    result.set(symbol, current);
+  }
+  return result;
+}
+
+/**
+ * 返回某证券当前持仓周期的开始日（最后一个未关闭区间的 startDate）。
+ * 当前无持仓时返回 null。
+ */
+export function currentHoldingStart(
+  entries: readonly LedgerEntry[],
+  symbol: string,
+  asOfDate = currentMarketDate(),
+): string | null {
+  const intervals = holdingIntervals(entries, asOfDate).get(symbol);
+  if (!intervals || !intervals.length) return null;
+  // 最后一个区间的 endDate 等于 asOfDate 表示当前仍持有
+  const last = intervals.at(-1)!;
+  return last.endDate >= asOfDate ? last.startDate : null;
+}

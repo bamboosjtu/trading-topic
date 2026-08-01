@@ -5,6 +5,7 @@ import type {
   MarketDataProvenance,
   PerformancePeriod,
   PeriodPerformance,
+  PositionView,
   PositionsOverview,
   StockInfo,
   StoredMarketCoverage,
@@ -24,6 +25,7 @@ import {
 } from "./dateUtils";
 import {
   canonicalLedgerOrderDescending,
+  currentHoldingStart,
   reduceLedger,
   type LedgerPositionState,
 } from "./ledgerReducer";
@@ -421,7 +423,7 @@ export function buildPositionsOverview(
   const currentPositions = [...state.positions.entries()].filter(
     ([, position]) => position.quantity > 1e-8,
   );
-  const positions = currentPositions.map(([symbol, position]) => {
+  const positions: PositionView[] = currentPositions.map(([symbol, position]) => {
     const quote = model.latestPrices.get(symbol);
     const hasPostValuationFact =
       model.postValuationSymbols.includes(symbol);
@@ -459,6 +461,17 @@ export function buildPositionsOverview(
       model.cutoff,
       marketValue,
     );
+    const symbolPeriodPerformance = hasPostValuationFact
+      ? emptyPeriodPerformance()
+      : periodPerformance(model.daily, model.cutoff, symbol);
+    // P-UI：当日盈亏近似 = 市值 × 当日收益率 / (1 + 当日收益率)
+    const dayPnl =
+      marketValue !== null && symbolPeriodPerformance.day !== null
+        ? roundMoney(
+            (marketValue * symbolPeriodPerformance.day) /
+              (1 + symbolPeriodPerformance.day),
+          )
+        : null;
     return {
       symbol,
       name: names.get(symbol) ?? symbol,
@@ -469,6 +482,9 @@ export function buildPositionsOverview(
       averageCost: position.cost / position.quantity,
       lastPrice: quote?.close ?? null,
       marketValue,
+      // weight 在总市值计算后回填
+      weight: null,
+      dayPnl,
       cumulativeBuySpend: position.cumulativeBuySpend,
       cumulativeSellNetIncome: position.cumulativeSellNetIncome,
       netInvestment,
@@ -479,9 +495,7 @@ export function buildPositionsOverview(
       totalReturn,
       xirr: symbolXirr.value,
       xirrStatus: symbolXirr.status,
-      periodPerformance: hasPostValuationFact
-        ? emptyPeriodPerformance()
-        : periodPerformance(model.daily, model.cutoff, symbol),
+      periodPerformance: symbolPeriodPerformance,
       recentEntries: entries
         .filter((entry) => entry.symbol === symbol)
         .sort(canonicalLedgerOrderDescending)
@@ -497,6 +511,14 @@ export function buildPositionsOverview(
     marketValues.some((value) => value === null)
     ? null
     : roundMoney(marketValues.reduce<number>((sum, value) => sum + value!, 0));
+  // P-UI：回填持仓占比
+  if (marketValue !== null && marketValue > 0) {
+    for (const position of positions) {
+      if (position.marketValue !== null) {
+        position.weight = position.marketValue / marketValue;
+      }
+    }
+  }
   const remainingCost = [...state.positions.values()].reduce(
     (sum, position) => sum + position.cost,
     0,
@@ -523,16 +545,18 @@ export function buildPositionsOverview(
     model.cutoff ?? lastFactDate,
     marketValue,
   );
-  // P1-1：将 partial 覆盖的 error 问题纳入读模型，使质量状态在应用重启后仍为 partial。
-  // 持仓起始日取该标的当前持仓周期内的首笔有效事实日（保守用最早有效事实日）。
+  // P1-1/P1-2：将 partial 覆盖的 error 问题纳入读模型，使质量状态在应用重启后仍为 partial。
+  // 持仓起始日取该标的当前持仓周期的开始日，避免旧历史覆盖的 partial 错误标记
+  // 影响当前持仓的质量状态。
   const heldSymbols = currentPositions.map(([symbol]) => symbol);
   const positionStartBySymbol = new Map<string, string>();
   for (const symbol of heldSymbols) {
-    const firstDate = model.effectiveEntries
-      .filter((entry) => entry.symbol === symbol)
-      .map((entry) => entry.businessDate)
-      .sort()[0];
-    if (firstDate) positionStartBySymbol.set(symbol, firstDate);
+    const start = currentHoldingStart(
+      model.effectiveEntries,
+      symbol,
+      model.factAsOfDate,
+    );
+    if (start) positionStartBySymbol.set(symbol, start);
   }
   const partialCoverageIssues = coverage
     ? relevantPartialCoverageIssues(

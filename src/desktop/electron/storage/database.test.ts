@@ -1332,4 +1332,119 @@ describe("LocalDatabase", () => {
       expect(target.listBacktestExperiments()).toEqual([]);
     }
   });
+
+  it("P2 写入时拒绝 partial 覆盖缺少 error 级别 issues", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-write-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const provenance = {
+      source: "tencent" as const,
+      primarySource: "tencent" as const,
+      fallbackUsed: false,
+      fetchedAt: "2026-07-31T08:00:00Z",
+      dataCutoff: "2026-07-01",
+      adjustment: "none" as const,
+      caliberVersion: BACKTEST_CALIBER_VERSION,
+    };
+    // partial 但 issues 为 undefined
+    expect(() =>
+      database.saveLiveMarketPriceSnapshots([
+        {
+          symbol: "601398",
+          prices: [{ date: "2026-07-01", close: 5 }],
+          dividends: [],
+          provenance,
+          requestedFrom: "2026-07-01",
+          requestedThrough: "2026-07-01",
+          resultStatus: "partial",
+        },
+      ]),
+    ).toThrow("partial 覆盖必须至少包含一个 error 级别问题");
+    // partial 但 issues 只有 warning
+    expect(() =>
+      database.saveLiveMarketPriceSnapshots([
+        {
+          symbol: "601398",
+          prices: [{ date: "2026-07-01", close: 5 }],
+          dividends: [],
+          provenance,
+          requestedFrom: "2026-07-01",
+          requestedThrough: "2026-07-01",
+          resultStatus: "partial",
+          issues: [{ type: "gap", severity: "warning", message: "警告" }],
+        },
+      ]),
+    ).toThrow("partial 覆盖必须至少包含一个 error 级别问题");
+  });
+
+  it("P2 写入时拒绝非 partial 覆盖携带 issues", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-non-partial-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    expect(() =>
+      database.saveLiveMarketPriceSnapshots([
+        {
+          symbol: "601398",
+          prices: [{ date: "2026-07-01", close: 5 }],
+          dividends: [],
+          provenance: {
+            source: "tencent",
+            primarySource: "tencent",
+            fallbackUsed: false,
+            fetchedAt: "2026-07-31T08:00:00Z",
+            dataCutoff: "2026-07-01",
+            adjustment: "none",
+            caliberVersion: BACKTEST_CALIBER_VERSION,
+          },
+          requestedFrom: "2026-07-01",
+          requestedThrough: "2026-07-01",
+          issues: [{ type: "gap", severity: "error", message: "不应出现" }],
+        },
+      ]),
+    ).toThrow("非 partial 覆盖禁止携带 issues");
+  });
+
+  it("P2 读取损坏的 issues_json 时生成通用 error 并保持 partial", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-corrupt-"));
+    temporaryDirectories.push(directory);
+    const dbPath = join(directory, "app.sqlite");
+    const database = await openDatabase(dbPath);
+    // 先正常写入 partial 覆盖
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [{ date: "2026-07-01", close: 5 }],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T08:00:00Z",
+          dataCutoff: "2026-07-01",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-01",
+        resultStatus: "partial",
+        issues: [
+          { date: "2026-07-01", type: "gap", severity: "error", message: "原始错误" },
+        ],
+      },
+    ]);
+    // 关闭 LocalDatabase，用 BetterSqlite3 直接破坏 issues_json
+    database.close();
+    const raw = new BetterSqlite3(dbPath);
+    raw.prepare(
+      "UPDATE live_market_coverage SET issues_json = ? WHERE symbol = ?",
+    ).run("{invalid json", "601398");
+    raw.close();
+    // 重新打开，读取时应生成通用 error 并保持 partial
+    const reopened = await openDatabase(dbPath);
+    const coverage = reopened.listLiveMarketCoverage(["601398"]);
+    expect(coverage[0]?.resultStatus).toBe("partial");
+    expect(coverage[0]?.issues?.length).toBe(1);
+    expect(coverage[0]?.issues?.[0]?.severity).toBe("error");
+    expect(coverage[0]?.issues?.[0]?.message).toContain("损坏");
+  });
 });

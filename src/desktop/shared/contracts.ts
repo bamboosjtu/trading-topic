@@ -360,6 +360,10 @@ export interface PositionView {
   averageCost: number;
   lastPrice: number | null;
   marketValue: number | null;
+  /** 持仓占组合市值的比例（0~1），无市值时为 null。 */
+  weight: number | null;
+  /** 当日盈亏（近似）：基于 periodPerformance.day 反推，无数据时为 null。 */
+  dayPnl: number | null;
   cumulativeBuySpend: number;
   cumulativeSellNetIncome: number;
   netInvestment: number;

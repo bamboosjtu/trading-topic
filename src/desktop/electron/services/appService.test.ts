@@ -1479,3 +1479,279 @@ describe("AppService P1-1/P1-2/P1-3 修复", () => {
     expect(calls.filter((call) => call[1] === "2026-06-10" && call[2] === "2026-06-10")).toHaveLength(0);
   });
 });
+
+describe("AppService P0 partial 覆盖完整区间替换", () => {
+  const JULY_2026_WEEKDAYS = [
+    "2026-07-01", "2026-07-02", "2026-07-03",
+    "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10",
+    "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17",
+    "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24",
+    "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31",
+  ];
+
+  function julyWeekdayPrices(exclude?: string): { date: string; close: number }[] {
+    return JULY_2026_WEEKDAYS
+      .filter((d) => d !== exclude)
+      .map((d) => ({ date: d, close: 5 + JULY_2026_WEEKDAYS.indexOf(d) * 0.01 }));
+  }
+
+  function tencentProvenance(
+    dataCutoff: string,
+    fetchedAt = "2026-07-31T08:00:00Z",
+  ): MarketDataProvenance & { caliberVersion: string } {
+    return {
+      source: "tencent",
+      primarySource: "tencent",
+      fallbackUsed: false,
+      fetchedAt,
+      dataCutoff,
+      adjustment: "none",
+      caliberVersion: BACKTEST_CALIBER_VERSION,
+    };
+  }
+
+  async function setupJulyHolding() {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    database.addLedger({
+      id: "holding",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    return { service, database };
+  }
+
+  it("中间日期错误，修复后前缀价格不丢失", async () => {
+    const { service, database } = await setupJulyHolding();
+    // 持久化 partial 覆盖：07-15 存在错误，07-01/07-14/07-16/07-31 有价格。
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-14", close: 5.1 },
+          { date: "2026-07-16", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: tencentProvenance("2026-07-31"),
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          { date: "2026-07-15", type: "gap", severity: "error", message: "缺失 2026-07-15 行情" },
+        ],
+      },
+    ]);
+    // 模拟完整区间返回（包含 07-01 前缀）。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-14", close: 5.1 },
+          { date: "2026-07-15", close: 5.15 },
+          { date: "2026-07-16", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+      }),
+    );
+
+    await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+
+    // P0：前缀价格 07-01、07-14 在替换后仍存在。
+    const dates = database.listLiveMarketPrices(["601398"]).map((p) => p.date);
+    expect(dates).toContain("2026-07-01");
+    expect(dates).toContain("2026-07-14");
+    // 覆盖已恢复为 data。
+    const coverage = database.listLiveMarketCoverage(["601398"]);
+    expect(coverage[0]?.resultStatus).toBe("data");
+  });
+
+  it("错误发生在 requestedFrom 当天时仍会重试", async () => {
+    const { service, database } = await setupJulyHolding();
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-02", close: 5.01 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: tencentProvenance("2026-07-31"),
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          { date: "2026-07-01", type: "invalid_ohlcv", severity: "error", message: "07-01 OHLCV 非法" },
+        ],
+      },
+    ]);
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: julyWeekdayPrices(),
+        provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+      }),
+    );
+
+    await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+
+    // P1-1：错误在 requestedFrom 当天也应重试完整区间。
+    const calls = vi.mocked(fetchUnadjustedPrices).mock.calls.filter(
+      (call) => call[0] === "601398",
+    );
+    expect(
+      calls.some((call) => call[1] === "2026-07-01" && call[2] === "2026-07-31"),
+    ).toBe(true);
+  });
+
+  it("无具体日期的 error 会重试整个区间", async () => {
+    const { service, database } = await setupJulyHolding();
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: tencentProvenance("2026-07-31"),
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          { type: "invalid_ohlcv", severity: "error", message: "区间内存在非法 OHLCV" },
+        ],
+      },
+    ]);
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: julyWeekdayPrices(),
+        provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+      }),
+    );
+
+    await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+
+    // 无日期 error 也应重试完整区间。
+    const calls = vi.mocked(fetchUnadjustedPrices).mock.calls.filter(
+      (call) => call[0] === "601398",
+    );
+    expect(
+      calls.some((call) => call[1] === "2026-07-01" && call[2] === "2026-07-31"),
+    ).toBe(true);
+  });
+
+  it("再次请求仍为 partial 时，价格范围不会逐步缩水", async () => {
+    const { service, database } = await setupJulyHolding();
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-14", close: 5.1 },
+          { date: "2026-07-16", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: tencentProvenance("2026-07-31"),
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          { date: "2026-07-15", type: "gap", severity: "error", message: "缺失 2026-07-15 行情" },
+        ],
+      },
+    ]);
+    // 模拟再次返回 partial（07-15 仍然错误）。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [
+        { date: "2026-07-01", close: 5 },
+        { date: "2026-07-14", close: 5.1 },
+        { date: "2026-07-16", close: 5.2 },
+        { date: "2026-07-31", close: 5.3 },
+      ],
+      requestedThrough: "2026-07-31",
+      dataCutoff: "2026-07-31",
+      tailStatus: "complete",
+      issues: [
+        { date: "2026-07-15", type: "gap", severity: "error", message: "缺失 2026-07-15 行情" },
+      ],
+      provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+    });
+
+    // 第一次请求：partial → 重新请求完整区间 → 仍为 partial
+    await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+    // 第二次请求：仍为 partial → 应再次请求完整区间（不缩水）
+    await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+
+    const calls = vi.mocked(fetchUnadjustedPrices).mock.calls.filter(
+      (call) => call[0] === "601398",
+    );
+    // 两次都应请求 07-01..07-31，不能缩水为 07-15..07-31 或 07-16..07-31。
+    for (const call of calls) {
+      expect(call[1]).toBe("2026-07-01");
+      expect(call[2]).toBe("2026-07-31");
+    }
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("修复后收益日历全月收益与原始完整数据一致", async () => {
+    const { service, database } = await setupJulyHolding();
+    // 先保存 partial 覆盖（07-15 缺失）。
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: julyWeekdayPrices("2026-07-15"),
+        dividends: [],
+        provenance: tencentProvenance("2026-07-31"),
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          { date: "2026-07-15", type: "gap", severity: "error", message: "缺失 2026-07-15 行情" },
+        ],
+      },
+    ]);
+    // 模拟完整区间返回。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: julyWeekdayPrices(),
+        provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+      }),
+    );
+
+    // 第一次：partial → 修复为完整 → 计算月度收益。
+    const fixed = await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+    expect(fixed.quality.status).toBe("ready");
+    const fixedRate = fixed.metrics.month.rate;
+    expect(fixedRate).not.toBeNull();
+
+    // 第二次：完整覆盖 → 无需请求 → 计算月度收益。
+    vi.mocked(fetchUnadjustedPrices).mockClear();
+    const baseline = await service.getIncomeCalendar({ month: "2026-07", scope: "all" });
+    expect(vi.mocked(fetchUnadjustedPrices)).not.toHaveBeenCalled();
+    const baselineRate = baseline.metrics.month.rate;
+
+    // 修复后全月收益与原始完整数据一致。
+    expect(fixedRate).toBe(baselineRate);
+  });
+});

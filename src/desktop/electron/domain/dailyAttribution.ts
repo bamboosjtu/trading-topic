@@ -6,7 +6,7 @@ import type {
 import { addDays, validDate } from "./dateUtils";
 import { roundMoney } from "./finance";
 import {
-  canonicalLedgerOrder,
+  holdingIntervals,
   ledgerEntryAmount,
   reduceLedger,
 } from "./ledgerReducer";
@@ -132,49 +132,12 @@ export function buildDailyAttribution(
 ): DailyAttribution[] {
   const internalFundingByBuy =
     projectInvestmentCash(entries).internalFundingByBuy;
-  const holdingIntervals = new Map<
-    string,
-    Array<{ startDate: string; endDate: string }>
-  >();
-  const quantities = new Map<string, number>();
-  const starts = new Map<string, string>();
-  for (const entry of [...entries].sort(canonicalLedgerOrder)) {
-    if (
-      entry.businessDate > factAsOfDate ||
-      !entry.symbol ||
-      (entry.type !== "buy" && entry.type !== "sell")
-    ) {
-      continue;
-    }
-    const before = quantities.get(entry.symbol) ?? 0;
-    const after =
-      before +
-      (entry.type === "buy"
-        ? (entry.quantity ?? 0)
-        : -(entry.quantity ?? 0));
-    if (before <= 1e-8 && after > 1e-8) {
-      starts.set(entry.symbol, entry.businessDate);
-    }
-    if (before > 1e-8 && after <= 1e-8) {
-      const startDate = starts.get(entry.symbol);
-      if (startDate) {
-        const current = holdingIntervals.get(entry.symbol) ?? [];
-        current.push({ startDate, endDate: entry.businessDate });
-        holdingIntervals.set(entry.symbol, current);
-      }
-      starts.delete(entry.symbol);
-    }
-    quantities.set(entry.symbol, Math.max(0, after));
-  }
-  for (const [symbol, startDate] of starts) {
-    const current = holdingIntervals.get(symbol) ?? [];
-    current.push({ startDate, endDate: factAsOfDate });
-    holdingIntervals.set(symbol, current);
-  }
+  // P1-2：复用公共持仓区间函数，避免与 incomePriceRanges、positionsView 各写一套。
+  const intervalsBySymbol = holdingIntervals(entries, factAsOfDate);
 
   const dates = new Set<string>();
   for (const [symbol, rows] of pricesBySymbol) {
-    const intervals = holdingIntervals.get(symbol) ?? [];
+    const intervals = intervalsBySymbol.get(symbol) ?? [];
     for (const row of rows) {
       if (
         valuationCutoff &&
@@ -195,7 +158,7 @@ export function buildDailyAttribution(
   if (
     valuationCutoff &&
     valuationCutoff <= factAsOfDate &&
-    [...holdingIntervals.values()].some((intervals) =>
+    [...intervalsBySymbol.values()].some((intervals) =>
       intervals.some(
         (interval) =>
           interval.startDate <= valuationCutoff &&

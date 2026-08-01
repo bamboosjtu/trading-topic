@@ -69,6 +69,7 @@ import {
 } from "../domain/dateUtils";
 import {
   activeLedgerEntries,
+  holdingIntervals,
   reduceLedger,
 } from "../domain/ledgerReducer";
 import {
@@ -173,24 +174,13 @@ function confirmedCoverageThrough(
   if (coverage.resultStatus === "empty") {
     return coverage.emptyEvidence ? coverage.requestedThrough : null;
   }
-  // P1-2：partial 状态不返回 null（会导致最新交易日也被视为缺失）。
-  // 返回首个 error 日期前一天的连续覆盖截止日；无具体日期时返回 dataCutoff。
-  // 这使得 tailStatus 只取决于最新交易日是否有价格，而非内部坏行。
+  // P0：partial 覆盖不确认任何覆盖区间，返回 null。
+  // 这使得 missingLivePriceRanges 会重新请求其完整原始请求区间，
+  // 避免只请求错误日期之后的区间导致旧 partial 覆盖被删除时
+  // 级联丢失错误日期之前的正常价格行。
+  // 尾部是否完整由 refreshPositionsMarket 中"endDate 是否有精确价格"单独判断。
   if (coverage.resultStatus === "partial") {
-    if (!coverage.dataCutoff) return null;
-    const errorDates = (coverage.issues ?? [])
-      .filter((issue) => issue.severity === "error" && issue.date)
-      .map((issue) => issue.date!)
-      .filter(
-        (date) =>
-          date >= coverage.requestedFrom &&
-          date <= coverage.requestedThrough,
-      )
-      .sort();
-    if (errorDates.length && errorDates[0]! > coverage.requestedFrom) {
-      return addDays(errorDates[0]!, -1);
-    }
-    return coverage.dataCutoff;
+    return null;
   }
   if (!coverage.dataCutoff) return null;
   if (coverage.dataCutoff >= coverage.requestedThrough) {
@@ -243,6 +233,53 @@ function normalizeRanges(
   });
 }
 
+/**
+ * P1-3：筛选与查询月份相关的持久化 partial 覆盖问题。
+ *
+ * 相关性判定：
+ * - 覆盖为 partial；
+ * - 覆盖请求区间与 [monthStart, monthEnd] 有交集；
+ * - issues 中存在 error 级别问题落在交集内。
+ *
+ * 返回的 issues 用于写入收益日历的 externalIssues，
+ * 使重启或离线时收益日历也能反映 partial 质量状态。
+ */
+function relevantCoverageIssuesForMonth(
+  coverage: readonly StoredMarketCoverage[],
+  month: string,
+  monthEndDate: string,
+): string[] {
+  if (!coverage.length) return [];
+  const monthStart = `${month}-01`;
+  const issues: string[] = [];
+  for (const item of coverage) {
+    if (item.resultStatus !== "partial") continue;
+    const overlapStart =
+      monthStart > item.requestedFrom ? monthStart : item.requestedFrom;
+    const overlapEnd =
+      monthEndDate < item.requestedThrough
+        ? monthEndDate
+        : item.requestedThrough;
+    if (overlapStart > overlapEnd) continue;
+    const errorIssues = (item.issues ?? []).filter((issue) => {
+      if (issue.severity !== "error") return false;
+      if (!issue.date) return true;
+      return issue.date >= overlapStart && issue.date <= overlapEnd;
+    });
+    if (errorIssues.length) {
+      const detail = errorIssues
+        .map((issue) =>
+          issue.date ? `${issue.date} ${issue.message}` : issue.message,
+        )
+        .join("；");
+      issues.push(
+        `${item.symbol} 行情覆盖 ${item.requestedFrom}..${item.requestedThrough} 存在数据质量问题：${detail}`,
+      );
+    }
+  }
+  return issues;
+}
+
 function incomePriceRanges(
   entries: readonly LedgerEntry[],
   query: IncomeCalendarQuery,
@@ -269,38 +306,16 @@ function incomePriceRanges(
           ),
         ];
 
+  // P1-2：复用公共持仓区间函数，避免与 dailyAttribution、positionsView 各写一套。
+  const intervalsBySymbol = holdingIntervals(entries, endDate);
   return symbols.flatMap((symbol) => {
-    const securityFacts = effective.filter(
-      (entry) =>
-        entry.symbol === symbol &&
-        entry.businessDate <= endDate &&
-        (entry.type === "buy" || entry.type === "sell"),
-    );
-    const ranges: LivePriceRange[] = [];
-    let quantity = 0;
-    let startDate: string | null = null;
-    for (const entry of securityFacts) {
-      const before = quantity;
-      quantity +=
-        entry.type === "buy"
-          ? (entry.quantity ?? 0)
-          : -(entry.quantity ?? 0);
-      if (before <= 1e-8 && quantity > 1e-8) {
-        startDate = entry.businessDate;
-      }
-      if (before > 1e-8 && quantity <= 1e-8 && startDate) {
-        ranges.push({
-          symbol,
-          startDate,
-          endDate: entry.businessDate,
-        });
-        startDate = null;
-      }
-    }
-    if (startDate) {
-      ranges.push({ symbol, startDate, endDate });
-    }
-    return ranges;
+    const intervals = intervalsBySymbol.get(symbol) ?? [];
+    return intervals.map((interval) => ({
+      symbol,
+      startDate: interval.startDate,
+      // 持仓区间 endDate 可能是 asOfDate（当前持仓），截断到查询月份末尾
+      endDate: interval.endDate > endDate ? endDate : interval.endDate,
+    }));
   });
 }
 
@@ -1152,12 +1167,19 @@ export class AppService {
       monthEnd(query.month),
       currentMarketDate(),
     ].sort()[0];
+    // P1-3：将持久化的 partial 覆盖问题纳入收益日历读模型，
+    // 使重启或离线时收益日历与持仓页质量状态一致。
+    const persistedCoverageIssues = relevantCoverageIssuesForMonth(
+      snapshot.coverage,
+      query.month,
+      requestedMonthEnd,
+    );
     return buildIncomeCalendar(
       snapshot.entries,
       snapshot.prices,
       this.localStockUniverse(),
       query,
-      issues,
+      [...issues, ...persistedCoverageIssues],
       { factAsOfDate, valuationCutoff: actualMonthCutoff },
     );
   }

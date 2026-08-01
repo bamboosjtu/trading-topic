@@ -63,8 +63,8 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1920,
     height: 1080,
-    minWidth: 1920,
-    minHeight: 900,
+    minWidth: 1280,
+    minHeight: 720,
     backgroundColor: "#f6f8fb",
     title: "投资研究实验室",
     autoHideMenuBar: true,
