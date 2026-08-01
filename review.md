@@ -1,31 +1,30 @@
-# 二次评审报告
+# 三次评审报告
 
-> 评审日期：2026-07-31（二次评审） / 2026-07-31 更新（本轮修复后）
+> 评审日期：2026-08-01（三次评审）
 > 评审范围：labs/、research/、src/desktop/、docs/product/
 > 评审方法：架构与代码静态审查 + 关键算法与口径人工核对 + 文档一致性比对
-> 上一轮评审基线：上轮 review.md 已被删除，本轮为独立二次评审；P1/P3 修复历史见项目记忆。
-> 本轮修复：storage→domain 反向依赖、runBacktest 长函数、tencent/sina OHLCV 校验重复、tabular-nums 与 brand-strong token；详见第 6 节"本轮修复记录"。
+> 说明：前两轮评审发现并已修复的问题（src/desktop 的 P1-1~P2-4 重构、storage→domain 反向依赖、runBacktest 长函数、OHLCV 校验重复、calendar 门禁后置、北京时间统一、死代码清理等）经本轮重新核验均已关闭；本报告只保留截至本次评审仍存在的问题。
 
 ## 0. 评审摘要
 
 | 域          | 评审维度   | 整体结论                                                                                                          |
 | ----------- | ---------- | ----------------------------------------------------------------------------------------------------------------- |
-| labs        | 内容正确性 | 银行股定投回测算法实现正确，避免前视偏差；行业相关性与周期轮动研究的统计方法合理但稳健性不足                      |
-| research    | 内容正确性 | bank-dca 复现包算法实现严谨，测试覆盖关键边界，结论与数据一致                                                     |
-| src/desktop | 架构设计   | 三层（renderer→preload→main→domain→storage）单向依赖清晰，IPC 白名单与安全边界到位；storage→domain 反向依赖已消除 |
-| src/desktop | 代码质量   | 上轮 P1/P3 与本轮 P1/P2 重构已收敛；剩余主要为 database.ts 单文件过大                                             |
-| src/desktop | 文档一致性 | ARCHITECTURE.md 与实现高度一致；PRD 对功能边界的显式说明仍不足                                                    |
+| labs        | 内容正确性 | 银行股定投回测算法与口径说明完整；行业相关性/周期轮动统计方法合理，剩余问题均为文档深度与实证依据层面的 P3        |
+| research    | 内容正确性 | bank-dca 复现包算法严谨、数字与快照一致；剩余问题集中在报告可追溯性、测试覆盖与文档细节同步                        |
+| src/desktop | 架构设计   | 三层单向依赖清晰，IPC 白名单与安全边界到位；本轮修复后无新增架构问题                                              |
+| src/desktop | 代码质量   | 上轮 P1/P2 重构已收敛；剩余主要为 database.ts 单文件过大                                                        |
+| src/desktop | 文档一致性 | PRD 功能边界已补齐；ARCHITECTURE.md 与实现一致                                                                    |
 
-**未发现 P0 阻断问题**。最严重的剩余问题为 P1 级别（共 2 项），均不影响 R1 发布，但建议在后续迭代中收敛。
+**未发现 P0/P1 阻断问题**。剩余问题共 12 项：P2 × 4、P3 × 8，均不影响 R1 发布，建议在后续迭代中收敛。
 
 ### 问题分级与计数
 
 | 级别    | labs | research | src 架构 | src 代码质量 | 文档一致性 | 合计 |
 | ------- | ---- | -------- | -------- | ------------ | ---------- | ---- |
 | P0 阻断 | 0    | 0        | 0        | 0            | 0          | 0    |
-| P1 严重 | 1    | 0        | 0        | 0            | 1          | 2    |
-| P2 改进 | 3    | 2        | 0        | 1            | 0          | 6    |
-| P3 重构 | 3    | 1        | 0        | 1            | 0          | 5    |
+| P1 严重 | 0    | 0        | 0        | 0            | 0          | 0    |
+| P2 改进 | 0    | 3        | 0        | 1            | 0          | 4    |
+| P3 重构 | 3    | 4        | 0        | 1            | 0          | 8    |
 
 ---
 
@@ -33,46 +32,44 @@
 
 ### 1.1 labs/01\_银行股定投回测
 
-#### 算法正确性核对
+#### 已关闭（经本轮核验）
 
-- [bank_dca.py:697-732](./trading-topic/labs/01_银行股定投回测/bank_dca.py#L697-L732) `xirr`：二分法实现正确。检查现金流方向（必须正负都有）、用 365.25 天/年换算、迭代 250 次精度 1e-8、无解时返回 `np.nan`。逻辑无误。
-- [bank_dca.py:762-767](./trading-topic/labs/01_银行股定投回测/bank_dca.py#L762-L767) `_shares_on_or_before`：分红按登记日持股计算，**正确避免前视偏差**。
-- [bank_dca.py:846-867](./trading-topic/labs/01_银行股定投回测/bank_dca.py#L846-L867) `execute_buy`：定投按 100 股整数倍撮合，余额留作现金；分红再投资在除权日用收盘价买入。逻辑合理。
-- [bank_dca.py:869-919](file:///d/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L869-L919) 主循环：定投日先注入现金再买入，分红日先收到分红再触发再投资，与 [1-银行股定投回测概要.md](./trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md) 描述一致。
+- 波动率年化口径：[bank_dca.py:933-935](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L933-L935) 的 `日收益率 × √252` 已在 [1-银行股定投回测概要.md](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md#L62) 与 [3-单只银行定投回测.md](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/3-单只银行定投回测.md#L111) 中显式说明"252 日年化波动率"。
+- 分红再投资假设：[bank_dca.py:679-683](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L679-L683) 的"每股分红加到当日收盘价"已在 [1-银行股定投回测概要.md:48](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md#L48) 与 [3-单只银行定投回测.md:21](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/3-单只银行定投回测.md#L21) 中说明"除权日收盘立即再投资"。
 
-#### 发现的问题
+#### 仍然存在的问题
 
 | 级别 | 项                             | 位置                                                                                      | 说明                                                                                                                                              |
 | ---- | ------------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P2   | 波动率年化未说明               | [bank_dca.py:933-948](./trading-topic/labs/01_银行股定投回测/bank_dca.py#L933-L948)       | 日收益标准差 × √252 是交易日年化假设，文档未明确说明该口径，可能让读者误以为是日历日年化。建议在 1-银行股定投回测概要.md 中补充口径说明。         |
-| P2   | 总收益历史构建与再投资逻辑耦合 | [bank_dca.py:665-694](./trading-topic/labs/01_银行股定投回测/bank_dca.py#L665-L694)       | `build_total_return_history` 将每股分红加到当日收盘价计算"总收益净值"，等价于"分红按收盘价再投资"假设。该假设合理但未在文档中显式说明，建议补充。 |
-| P3   | 回测周期选择缺实证依据         | [1-银行股定投回测概要.md](./trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md) | 10/5/3 年回测窗口的选取缺少与历史牛熊周期的对应说明。建议补充为何选择这些年限（如覆盖 2015 牛熊、2018 贸易战、2020 疫情等）。                     |
-
-#### 结论
-
-labs/01 的算法实现正确，前视偏差已规避，分红处理合理。主要问题集中在**口径未在文档中显式说明**，可能让读者误解，但不影响结果正确性。
+| P3   | 回测周期选择缺实证依据         | [1-银行股定投回测概要.md](./trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md#L43) | 10/5/3 年回测窗口的选取仍缺少与历史牛熊周期的对应说明（如覆盖 2015 牛熊、2018 贸易战、2020 疫情等）。建议补充为何选择这些年限。                     |
 
 ### 1.2 labs/02\_行业走势相关性研究
 
-#### 发现的问题
+#### 已关闭（经本轮核验）
+
+- Fisher CI 的独立同分布假设限制：虽然 [build_notebooks.py:813-822](file:///d:/vibe-coding/trading-topic/labs/02_行业走势相关性研究/build_notebooks.py#L813-L822) 代码层面未做自相关修正，但已在 [3-总体研究结论.md:145](file:///d:/vibe-coding/trading-topic/labs/02_行业走势相关性研究/3-总体研究结论.md#L145) 及 Notebook 生成代码（build_notebooks.py:1038/1063）中显式说明"日收益率并非严格独立同分布，区间应谨慎解读"，并列入下一步方向。
+
+#### 仍然存在的问题
 
 | 级别 | 项                             | 位置                                                                                                  | 说明                                                                                                                                  |
 | ---- | ------------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| P2   | Fisher CI 未考虑时间序列自相关 | [build_notebooks.py:820-822](./trading-topic/labs/02_行业走势相关性研究/build_notebooks.py#L820-L822) | 使用 Fisher z 变换计算 95% CI 时假设样本独立，但金融收益率序列存在自相关，会导致 CI 过窄。建议在 3-总体研究结论.md 中明确该假设限制。 |
-| P3   | 相关性时变性未进一步建模       | [3-总体研究结论.md](./trading-topic/labs/02_行业走势相关性研究/3-总体研究结论.md)                     | 结论已正确指出"相关性不是常数"并使用滚动窗口，但未探讨 GARCH-DCC 等时变相关性模型。这是研究深度问题，不影响现有结论。                 |
+| P3   | 相关性时变性未进一步建模       | [3-总体研究结论.md](./trading-topic/labs/02_行业走势相关性研究/3-总体研究结论.md)                     | 结论已正确指出"相关性不是常数"并使用滚动窗口，但未探讨 GARCH-DCC 等时变相关性模型，也未明确将其列为未来方向。这是研究深度问题，不影响现有结论。                 |
 
 ### 1.3 labs/03\_板块周期轮动研究
 
-#### 发现的问题
+#### 已关闭（经本轮核验）
+
+- Rank IC 缺失值处理：[build_notebook.py:564-582](file:///d:/vibe-coding/trading-topic/labs/03_板块周期轮动研究/build_notebook.py#L564-L582) 已显式 `.dropna()`（行 575、582），样本不足时置 NaN 不纳入（行 576-578），处理停牌/新上市缺失值。
+
+#### 仍然存在的问题
 
 | 级别 | 项                            | 位置                                                                                              | 说明                                                                                                                                     |
 | ---- | ----------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| P1   | Rank IC 计算未处理缺失值      | [build_notebook.py:595-626](./trading-topic/labs/03_板块周期轮动研究/build_notebook.py#L595-L626) | 当截面数据中存在停牌或新上市标的导致字段缺失时，`rank` 默认 NaN 处理可能影响 IC 稳健性。建议显式 `dropna` 或在文档中说明缺失值处理策略。 |
-| P3   | 2020 年以来策略改善的归因不足 | [2-总体研究结论.md](./trading-topic/labs/03_板块周期轮动研究/2-总体研究结论.md)                   | 结论指出策略在 2020 年后显著改善，但未分析驱动因素（注册制、机构化、行业结构变化等）。建议补充定性归因。                                 |
+| P3   | 2020 年以来策略改善的归因不足 | [2-总体研究结论.md](./trading-topic/labs/03_板块周期轮动研究/2-总体研究结论.md#L139-L152)                   | 结论指出 2020 年后策略显著改善（12 月 Top 3 净 CAGR 19.07%），但未分析驱动因素（注册制、机构化、行业结构变化等）。建议补充定性归因。                                 |
 
 ### 1.4 labs 域整体结论
 
-四个 Lab 的算法实现均无根本性错误。labs/01 的定投回测作为 Lab 0 数据源与 Lab 1 回测主线的产物，质量最高；labs/02 与 labs/03 的统计方法合理但**稳健性诊断不足**。除 labs/03 的 Rank IC 缺失值处理为 P1 外，其余均为 P2/P3 级别，可在后续迭代中补充文档说明与稳健性检验。
+四个 Lab 的算法实现均无根本性错误。labs/01 的定投回测作为 Lab 0 数据源与 Lab 1 回测主线的产物，质量最高；labs/02 与 labs/03 的统计方法合理，稳健性说明已补齐。剩余问题均为文档深度与实证依据层面的 P3，可在后续迭代中补充。
 
 ---
 
@@ -80,36 +77,25 @@ labs/01 的算法实现正确，前视偏差已规避，分红处理合理。主
 
 ### 2.1 research/bank-dca
 
-#### 算法正确性核对
-
-- [analysis.py:12-35](./trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L12-L35) `calc_xirr`：牛顿法实现正确。初始猜测 0.05、迭代 200 次、收敛阈值 1e-10、导数过小（< 1e-12）时中断、`new_guess` 限制不低于 -0.99 避免 1+rate=0、最终用残差检查是否真收敛。对持续投入+期末赎回的单调现金流是稳定的。
-- [analysis.py:38-69](./trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L38-L69) `build_stock_level`：除权日总回报公式 `(close_today * (1 + bonus) + cash) / close_yesterday` 是"分红再投资"假设下的等价净值，正确。`reinvest_dividends=False` 时将 cash 和 bonus 都置 0，用于构建"纯价格回报"序列作为对照，**这是有意设计而非 bug**（见 [test_analysis.py:37-38](./trading-topic/research/bank-dca/tests/test_analysis.py#L37-L38) 测试验证）。
-- [data_fetch.py:114-124](./trading-topic/research/bank-dca/src/bank_dca_research/data_fetch.py#L114-L124) 分红数据：派息/送股/转增字段统一除以 10 转换为每股比例，与 `build_stock_level` 的公式一致。
-
-#### 测试覆盖核对
-
-- [test_analysis.py](./trading-topic/research/bank-dca/tests/test_analysis.py) 5 个测试覆盖关键边界：
-  - "贡献不隐藏回撤"：验证定投累计投入不影响回撤计算
-  - "现金分红再投资抵消除权下跌"：验证 total return 与 price-only 两种模式的差异
-  - "送股抵消价格调整"：验证 bonus_share_ratio 处理
-  - "国债逆回购按实际日历日计息"：验证 repo 利率年化
-  - "滚动窗口结束于自身月份"：验证滚动回测边界
-
-#### 发现的问题
+#### 仍然存在的问题
 
 | 级别 | 项                                       | 位置                                                                                                   | 说明                                                                                                                                                                  |
 | ---- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P2   | 报告数字未与 verify_returns 输出交叉引用 | [report/七家银行与基准回测报告.md](./trading-topic/research/bank-dca/report/七家银行与基准回测报告.md) | 报告中列出的 XIRR、回撤等数字为静态文本，未明确标注源自 `verify_returns.py` 的哪次运行。建议在报告头部加入"数据来源：`bank-dca-verify` 输出于 YYYY-MM-DD"的溯源说明。 |
-| P2   | 高频分红场景未覆盖                       | [test_analysis.py](./trading-topic/research/bank-dca/tests/test_analysis.py)                           | 现有测试覆盖年度分红，但未测试"一年多次分红"或"分红+送股+转增同日发生"的复合场景。建议补充。                                                                          |
-| P3   | `simulate_level_dca` 存在重复过滤逻辑    | [analysis.py:115-133](./trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L115-L133)   | 多次对 periods 进行过滤和切片，可提取为单一预处理函数。                                                                                                               |
+| P2   | 报告数字未与 verify_returns 输出交叉引用 | [report/七家银行与基准回测报告.md](./trading-topic/research/bank-dca/report/七家银行与基准回测报告.md) | 报告头部仅有"固定样本/数据截止"，未标注"数据来源：`bank-dca-verify` 输出于 YYYY-MM-DD"。`build_report.py`（build_markdown L429-434）只引用 manifest 的 data_end，从不调用 verify_returns；校验产物 `data/verification.json` 也无生成时间戳字段。报告数字可追溯性不足。 |
+| P2   | 高频分红场景未覆盖                       | [test_analysis.py](./trading-topic/research/bank-dca/tests/test_analysis.py)                           | 现有 5 个测试中涉及公司行动的两个用例均为单条事件（L29-33、L45-49），未覆盖"一年多次分红"或"分红+送股+转增同日发生"的复合场景。实现具备该路径（`build_stock_level` L46 `groupby("date").sum()`）但无测试保护；桌面域已有对应多分红测试。                                                                          |
+| P2   | `代码实现差异.md` 存在过时细节            | [代码实现差异.md](./trading-topic/research/代码实现差异.md)                                           | 架构性描述仍准确，但存在 4 处过时/不准确细节：①行数引用与实际不符（analysis.py 实际 207 行、finance.ts 实际 161 行、analysis.ts 实际 538 行）；②xirr 行号写 L12-57 实际 L7-52；③示例数值自相矛盾（"工商银行净值 2020-01-02 = 4.53"与快照不复权收盘价 5.97 不符，且总回报净值恒 ≥ 不复权收盘价，4.53 更像前复权价格）；④"daily 含 7 列衍生指标"实际生成 10 列。 |
+| P3   | `simulate_level_dca` 存在重复过滤逻辑    | [analysis.py:115-133](./trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L115-L133)   | 多次对 periods 进行过滤和切片（dropna/sort/区间过滤/取每月首个交易日等），且 `rolling_backtest`（L183-185）重复了同样预处理，可提取为单一预处理函数。                                                                                                               |
+| P3   | 报告图表与审计硬编码日期                 | [build_report.py:151-156,241,257](./trading-topic/research/bank-dca/src/bank_dca_research/build_report.py#L151-L156) | `dividend_audit` 与 `chart_total_return_levels` 硬编码 `2020-01-01` / `2026-07-20`，不随 `manifest['data_end']` 联动；刷新研究截止日后图表与审计比率可能静默截断/失配。 |
+| P3   | `dividend_audit` 存在死计算              | [build_report.py:150-157,208](./trading-topic/research/bank-dca/src/bank_dca_research/build_report.py#L150-L157) | 计算的 `total_return_end_ratio` / `price_only_end_ratio` 仅随 CSV 导出（L208），在 `build_markdown`（L412-418）中未使用。 |
+| P3   | `simulate_level_dca` 潜在边界不一致      | [analysis.py:123-162](./trading-topic/research/bank-dca/src/bank_dca_research/analysis.py#L123-L162) | 若 `valuation_end_ym < end_ym`，`invest_dates` 可能晚于 `last_date`，XIRR 现金流会把估值日之后的投入计入流出而 `final_value` 只含截至估值日的投资，造成现金流与估值不一致。当前调用点（`build_report.py` 传 None、`rolling_backtest` 传 end_ym）均不触发，属潜在风险而非现行错误。 |
 
-### 2.2 research/代码实现差异.md
+### 2.2 代码实现差异.md
 
-文档描述了研究包与桌面产品实现的差异（如分红再投资 vs 价格净值构建方式）。经核对，文档描述的差异仍然存在，且与 AGENTS.md "三域隔离、有意重复"的约定一致。**无需修改**。
+文档描述的研究包与桌面产品差异（净值驱动 vs 事件推进、XIRR 算法、送转/10 落盘、测试覆盖对照）核心准确，且与 AGENTS.md "三域隔离、有意重复"的约定一致；仅存在 2.1 中列出的过时细节（P2），需同步修正。
 
 ### 2.3 research 域整体结论
 
-bank-dca 复现包质量高：算法实现严谨、测试覆盖关键边界、口径清晰。主要改进方向是**报告可追溯性**（数字与 verify 输出的交叉引用）与**测试覆盖扩展**（高频分红场景）。
+bank-dca 复现包算法实现严谨、报告数字与 verification.json 及快照逐项一致（已核对工商 17.2%、民生 0.9%、沪深300 5.5% 等）。主要改进方向是**报告可追溯性**、**高频分红场景测试覆盖**与**文档细节同步**（P2），其余为 P3 级潜在风险。
 
 ---
 
@@ -117,14 +103,14 @@ bank-dca 复现包质量高：算法实现严谨、测试覆盖关键边界、�
 
 ### 3.1 模块划分与依赖方向
 
-经核对依赖关系（使用 grep 验证 import）：
+经核对依赖关系（使用 grep 验证 import），单向依赖仍然清晰：
 
 - `renderer/` → `shared/contracts.ts`、`api/client.ts`（IPC 客户端）✓
 - `preload.ts` → `shared/contracts.ts`（DesktopApi 接口）✓
 - `main.ts` → `services/appService.ts`、`storage/database.ts`、`export/*` ✓
 - `services/appService.ts` → `domain/*`、`data/*`、`storage/database.ts`、`shared/*` ✓
 - `domain/` → `shared/*`、`domain/*`（内部互相依赖）✓
-- `storage/database.ts` → `shared/*` ✓（本轮已将 `validateBackup` 调用上移到 `main.ts`，storage 不再反向依赖 domain）
+- `storage/database.ts` → `shared/*` ✓（无反向依赖）
 - `data/` → `shared/*`、`domain/dateUtils.ts`、`_internal/httpClient.ts`、`_internal/validateBars.ts` ✓
 
 #### 发现的问题
@@ -137,22 +123,26 @@ bank-dca 复现包质量高：算法实现严谨、测试覆盖关键边界、�
 
 ### 4.1 重复代码检查
 
-当前无同域内剩余的显著重复。
+当前无同域内剩余的显著重复（HTTP 客户端、OHLCV 校验、行情失败策略已收敛至 `_internal/` 与 `marketDataProvider` 统一接口）。
 
 ### 4.2 代码异味
 
 | 级别 | 项                              | 位置                                                                             | 说明                                                                                                                                                                                                     |
 | ---- | ------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P2   | `database.ts` 单文件 1100+ 行   | [database.ts](./trading-topic/src/desktop/electron/storage/database.ts)          | schema 初始化、CRUD、备份恢复、行映射全在一个类。上轮已提取列常量与 mapStoredMarketPrice，但文件仍较大。可按职责拆分为 `schema.ts`（DDL 与指纹）+ `database.ts`（CRUD）+ `backup.ts`（export/restore）。 |
+| P2   | `database.ts` 单文件 1078 行    | [database.ts](./trading-topic/src/desktop/electron/storage/database.ts)          | schema 初始化、CRUD、备份恢复、行映射全在一个类。上轮已提取列常量与 mapStoredMarketPrice，但文件仍过大。可按职责拆分为 `schema.ts`（DDL 与指纹）+ `database.ts`（CRUD）+ `backup.ts`（export/restore）。 |
 | P3   | `ledgerReducer.ts` 部分函数较长 | [ledgerReducer.ts](./trading-topic/src/desktop/electron/domain/ledgerReducer.ts) | `reduceLedger` 主循环较长但逻辑线性，可读性尚可，优先级低。                                                                                                                                              |
 
 ---
 
 ## 5. src/desktop/ 与 docs/product/ 文档一致性评审
 
-| 级别 | 项                                                 | 位置                                                | 说明                                                                                                                                                                                                             |
-| ---- | -------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P1   | PRD 对功能边界（滚动窗口、ETF 限制）的显式说明不足 | [PRD_R1.md](./trading-topic/docs/product/PRD_R1.md) | PRD 未显式说明滚动窗口的起始月份规则与 ETF 不参与历史回测的限制，这些边界当前仅由代码实现（`appService.ts` 的 `assertBacktestRequest`）隐式定义，用户无法从需求文档预知。建议在 PRD 中补充"功能边界与限制"章节。 |
+### 已关闭（经本轮核验）
+
+- PRD 功能边界说明（原 P1）：[PRD_R1.md:85](file:///d:/vibe-coding/trading-topic/docs/product/PRD_R1.md#L85) 已显式声明"R1 不做滚动窗口回测"，[PRD_R1.md:249](file:///d:/vibe-coding/trading-topic/docs/product/PRD_R1.md#L249) 已说明"历史回测仍只支持 A 股股票"的 ETF 限制，原评审指出的两点边界已由需求文档显式定义。
+
+### 发现的问题
+
+无。
 
 ---
 
@@ -162,19 +152,21 @@ bank-dca 复现包质量高：算法实现严谨、测试覆盖关键边界、�
 
 **核心优势**：
 
-- labs/01 银行股定投回测算法正确，规避前视偏差，分红登记日处理严谨
-- research/bank-dca 复现包算法实现严谨，测试覆盖关键边界
-- src/desktop 三层架构单向依赖清晰，IPC 白名单与安全边界到位
-- 上轮 P1/P3 与本轮 P1/P2 重构已收敛，无死代码、无死测试、无反向依赖
-- ARCHITECTURE.md 与代码实现高度一致
+- labs/01 银行股定投回测算法正确，规避前视偏差，分红登记日处理严谨，口径说明完整
+- research/bank-dca 复现包算法实现严谨，报告数字与校验产物、行情快照逐项一致
+- src/desktop 三层架构单向依赖清晰，IPC 白名单与安全边界到位，上轮 P1-1~P2-4 重构已收敛
+- 无死代码、无死测试、无反向依赖（本轮已清理）
+- ARCHITECTURE.md 与代码实现高度一致；PRD 功能边界已补齐
 
 **主要待改进项**：
 
-- PRD 对功能边界（滚动窗口、ETF 限制）的显式说明不足（P1）
-- labs/03 Rank IC 缺失值处理（P1）
+- research/bank-dca 报告数字可追溯性（P2）
+- research/bank-dca 高频分红复合场景测试覆盖（P2）
+- research/代码实现差异.md 过时细节同步（P2）
 - `database.ts` 单文件过大（P2）
-- labs 口径说明与稳健性诊断不足（P2/P3）
-- research 报告可追溯性与测试覆盖扩展（P2/P3）
+- labs 文档深度与实证依据（P3×3）
+- research 潜在边界风险与死计算（P3×3）
+- `ledgerReducer.ts` 长函数（P3）
 
 以上问题均**不影响 R1 发布**，可在后续迭代中逐步收敛。
 
@@ -182,16 +174,16 @@ bank-dca 复现包质量高：算法实现严谨、测试覆盖关键边界、�
 
 本评审基于以下手段：
 
-1. 关键文件逐行阅读（bank_dca.py、analysis.py、appService.ts、database.ts、main.ts、preload.ts、contracts.ts 等）
-2. grep 跨文件搜索符号引用，验证"死代码"判断
-3. `npm run typecheck` / `npm test`（160 passed / 1 skipped）/ `npm run build` 全部通过
-4. 文档描述与代码实现的逐项比对
+1. 关键文件逐行阅读（bank_dca.py、build_notebooks.py、analysis.py、build_report.py、appService.ts、database.ts、main.ts、preload.ts、contracts.ts 等）
+2. grep 跨文件搜索符号引用，验证"死代码"判断与依赖方向
+3. 对前两轮评审列出的每个问题逐一重新核验（labs/research/docs 均读取对应文件与行号确认现状）
+4. `npm run typecheck` / `npm test`（158 passed / 1 skipped）/ `npm run build` 全部通过
 
 **未在本评审范围内**：
 
 - 性能基准测试（需运行时数据）
 - 安全渗透测试（需专用工具）
-- 跨平台兼容性测试（需多环境）
-- labs/research 的可复现性验证（需运行 Python 环境）
+- 跨平台兼容性测试（需多平台环境）
+- labs/research 的可复现性运行验证（需 Python 环境，research/bank-dca 无 .venv，运行态结果未确认）
 
 如需深入验证这些维度，建议另启独立评审任务。
