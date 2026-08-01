@@ -72,10 +72,11 @@
 | P1-2 | 当前持仓周期起始日使用全部流水最早日期 | [domain/ledgerReducer.ts](electron/domain/ledgerReducer.ts)、[domain/dailyAttribution.ts](electron/domain/dailyAttribution.ts)、[domain/positionsView.ts](electron/domain/positionsView.ts)、[services/appService.ts](electron/services/appService.ts) | 新增公共 `holdingIntervals` / `currentHoldingStart`：按数量变化（0→正记起始，正→0清起始）计算持仓区间；`incomePriceRanges`、`dailyAttribution`、`positionsView` 统一复用，避免各自实现一套持仓区间逻辑 |
 | P1-3 | 持久化 partial 只进入持仓页，未进入收益日历读模型 | [services/appService.ts](electron/services/appService.ts) | 新增 `relevantCoverageIssuesForMonth()`：按查询月份、所选标的和实际持仓区间筛选持久化 partial 覆盖的 error 级别问题，作为 `externalIssues` 传入 `buildIncomeCalendar`；重启或离线时收益日历与持仓页质量状态一致 |
 | P2 | 存储层允许写入没有问题详情的 partial | [storage/marketRepository.ts](electron/storage/marketRepository.ts) | 写入时强制校验：partial 必须至少有一个 `severity: error` 的问题，非 partial 禁止携带 issues；读取损坏 `issues_json` 时不静默降级，生成"覆盖问题详情损坏"通用 error 并保持 partial |
-| UI-1 | 未真正实现响应式（minWidth:1920 + body min-width:1920px） | [electron/main.ts](electron/main.ts)、[renderer/src/index.css](renderer/src/index.css) | 窗口 `minWidth: 1280, minHeight: 720`；删除 `body { min-width: 1920px }`；新增 `@media (max-width: 1599px)` 断点：侧栏收窄为 72px 图标条，参数区单列，表格横向滚动；`@media (min-width: 2560px)` 宽屏内容居中且 `max-width: 2400px` |
+| UI-1 | 未真正实现响应式（minWidth:1920 + body min-width:1920px） | [electron/main.ts](electron/main.ts)、[renderer/src/index.css](renderer/src/index.css) | 窗口 `minWidth: 1280, minHeight: 720`；删除 `body { min-width: 1920px }`；新增 `@media (max-width: 1599px)` 断点：侧栏收窄为 72px 图标条，参数区单列，表格横向滚动 |
 | UI-2 | 持仓页顶部 10 个指标等宽挤在一行 | [renderer/src/pages/PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx) | 拆为两行：第一行 6 项核心指标（持仓市值、累计净投入、投资总收益、未实现收益、已实现收益、XIRR）；第二行 4 项对账指标（累计买入、累计卖出、累计分红、待再投入） |
 | UI-3 | 持仓表列重复度高 | [renderer/src/pages/PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx)、[shared/contracts.ts](shared/contracts.ts)、[domain/positionsView.ts](electron/domain/positionsView.ts) | 表格"累计买入支出""累计分红"列替换为"持仓占比"和"当日盈亏"；`PositionView` 新增 `weight` 和 `dayPnl` 字段，由 `buildPositionsOverview` 计算 |
 | UI-4 | 持仓翻页功能不完整 | [renderer/src/pages/PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx) | 分页提供 10/20/50 切换；显示"共 N 个标的"；搜索、资产筛选或排序变化时自动返回第1页；选中证券被过滤掉时清除"区间表现"单标的选择 |
+| UI-5 | 持仓明细、交易流水、收益日历在大屏幕下未像定投回测一样响应 | [renderer/src/index.css](renderer/src/index.css) | `@media (min-width: 2560px)` 取消 `max-width` 留白方案，改为占满可用宽度并整体调大字号/间距：页面标题 32px、指标数值 22px、实盘表格 14px、日历格子 110px、定投图表 480px 等；交易流水搜索框列改为 `minmax(210px, 420px)` 避免无限拉伸；收益日历新增 `@media (max-width: 1450px)` 断点改为上下布局，避免右侧详情挤压左侧日历 |
 | 测试 | P0/P2 关键分支缺少针对性测试 | [services/appService.test.ts](electron/services/appService.test.ts)、[storage/database.test.ts](electron/storage/database.test.ts) | 新增 5 个 P0 测试：中间日期错误修复后前缀价格不丢失、错误在 requestedFrom 当天仍重试、无日期 error 重试整个区间、再次 partial 不缩水、修复后全月收益与完整数据一致；新增 3 个 P2 测试：写入时拒绝 partial 缺少 error issues、拒绝非 partial 携带 issues、读取损坏 issues_json 生成通用 error |
 
 ## 3. 仍待处理的问题
@@ -124,7 +125,7 @@
 | 文档链接 | PASS |
 | 文档与实现一致性 | **本地设置 UI 简述两处仍写 Schema 2**（见 §3.2） |
 | 类型检查 / 测试 / 构建 | PASS |
-| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项 + 第六轮 7 项 + 第七轮 P0/P1/P2/UI 10 项全部完成 |
+| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项 + 第六轮 7 项 + 第七轮 P0/P1/P2/UI 11 项全部完成 |
 | 发布前真实行情与便携包验证 | **未执行**（见 §3.1） |
 
 **总体**：第四至七轮 P0/P1/P2 问题清单的代码层修复与 UI 优化已全部收敛，单元测试（174/174）与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。P2-3（Worker 只传 filePath）列为后续优化。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。

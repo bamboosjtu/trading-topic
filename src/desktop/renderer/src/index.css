@@ -2004,7 +2004,7 @@ a:focus-visible,
 .ledger-filter-panel {
   display: grid;
   min-height: 88px;
-  grid-template-columns: 250px 200px 145px 205px minmax(210px, 1fr) auto;
+  grid-template-columns: 250px 200px 145px 205px minmax(210px, 420px) auto;
   align-items: end;
   gap: 14px;
   padding: 14px 16px;
@@ -2597,21 +2597,162 @@ a:focus-visible,
 
 @media (min-width: 2560px) {
   .app-content {
-    padding-right: 48px;
-    padding-left: 48px;
+    padding: 20px 48px 22px;
+  }
+
+  .page-heading h1 {
+    font-size: 32px;
+    line-height: 40px;
+  }
+
+  .page-heading p {
+    font-size: 13px;
+    line-height: 20px;
+  }
+
+  .backtest-page {
+    gap: 14px;
+  }
+
+  .backtest-metrics {
+    min-height: 118px;
+  }
+
+  .backtest-metric {
+    padding: 0 24px;
+  }
+
+  .metric-icon {
+    width: 48px;
+    height: 48px;
+    font-size: 22px;
+  }
+
+  .metric-number {
+    font-size: 22px;
+    line-height: 26px;
+  }
+
+  .metric-caption,
+  .metric-helper {
+    font-size: 12px;
+  }
+
+  .backtest-chart-panel {
+    min-height: 480px;
   }
 
   .live-page {
-    max-width: 3200px;
-    margin-inline: auto;
+    gap: 14px;
+  }
+
+  .live-metric-strip {
+    min-height: 104px;
+    padding: 10px 8px;
+  }
+
+  .live-metric {
+    padding: 0 18px;
+  }
+
+  .live-metric-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 19px;
+  }
+
+  .live-metric-label {
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .live-metric-value {
+    font-size: 22px;
+    line-height: 26px;
+  }
+
+  .live-metric-helper {
+    font-size: 12px;
+    line-height: 17px;
+  }
+
+  .live-performance-panel {
+    min-height: 120px;
+  }
+
+  .performance-grid > div {
+    gap: 10px;
+  }
+
+  .performance-grid span {
+    font-size: 13px;
+  }
+
+  .performance-grid strong {
+    font-size: 20px;
+  }
+
+  .live-data-table .ant-table-thead > tr > th,
+  .live-data-table .ant-table-tbody > tr > td {
+    font-size: 14px;
+  }
+
+  .live-data-table .ant-table-thead > tr > th {
+    height: 46px;
+  }
+
+  .live-data-table .ant-table-tbody > tr > td {
+    height: 60px;
+  }
+
+  .ledger-table .ant-table-tbody > tr > td {
+    height: 56px;
   }
 
   .calendar-cell {
-    height: 94px;
+    height: 110px;
+    padding: 8px 10px;
+  }
+
+  .calendar-day-number {
+    font-size: 12px;
+    line-height: 15px;
+  }
+
+  .calendar-cell strong {
+    font-size: 13px;
+    line-height: 19px;
+  }
+
+  .calendar-cell small {
+    font-size: 10px;
+    line-height: 14px;
   }
 
   .income-calendar-panel {
-    grid-template-columns: minmax(0, 2.2fr) minmax(480px, 0.8fr);
+    grid-template-columns: minmax(0, 2.2fr) minmax(560px, 0.8fr);
+  }
+
+  .income-day-detail,
+  .income-calendar-main {
+    padding: 14px 18px 18px;
+  }
+}
+
+/* P-UI：收益日历在中等宽度下改为上下布局，避免右侧详情区过度挤压左侧日历。 */
+@media (max-width: 1450px) {
+  .income-calendar-panel {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+
+  .income-calendar-main {
+    border-right: 0;
+    border-bottom: 1px solid #e8edf3;
+  }
+
+  .income-day-detail {
+    min-height: 260px;
   }
 }
 
