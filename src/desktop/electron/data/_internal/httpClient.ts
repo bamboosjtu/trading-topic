@@ -37,14 +37,26 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const { timeoutMs = 15_000, label = "数据源", headers, signal: externalSignal, ...rest } = options;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // 显式记录最先触发的取消原因，避免超时与外部取消近乎同时发生时
+  // 事后通过 externalSignal.aborted 推断导致错误归类。
+  let abortReason: "timeout" | "external" | null = null;
+  const timeout = setTimeout(() => {
+    if (abortReason === null) abortReason = "timeout";
+    controller.abort();
+  }, timeoutMs);
 
   // 组合外部 signal 与超时 signal：外部取消或超时任一触发都 abort。
+  // 保存回调引用以便在 finally 中移除，避免长生命周期 signal 上累积监听器。
+  const onExternalAbort = (): void => {
+    if (abortReason === null) abortReason = "external";
+    controller.abort();
+  };
   if (externalSignal) {
     if (externalSignal.aborted) {
+      abortReason = "external";
       controller.abort();
     } else {
-      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
     }
   }
 
@@ -61,11 +73,14 @@ export async function fetchWithTimeout(
     return response;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      const cause = externalSignal?.aborted ? "外部取消" : "超时";
+      const cause = abortReason === "external" ? "外部取消" : "超时";
       throw new Error(`${label}请求${cause === "外部取消" ? "被外部取消" : "超时"}`);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
   }
 }

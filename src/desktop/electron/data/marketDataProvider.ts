@@ -1,5 +1,6 @@
 import type {
   AdjustedBar,
+  MarketDataIssue,
   MarketFetchResult,
   MarketDataProvenance,
   MarketTailStatus,
@@ -16,6 +17,8 @@ import {
 } from "./sina";
 import {
   assertValidMarketDateRange,
+  expectedTradingDatesInRange,
+  isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestWeekdayCandidate,
@@ -30,8 +33,8 @@ import {
 /** 适配器返回的行级解析结果：有效行 + 解析期间发现的问题。 */
 export interface ProviderFetchResult<T> {
   rows: T[];
-  /** 行级解析问题，例如"新浪丢弃了 2 行非法 OHLCV 数据"。 */
-  issues: string[];
+  /** 行级解析问题，例如新浪丢弃了非法 OHLCV 行。 */
+  issues: MarketDataIssue[];
 }
 
 export interface MarketDataProvider {
@@ -77,9 +80,10 @@ function assertDates(
   let previous = "";
   for (const row of rows) {
     if (!validDate(row.date)) throw new Error(`${label}包含非法交易日期`);
-    const weekday = new Date(`${row.date}T00:00:00Z`).getUTCDay();
-    if (weekday === 0 || weekday === 6) {
-      throw new Error(`${label}把周末标记为交易日`);
+    // P2-2：拒绝已确认的法定休市日（含周末和官方公告休市），
+    // 避免供应商错误返回工作日休市日期时被当成交易日接受。
+    if (isConfirmedMarketClosureDate(row.date)) {
+      throw new Error(`${label}把非交易日 ${row.date} 标记为交易日`);
     }
     if (previous && row.date <= previous) {
       throw new Error(`${label}交易日期必须严格升序且不重复`);
@@ -89,6 +93,35 @@ function assertDates(
     }
     previous = row.date;
   }
+}
+
+/**
+ * P2-1：在拥有正式日历的年度中逐交易日核对行情完整性。
+ * 返回 warning 级别问题，标记缺失的预期交易日。严格回测层会根据
+ * 请求区间判断这些缺失是否落入回测范围并决定是否阻断。
+ */
+function detectDateCompletenessIssues(
+  rows: readonly { date: string }[],
+  label: string,
+): MarketDataIssue[] {
+  if (rows.length < 2) return [];
+  const firstDate = rows[0]!.date;
+  const lastDate = rows[rows.length - 1]!.date;
+  const expected = expectedTradingDatesInRange(firstDate, lastDate);
+  if (!expected.length) return [];
+  const present = new Set(rows.map((row) => row.date));
+  const issues: MarketDataIssue[] = [];
+  for (const date of expected) {
+    if (!present.has(date)) {
+      issues.push({
+        date,
+        type: "gap",
+        severity: "warning",
+        message: `${label}在正式交易日历年度内缺少 ${date} 的行情`,
+      });
+    }
+  }
+  return issues;
 }
 
 export function validatePricePoints(
@@ -227,7 +260,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     rows: T[];
     consistencyRows: PricePoint[];
     tailStatus: MarketTailStatus;
-    rowIssues: string[];
+    rowIssues: MarketDataIssue[];
   }
 
   const adjustment = operation === "prices" ? "none" : "qfq";
@@ -265,6 +298,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         );
       }
     }
+    // P2-1：在正式日历年度内逐交易日核对完整性，产出 warning 级别问题。
+    const dateIssues = detectDateCompletenessIssues(completed, label);
     return {
       rows: completed,
       consistencyRows:
@@ -275,12 +310,19 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
               close,
             })),
       tailStatus: marketTailStatus(completed, endDate, now),
-      rowIssues,
+      rowIssues: [...rowIssues, ...dateIssues],
     };
   };
 
+  /** 供应商级失败（已被兜底覆盖）转为 warning 级别问题。 */
+  const providerIssue = (message: string): MarketDataIssue => ({
+    type: "gap",
+    severity: "warning",
+    message,
+  });
+
   let primaryCandidate: Candidate | null = null;
-  let primaryIssue: string | null = null;
+  let primaryIssueMessage: string | null = null;
   try {
     primaryCandidate = await evaluate(primary, "腾讯");
     if (
@@ -301,19 +343,19 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         ),
       };
     }
-    primaryIssue = primaryCandidate.rows.length
+    primaryIssueMessage = primaryCandidate.rows.length
       ? `腾讯行情仅更新至 ${primaryCandidate.rows.at(-1)?.date ?? "未知日期"}，尾部不完整`
       : "腾讯在请求区间返回空数据";
   } catch (error) {
-    primaryIssue = error instanceof Error ? error.message : String(error);
+    primaryIssueMessage = error instanceof Error ? error.message : String(error);
   }
 
   let fallbackCandidate: Candidate | null = null;
-  let fallbackIssue: string | null = null;
+  let fallbackIssueMessage: string | null = null;
   try {
     fallbackCandidate = await evaluate(fallback, "新浪");
   } catch (error) {
-    fallbackIssue = error instanceof Error ? error.message : String(error);
+    fallbackIssueMessage = error instanceof Error ? error.message : String(error);
   }
 
   if (
@@ -337,7 +379,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       dataCutoff: fallbackCandidate.rows.at(-1)?.date ?? null,
       tailStatus: fallbackCandidate.tailStatus,
       issues: [
-        ...(primaryIssue ? [primaryIssue] : []),
+        ...(primaryIssueMessage ? [providerIssue(primaryIssueMessage)] : []),
         ...fallbackCandidate.rowIssues,
       ],
       provenance: provenance(
@@ -345,7 +387,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         fallbackCandidate.rows,
         adjustment,
         fetchedAt,
-        primaryIssue ?? "腾讯行情不可用",
+        primaryIssueMessage ?? "腾讯行情不可用",
       ),
     };
   }
@@ -391,17 +433,16 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   const selected = incompleteCandidates[0];
   if (selected) {
     if (fallbackCandidate?.rows.length) {
-      fallbackIssue = `新浪行情仅更新至 ${
+      fallbackIssueMessage = `新浪行情仅更新至 ${
         fallbackCandidate.rows.at(-1)?.date ?? "未知日期"
       }，尾部不完整`;
-    } else if (!fallbackIssue && fallbackEmpty) {
-      fallbackIssue = "新浪在请求区间返回空数据";
+    } else if (!fallbackIssueMessage && fallbackEmpty) {
+      fallbackIssueMessage = "新浪在请求区间返回空数据";
     }
-    const issues = [
-      primaryIssue,
-      fallbackIssue,
-      ...selected.candidate.rowIssues,
-    ].filter((issue): issue is string => Boolean(issue));
+    const issues: MarketDataIssue[] = [];
+    if (primaryIssueMessage) issues.push(providerIssue(primaryIssueMessage));
+    if (fallbackIssueMessage) issues.push(providerIssue(fallbackIssueMessage));
+    issues.push(...selected.candidate.rowIssues);
     return {
       rows: selected.candidate.rows,
       requestedThrough: endDate,
@@ -414,15 +455,15 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         adjustment,
         fetchedAt,
         selected.source === "sina"
-          ? primaryIssue ?? "腾讯行情不可用"
+          ? primaryIssueMessage ?? "腾讯行情不可用"
           : undefined,
       ),
     };
   }
 
   throw new Error(
-    `腾讯行情不可用（${primaryIssue ?? "未知原因"}）；新浪完整区间兜底失败（${
-      fallbackIssue ?? "未返回可用行情"
+    `腾讯行情不可用（${primaryIssueMessage ?? "未知原因"}）；新浪完整区间兜底失败（${
+      fallbackIssueMessage ?? "未返回可用行情"
     }）`,
   );
 }
@@ -436,7 +477,7 @@ export async function fetchMarketPrices(
   requestedThrough: string;
   dataCutoff: string | null;
   tailStatus: MarketTailStatus;
-  issues: string[];
+  issues: MarketDataIssue[];
   provenance: MarketDataProvenance & { caliberVersion: string };
 }> {
   const result = await fetchWithProviderFallback<PricePoint>(
@@ -469,7 +510,7 @@ export async function fetchMarketAdjustedBars(
   requestedThrough: string;
   dataCutoff: string | null;
   tailStatus: MarketTailStatus;
-  issues: string[];
+  issues: MarketDataIssue[];
   provenance: MarketDataProvenance & { caliberVersion: string };
 }> {
   const result = await fetchWithProviderFallback<AdjustedBar>(

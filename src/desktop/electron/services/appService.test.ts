@@ -625,7 +625,10 @@ describe("AppService 回测试验", () => {
       requestedThrough: "2024-02-29",
       dataCutoff: "2024-02-28",
       tailStatus: "incomplete",
-      issues: ["腾讯尾部不完整", "新浪兜底失败"],
+      issues: [
+        { type: "gap", severity: "warning", message: "腾讯尾部不完整" },
+        { type: "gap", severity: "warning", message: "新浪兜底失败" },
+      ],
       provenance: {
         source: "tencent",
         primarySource: "tencent",
@@ -1117,8 +1120,8 @@ describe("AppService 实盘流水", () => {
       dataCutoff: "2026-07-28",
       tailStatus: "incomplete",
       issues: [
-        "腾讯行情尾部不完整",
-        "新浪兜底失败",
+        { type: "gap", severity: "warning", message: "腾讯行情尾部不完整" },
+        { type: "gap", severity: "warning", message: "新浪兜底失败" },
       ],
       provenance: {
         source: "tencent",

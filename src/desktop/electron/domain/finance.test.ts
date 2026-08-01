@@ -53,4 +53,55 @@ describe("drawdownProfile", () => {
     expect(result.longestDrawdownMonths).toBe(18);
     expect(result.longestDrawdownRecovered).toBe(true);
   });
+
+  it("P1-2 无回撤场景使用 null 表达无此日期", () => {
+    // 空输入
+    const empty = drawdownProfile([]);
+    expect(empty.maxDrawdown).toBe(0);
+    expect(empty.maxDrawdownPeakDate).toBeNull();
+    expect(empty.maxDrawdownTroughDate).toBeNull();
+    expect(empty.longestDrawdownStart).toBeNull();
+    expect(empty.longestDrawdownEnd).toBeNull();
+    expect(empty.longestDrawdownMonths).toBe(0);
+    expect(empty.longestDrawdownRecovered).toBe(true);
+
+    // 单交易日：必然无回撤
+    const single = drawdownProfile([
+      { date: "2024-01-01", value: 1 },
+    ]);
+    expect(single.maxDrawdown).toBe(0);
+    expect(single.maxDrawdownPeakDate).toBeNull();
+    expect(single.maxDrawdownTroughDate).toBeNull();
+    expect(single.longestDrawdownStart).toBeNull();
+    expect(single.longestDrawdownEnd).toBeNull();
+    expect(single.longestDrawdownRecovered).toBe(true);
+
+    // 净值单调上涨
+    const monotonic = drawdownProfile([
+      { date: "2024-01-01", value: 1 },
+      { date: "2024-02-01", value: 1.1 },
+      { date: "2024-03-01", value: 1.2 },
+      { date: "2024-04-01", value: 1.3 },
+    ]);
+    expect(monotonic.maxDrawdown).toBe(0);
+    expect(monotonic.maxDrawdownPeakDate).toBeNull();
+    expect(monotonic.maxDrawdownTroughDate).toBeNull();
+    expect(monotonic.longestDrawdownStart).toBeNull();
+    expect(monotonic.longestDrawdownEnd).toBeNull();
+    expect(monotonic.longestDrawdownRecovered).toBe(true);
+
+    // 净值始终未跌破前高（含持平）
+    const noDrawdown = drawdownProfile([
+      { date: "2024-01-01", value: 1 },
+      { date: "2024-02-01", value: 1 },
+      { date: "2024-03-01", value: 1.05 },
+      { date: "2024-04-01", value: 1.05 },
+    ]);
+    expect(noDrawdown.maxDrawdown).toBe(0);
+    expect(noDrawdown.maxDrawdownPeakDate).toBeNull();
+    expect(noDrawdown.maxDrawdownTroughDate).toBeNull();
+    expect(noDrawdown.longestDrawdownStart).toBeNull();
+    expect(noDrawdown.longestDrawdownEnd).toBeNull();
+    expect(noDrawdown.longestDrawdownRecovered).toBe(true);
+  });
 });

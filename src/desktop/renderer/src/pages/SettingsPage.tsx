@@ -265,7 +265,7 @@ export function SettingsPage() {
               <div>
                 <h2>本机数据维护</h2>
                 <p>
-                  仅接受当前 Schema 2 备份；旧数据库和旧备份不会迁移或补默认值。
+                  仅接受当前 Schema 1 备份；旧数据库和旧备份不会迁移或补默认值。
                 </p>
               </div>
             </div>

@@ -34,8 +34,8 @@
 
 #### 已关闭（经本轮核验）
 
-- 波动率年化口径：[bank_dca.py:933-935](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L933-L935) 的 `日收益率 × √252` 已在 [1-银行股定投回测概要.md](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md#L62) 与 [3-单只银行定投回测.md](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/3-单只银行定投回测.md#L111) 中显式说明"252 日年化波动率"。
-- 分红再投资假设：[bank_dca.py:679-683](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/bank_dca.py#L679-L683) 的"每股分红加到当日收盘价"已在 [1-银行股定投回测概要.md:48](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/1-银行股定投回测概要.md#L48) 与 [3-单只银行定投回测.md:21](file:///d:/vibe-coding/trading-topic/labs/01_银行股定投回测/3-单只银行定投回测.md#L21) 中说明"除权日收盘立即再投资"。
+- 波动率年化口径：[bank_dca.py:933-935](./labs/01_银行股定投回测/bank_dca.py#L933-L935) 的 `日收益率 × √252` 已在 [1-银行股定投回测概要.md](./labs/01_银行股定投回测/1-银行股定投回测概要.md#L62) 与 [3-单只银行定投回测.md](./labs/01_银行股定投回测/3-单只银行定投回测.md#L111) 中显式说明"252 日年化波动率"。
+- 分红再投资假设：[bank_dca.py:679-683](./labs/01_银行股定投回测/bank_dca.py#L679-L683) 的"每股分红加到当日收盘价"已在 [1-银行股定投回测概要.md:48](./labs/01_银行股定投回测/1-银行股定投回测概要.md#L48) 与 [3-单只银行定投回测.md:21](./labs/01_银行股定投回测/3-单只银行定投回测.md#L21) 中说明"除权日收盘立即再投资"。
 
 #### 仍然存在的问题
 
@@ -47,7 +47,7 @@
 
 #### 已关闭（经本轮核验）
 
-- Fisher CI 的独立同分布假设限制：虽然 [build_notebooks.py:813-822](file:///d:/vibe-coding/trading-topic/labs/02_行业走势相关性研究/build_notebooks.py#L813-L822) 代码层面未做自相关修正，但已在 [3-总体研究结论.md:145](file:///d:/vibe-coding/trading-topic/labs/02_行业走势相关性研究/3-总体研究结论.md#L145) 及 Notebook 生成代码（build_notebooks.py:1038/1063）中显式说明"日收益率并非严格独立同分布，区间应谨慎解读"，并列入下一步方向。
+- Fisher CI 的独立同分布假设限制：虽然 [build_notebooks.py:813-822](./labs/02_行业走势相关性研究/build_notebooks.py#L813-L822) 代码层面未做自相关修正，但已在 [3-总体研究结论.md:145](./labs/02_行业走势相关性研究/3-总体研究结论.md#L145) 及 Notebook 生成代码（build_notebooks.py:1038/1063）中显式说明"日收益率并非严格独立同分布，区间应谨慎解读"，并列入下一步方向。
 
 #### 仍然存在的问题
 
@@ -59,7 +59,7 @@
 
 #### 已关闭（经本轮核验）
 
-- Rank IC 缺失值处理：[build_notebook.py:564-582](file:///d:/vibe-coding/trading-topic/labs/03_板块周期轮动研究/build_notebook.py#L564-L582) 已显式 `.dropna()`（行 575、582），样本不足时置 NaN 不纳入（行 576-578），处理停牌/新上市缺失值。
+- Rank IC 缺失值处理：[build_notebook.py:564-582](./labs/03_板块周期轮动研究/build_notebook.py#L564-L582) 已显式 `.dropna()`（行 575、582），样本不足时置 NaN 不纳入（行 576-578），处理停牌/新上市缺失值。
 
 #### 仍然存在的问题
 
@@ -138,7 +138,7 @@ bank-dca 复现包算法实现严谨、报告数字与 verification.json 及快�
 
 ### 已关闭（经本轮核验）
 
-- PRD 功能边界说明（原 P1）：[PRD_R1.md:85](file:///d:/vibe-coding/trading-topic/docs/product/PRD_R1.md#L85) 已显式声明"R1 不做滚动窗口回测"，[PRD_R1.md:249](file:///d:/vibe-coding/trading-topic/docs/product/PRD_R1.md#L249) 已说明"历史回测仍只支持 A 股股票"的 ETF 限制，原评审指出的两点边界已由需求文档显式定义。
+- PRD 功能边界说明（原 P1）：[PRD_R1.md:85](./docs/product/PRD_R1.md#L85) 已显式声明"R1 不做滚动窗口回测"，[PRD_R1.md:249](./docs/product/PRD_R1.md#L249) 已说明"历史回测仍只支持 A 股股票"的 ETF 限制，原评审指出的两点边界已由需求文档显式定义。
 
 ### 发现的问题
 

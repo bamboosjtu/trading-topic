@@ -2,12 +2,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import type {
   BacktestRequest,
   BacktestWorkspaceState,
@@ -15,6 +15,7 @@ import type {
   DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
+  ValidatedBackupPayload,
 } from "../shared/contracts";
 import { buildBacktestWorkbook } from "./export/backtestWorkbook";
 import {
@@ -22,16 +23,15 @@ import {
   buildLedgerWorkbook,
   buildPositionsWorkbook,
 } from "./export/liveWorkbooks";
-import { validateBackup } from "./domain/backupValidation";
 import { AppService } from "./services/appService";
 import { LocalDatabase } from "./storage/database";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = app.isPackaged ? process.resourcesPath : process.cwd();
 const DEV_USER_DATA_DIR = resolve(PROJECT_ROOT, ".userData");
-// 备份恢复文件大小上限：256 MiB。覆盖典型历史流水 + 行情快照 + 回测试验，
-// 同时拒绝明显异常的大型文件，避免 JSON.parse 消耗过多内存。
-const BACKUP_RESTORE_MAX_BYTES = 256 * 1024 * 1024;
+// P2-5：备份恢复文件大小上限降到 64 MiB，更符合 R1 阶段数据量。
+// JSON 解析和领域校验在 worker 线程完成，避免冻结主进程。
+const BACKUP_RESTORE_MAX_BYTES = 64 * 1024 * 1024;
 
 if (!app.isPackaged) app.setPath("userData", DEV_USER_DATA_DIR);
 if (!existsSync(app.getPath("userData"))) {
@@ -264,7 +264,9 @@ function registerIpc(): void {
     });
     const filePath = selected.filePaths[0];
     if (selected.canceled || !filePath) return { cancelled: true };
-    const fileSize = statSync(filePath).size;
+    // P2-5：使用异步文件读取，避免冻结主进程。
+    const fileStat = await stat(filePath);
+    const fileSize = fileStat.size;
     if (fileSize > BACKUP_RESTORE_MAX_BYTES) {
       await dialog.showMessageBox({
         type: "error",
@@ -276,7 +278,7 @@ function registerIpc(): void {
       });
       return { cancelled: true };
     }
-    const payload = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+    const fileContent = await readFile(filePath, "utf8");
     const confirmation = await dialog.showMessageBox({
       type: "warning",
       title: "确认恢复",
@@ -291,17 +293,38 @@ function registerIpc(): void {
       app.getPath("userData"),
       `pre-restore-${timestamp()}.json`,
     );
-    writeFileSync(
+    // P2-5：安全备份使用异步写入。
+    await writeFile(
       safetyBackupPath,
       JSON.stringify(database.exportBackup(), null, 2),
       "utf8",
     );
+    // P2-5：JSON 解析和领域校验在 worker 线程完成，避免冻结主进程。
     // 领域完整性校验在 storage 层之外完成，避免 storage→domain 反向依赖。
     // 校验失败时不会进入 restoreBackup，现有数据不被触碰。
-    const backup = validateBackup(
-      payload,
-      database.getSchemaVersion(),
-      database.getSchemaFingerprint(),
+    const schemaVersion = database.getSchemaVersion();
+    const schemaFingerprint = database.getSchemaFingerprint();
+    const backup = await new Promise<ValidatedBackupPayload>(
+      (resolvePromise, rejectPromise) => {
+        const worker = new Worker(
+          join(__dirname, "backupRestoreWorker.js"),
+          {
+            workerData: { fileContent, schemaVersion, schemaFingerprint },
+          },
+        );
+        worker.on("message", (message: { success: boolean; data?: ValidatedBackupPayload; error?: string }) => {
+          if (message.success && message.data) {
+            resolvePromise(message.data);
+          } else {
+            rejectPromise(new Error(message.error ?? "备份校验失败"));
+          }
+          worker.terminate().catch(() => {});
+        });
+        worker.on("error", (error) => {
+          rejectPromise(error);
+          worker.terminate().catch(() => {});
+        });
+      },
     );
     database.restoreBackup(backup);
     database.log("info", "已从 JSON 备份恢复");

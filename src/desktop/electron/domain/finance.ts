@@ -53,24 +53,26 @@ export function xirr(
 
 interface DrawdownProfile {
   maxDrawdown: number;
-  maxDrawdownPeakDate: string;
-  maxDrawdownTroughDate: string;
+  maxDrawdownPeakDate: string | null;
+  maxDrawdownTroughDate: string | null;
   longestDrawdownMonths: number;
-  longestDrawdownStart: string;
-  longestDrawdownEnd: string;
+  longestDrawdownStart: string | null;
+  longestDrawdownEnd: string | null;
   longestDrawdownRecovered: boolean;
 }
 
 export function drawdownProfile(
   points: Array<{ date: string; value: number }>,
 ): DrawdownProfile {
+  // 无回撤场景：单交易日、净值单调上涨、净值始终未跌破前高。
+  // 字段统一使用 null 表达“无此日期”，避免空字符串带来的语义歧义。
   const emptyProfile: DrawdownProfile = {
     maxDrawdown: 0,
-    maxDrawdownPeakDate: "",
-    maxDrawdownTroughDate: "",
+    maxDrawdownPeakDate: null,
+    maxDrawdownTroughDate: null,
     longestDrawdownMonths: 0,
-    longestDrawdownStart: "",
-    longestDrawdownEnd: "",
+    longestDrawdownStart: null,
+    longestDrawdownEnd: null,
     longestDrawdownRecovered: true,
   };
   if (!points.length) {
@@ -140,11 +142,11 @@ export function drawdownProfile(
 
   const longestDrawdownStart =
     longestDrawdownStartIndex === null
-      ? ""
+      ? null
       : points[longestDrawdownStartIndex].date;
   const longestDrawdownEnd =
     longestDrawdownEndIndex === null
-      ? ""
+      ? null
       : points[longestDrawdownEndIndex].date;
   return {
     maxDrawdown,

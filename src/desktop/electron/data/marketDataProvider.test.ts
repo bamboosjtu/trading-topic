@@ -273,10 +273,6 @@ describe("腾讯主源与新浪整段兜底", () => {
       requestedThrough: "2026-07-29",
       dataCutoff: "2026-07-28",
       tailStatus: "incomplete",
-      issues: expect.arrayContaining([
-        expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
-        "新浪在请求区间返回空数据",
-      ]),
       provenance: {
         source: "tencent",
         primarySource: "tencent",
@@ -286,6 +282,20 @@ describe("腾讯主源与新浪整段兜底", () => {
         adjustment: "none",
       },
     });
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "gap",
+          severity: "warning",
+          message: expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
+        }),
+        expect.objectContaining({
+          type: "gap",
+          severity: "warning",
+          message: "新浪在请求区间返回空数据",
+        }),
+      ]),
+    );
   });
 
   it("新浪非空结果也校验尾部，两源均不完整时选择较新的截止日", async () => {
@@ -318,8 +328,16 @@ describe("腾讯主源与新浪整段兜底", () => {
     expect(result.provenance.source).toBe("tencent");
     expect(result.issues).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
-        expect.stringContaining("新浪行情仅更新至 2026-07-27"),
+        expect.objectContaining({
+          type: "gap",
+          severity: "warning",
+          message: expect.stringContaining("腾讯行情仅更新至 2026-07-28"),
+        }),
+        expect.objectContaining({
+          type: "gap",
+          severity: "warning",
+          message: expect.stringContaining("新浪行情仅更新至 2026-07-27"),
+        }),
       ]),
     );
   });

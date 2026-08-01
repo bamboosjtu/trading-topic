@@ -33,6 +33,19 @@ export type MarketTailStatus =
   | "confirmed_non_trading"
   | "incomplete";
 
+/**
+ * 行情数据行级或区间级问题。severity 决定是否阻断严格回测：
+ * - `error`：请求范围内存在该级别问题时必须停止回测；
+ * - `warning`：可降级使用，但必须写入结果 warnings。
+ */
+export interface MarketDataIssue {
+  /** 问题涉及的交易日；无法确定时省略。 */
+  date?: string;
+  type: "invalid_ohlcv" | "invalid_date" | "duplicate" | "gap";
+  severity: "warning" | "error";
+  message: string;
+}
+
 export interface MarketFetchResult<
   T,
   P extends MarketDataProvenance = MarketDataProvenance,
@@ -41,7 +54,7 @@ export interface MarketFetchResult<
   requestedThrough: string;
   dataCutoff: string | null;
   tailStatus: MarketTailStatus;
-  issues: string[];
+  issues: MarketDataIssue[];
   provenance: P;
 }
 
@@ -155,14 +168,28 @@ export interface BacktestMetrics {
   totalPnl: number;
   xirr: number | null;
   maxDrawdown: number;
-  /** 最大回撤幅度对应的历史峰值日期。 */
-  maxDrawdownPeakDate: string;
-  /** 最大回撤幅度对应的历史谷值日期。 */
-  maxDrawdownTroughDate: string;
+  /**
+   * 最大回撤幅度对应的历史峰值日期。
+   * 仅在 maxDrawdown < 0 时有值；无回撤时为 null。
+   */
+  maxDrawdownPeakDate: string | null;
+  /**
+   * 最大回撤幅度对应的历史谷值日期。
+   * 仅在 maxDrawdown < 0 时有值；无回撤时为 null。
+   */
+  maxDrawdownTroughDate: string | null;
   /** 全部回撤周期中持续时间最长的一次，按自然日折算为月。 */
   longestDrawdownMonths: number;
-  longestDrawdownStart: string;
-  longestDrawdownEnd: string;
+  /**
+   * 最长回撤周期的起始日期。
+   * 仅在发生过回撤时有值；无回撤时为 null。
+   */
+  longestDrawdownStart: string | null;
+  /**
+   * 最长回撤周期的结束日期。
+   * 仅在发生过回撤时有值；无回撤时为 null。
+   */
+  longestDrawdownEnd: string | null;
   /** 最长回撤周期是否已重新达到其起始峰值。 */
   longestDrawdownRecovered: boolean;
   totalDividend: number;
@@ -620,11 +647,10 @@ export interface StoredMarketPrice {
   fetchedAt: string;
   dataCutoff: string;
   adjustment: "none" | "qfq";
-  requestedFrom?: string;
-  requestedThrough?: string;
 }
 
 export interface StoredMarketCoverage {
+  coverageId: number;
   symbol: string;
   requestedFrom: string;
   requestedThrough: string;
@@ -669,10 +695,10 @@ export interface BackupPayload {
     fetched_at: string;
     data_cutoff: string;
     adjustment: "none" | "qfq";
-    requested_from: string;
-    requested_through: string;
+    coverage_id: number;
   }>;
   liveMarketCoverage: Array<{
+    coverage_id: number;
     symbol: string;
     requested_from: string;
     requested_through: string;

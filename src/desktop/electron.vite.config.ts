@@ -10,7 +10,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: { main: resolve(__dirname, "electron/main.ts") },
+        input: {
+          main: resolve(__dirname, "electron/main.ts"),
+          backupRestoreWorker: resolve(
+            __dirname,
+            "electron/backupRestoreWorker.ts",
+          ),
+        },
       },
     },
   },

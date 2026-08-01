@@ -8,6 +8,7 @@ import type {
   LedgerEntry,
   LedgerEntryInput,
   LedgerImpactPreview,
+  MarketDataIssue,
   SimpleBacktestResult,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
@@ -87,6 +88,31 @@ function isCompleteAStockUniverse(stocks: readonly StockInfo[]): boolean {
 }
 
 /**
+ * 将结构化问题列表格式化为可读字符串，供实盘行情 issues 和日志使用。
+ */
+function formatMarketIssues(issues: readonly MarketDataIssue[]): string[] {
+  return issues.map((issue) =>
+    issue.date ? `${issue.date} ${issue.message}` : issue.message,
+  );
+}
+
+/**
+ * P1-1：判断 error 级别问题是否落在请求区间内。
+ * 无日期的 error 视为影响整个区间（保守阻断）。
+ */
+function hasErrorInRequestRange(
+  issues: readonly MarketDataIssue[],
+  startDate: string,
+  endDate: string,
+): boolean {
+  return issues.some((issue) => {
+    if (issue.severity !== "error") return false;
+    if (!issue.date) return true;
+    return issue.date >= startDate && issue.date <= endDate;
+  });
+}
+
+/**
  * 单个回测标的的市场数据集合：行情、分红、K 线图数据及其来源。
  * 由 `fetchBacktestMarketData` 收集，供 `computeBacktestResults` 与
  * `persistBacktestExperiment` 复用。
@@ -100,6 +126,8 @@ interface BacktestMarketDataBundle {
   chartProvenance: Awaited<
     ReturnType<typeof fetchMarketAdjustedBars>
   >["provenance"];
+  /** 前复权 K 线的问题列表；errors 不阻断回测但写入 warnings。 */
+  chartIssues: MarketDataIssue[];
 }
 
 function isCompleteEtfUniverse(stocks: readonly StockInfo[]): boolean {
@@ -386,12 +414,29 @@ export class AppService {
       ]);
       if (prices.tailStatus === "incomplete") {
         throw new Error(
-          `${symbol} 严格回测行情尾部不完整：${prices.issues.join("；") || `仅更新至 ${prices.dataCutoff ?? "未知日期"}`}`,
+          `${symbol} 严格回测行情尾部不完整：${formatMarketIssues(prices.issues).join("；") || `仅更新至 ${prices.dataCutoff ?? "未知日期"}`}`,
+        );
+      }
+      // P1-1：不复权价格用于严格回测，请求范围内存在 error 级别问题必须停止。
+      if (
+        hasErrorInRequestRange(
+          prices.issues,
+          canonicalRequest.startDate,
+          canonicalRequest.endDate,
+        )
+      ) {
+        const errors = formatMarketIssues(
+          prices.issues.filter(
+            (issue) => issue.severity === "error",
+          ),
+        ).join("；");
+        throw new Error(
+          `${symbol} 严格回测行情存在数据质量问题，拒绝继续：${errors}`,
         );
       }
       if (adjustedBars.tailStatus === "incomplete") {
         throw new Error(
-          `${symbol} 严格回测 K 线尾部不完整：${adjustedBars.issues.join("；") || `仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}`}`,
+          `${symbol} 严格回测 K 线尾部不完整：${formatMarketIssues(adjustedBars.issues).join("；") || `仅更新至 ${adjustedBars.dataCutoff ?? "未知日期"}`}`,
         );
       }
       // 东财属于补充源，严格串行；多标的之间留出节流窗口。
@@ -412,6 +457,7 @@ export class AppService {
         dividends,
         chartData: { status: "ready", data: adjustedBars.rows },
         chartProvenance: adjustedBars.provenance,
+        chartIssues: adjustedBars.issues,
       });
     }
     return marketData;
@@ -446,7 +492,7 @@ export class AppService {
           : canonicalRequest.endDate,
     };
     const results: BacktestResult[] = [];
-    for (const { symbol, prices, dividends, chartData, chartProvenance } of marketData) {
+    for (const { symbol, prices, dividends, chartData, chartProvenance, chartIssues } of marketData) {
       // 在每个标的的同步回测计算之前让出事件循环，避免多标的串行计算
       // 长时间阻塞主进程 IPC 队列。
       await new Promise((resolve) => setImmediate(resolve));
@@ -507,6 +553,12 @@ export class AppService {
               ),
             }
           : chartData;
+      // P1-1：前复权 K 线问题不阻断回测，但必须写入 warnings 以便审计。
+      for (const issue of chartIssues) {
+        result.warnings.push(
+          `前复权 K 线${issue.severity === "error" ? "数据质量" : "完整性"}问题：${issue.message}`,
+        );
+      }
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -692,7 +744,7 @@ export class AppService {
         if (response.tailStatus === "incomplete") {
           issues.push(
             `${range.symbol} ${range.startDate}..${range.endDate} 行情尾部不完整：${
-              response.issues.join("；") ||
+              formatMarketIssues(response.issues).join("；") ||
               `仅更新至 ${response.dataCutoff ?? "暂无可用日期"}`
             }`,
           );
@@ -749,6 +801,7 @@ export class AppService {
     const missing = this.missingLivePriceRanges(requested);
     const snapshots: MarketDataCacheEntry[] = [];
     const fetchIssues: string[] = [];
+    let hasDataQualityError = false;
     for (const range of missing) {
       const response = await fetchMarketPrices(
         range.symbol,
@@ -766,9 +819,19 @@ export class AppService {
       if (response.tailStatus === "incomplete") {
         fetchIssues.push(
           `${range.symbol} 行情尾部不完整：${
-            response.issues.join("；") ||
+            formatMarketIssues(response.issues).join("；") ||
             `仅更新至 ${response.dataCutoff ?? "暂无可用日期"}`
           }`,
+        );
+      }
+      // P1-1：error 级别问题即使尾部完整也标记数据质量降级。
+      const errorIssues = response.issues.filter(
+        (issue) => issue.severity === "error",
+      );
+      if (errorIssues.length) {
+        hasDataQualityError = true;
+        fetchIssues.push(
+          `${range.symbol} 行情数据质量问题：${formatMarketIssues(errorIssues).join("；")}`,
         );
       }
     }
@@ -802,7 +865,9 @@ export class AppService {
       ...fetchIssues,
       ...(refreshIssue ? [refreshIssue] : []),
     ];
-    const resultOverview = refreshIssue
+    // P1-1：尾部完整但存在 error 级别数据质量问题时，仍需标记 partial。
+    const needsPartial = Boolean(refreshIssue) || hasDataQualityError;
+    const resultOverview = needsPartial
       ? {
           ...overview,
           quality: {
@@ -813,10 +878,10 @@ export class AppService {
         }
       : overview;
     this.database.log(
-      tailComplete ? "info" : "warn",
-      tailComplete
+      tailComplete && !hasDataQualityError ? "info" : "warn",
+      tailComplete && !hasDataQualityError
         ? `已刷新实盘行情：${symbols.length} 个标的，${startDate}..${endDate}`
-        : refreshIssue!,
+        : refreshIssue ?? "实盘行情存在数据质量问题",
     );
     return {
       overview: resultOverview,

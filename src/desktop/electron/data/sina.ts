@@ -1,5 +1,6 @@
 import type {
   AdjustedBar,
+  MarketDataIssue,
   PricePoint,
 } from "../../shared/contracts";
 import { marketSymbol } from "./tencent";
@@ -41,7 +42,7 @@ interface SinaFactorPayload {
 
 const historyCache = new Map<
   string,
-  Promise<{ rows: NormalizedSinaBar[]; dropped: number }>
+  Promise<{ rows: NormalizedSinaBar[]; droppedDates: string[] }>
 >();
 const qfqFactorCache = new Map<string, Promise<Array<[string, number]>>>();
 let sinaRequestQueue: Promise<void> = Promise.resolve();
@@ -96,18 +97,37 @@ function normalizeDecodedBar(row: DecodedSinaBar): NormalizedSinaBar | null {
   return { date, open, high, low, close, volume };
 }
 
-/** 将解码行 map+filter 为 NormalizedSinaBar[]，同时统计丢弃数。 */
+/** 将解码行 map+filter 为 NormalizedSinaBar[]，同时记录被丢弃行的日期。 */
 function normalizeAndFilter(
   decoded: readonly DecodedSinaBar[],
-): { rows: NormalizedSinaBar[]; dropped: number } {
-  const normalized = decoded.map(normalizeDecodedBar);
-  const dropped = normalized.filter((row) => row === null).length;
+): { rows: NormalizedSinaBar[]; droppedDates: string[] } {
+  const droppedDates: string[] = [];
+  const rows: NormalizedSinaBar[] = [];
+  for (const raw of decoded) {
+    const normalized = normalizeDecodedBar(raw);
+    if (normalized === null) {
+      // 保留可解析的日期，便于调用方判断丢弃是否落在请求区间。
+      const date = normalizedDate(raw.date);
+      if (date) droppedDates.push(date);
+    } else {
+      rows.push(normalized);
+    }
+  }
   return {
-    rows: normalized
-      .filter((row): row is NormalizedSinaBar => row !== null)
-      .sort((left, right) => left.date.localeCompare(right.date)),
-    dropped,
+    rows: rows.sort((left, right) => left.date.localeCompare(right.date)),
+    droppedDates,
   };
+}
+
+/** 将丢弃日期列表转为结构化 error 级别问题。 */
+function droppedDateIssues(droppedDates: readonly string[]): MarketDataIssue[] {
+  if (!droppedDates.length) return [];
+  return droppedDates.map((date) => ({
+    date,
+    type: "invalid_ohlcv" as const,
+    severity: "error" as const,
+    message: `新浪丢弃了 ${date} 的非法 OHLCV 数据`,
+  }));
 }
 
 async function executeTextRequest(
@@ -149,7 +169,7 @@ function fetchText(url: string, label: string): Promise<string> {
 
 function parseRecentKlinePayload(payload: unknown): {
   rows: NormalizedSinaBar[];
-  dropped: number;
+  droppedDates: string[];
 } {
   if (!payload || typeof payload !== "object") {
     throw new Error("新浪短日线响应不是对象");
@@ -172,7 +192,7 @@ function parseRecentKlinePayload(payload: unknown): {
     );
   }
   const data = resultObject["data"];
-  if (data === null) return { rows: [], dropped: 0 };
+  if (data === null) return { rows: [], droppedDates: [] };
   if (!Array.isArray(data)) {
     throw new Error("新浪短日线响应缺少 result.data");
   }
@@ -198,9 +218,9 @@ async function recentKline(
   startDate: string,
   endDate: string,
   adjustment: "none" | "qfq",
-): Promise<{ rows: NormalizedSinaBar[]; dropped: number }> {
+): Promise<{ rows: NormalizedSinaBar[]; droppedDates: string[] }> {
   let rows: NormalizedSinaBar[] = [];
-  let totalDropped = 0;
+  let droppedDates: string[] = [];
   let effectiveLimit = SINA_RECENT_LIMIT;
   const emptyResponses: string[] = [];
   for (const limit of [SINA_RECENT_LIMIT, 1_023, 1_023]) {
@@ -219,7 +239,7 @@ async function recentKline(
     }
     const parsed = parseRecentKlinePayload(payload);
     rows = parsed.rows;
-    totalDropped = parsed.dropped;
+    droppedDates = parsed.droppedDates;
     if (!rows.length) {
       const result =
         payload && typeof payload === "object"
@@ -245,7 +265,7 @@ async function recentKline(
       `${symbol} 新浪短日线只能覆盖至 ${rows[0]!.date}，无法完整兜底请求区间`,
     );
   }
-  return { rows: inRequestedRange(rows, startDate, endDate), dropped: totalDropped };
+  return { rows: inRequestedRange(rows, startDate, endDate), droppedDates };
 }
 
 export function extractSinaKlcPayload(text: string): string {
@@ -304,7 +324,7 @@ export function parseSinaFactorPayload(
 
 async function fullHistory(
   symbol: string,
-): Promise<{ rows: NormalizedSinaBar[]; dropped: number }> {
+): Promise<{ rows: NormalizedSinaBar[]; droppedDates: string[] }> {
   const marketCode = marketSymbol(symbol);
   let pending = historyCache.get(marketCode);
   if (!pending) {
@@ -314,11 +334,11 @@ async function fullHistory(
         "新浪全量日线",
       );
       const decoded = decodeSinaKlc(extractSinaKlcPayload(text));
-      const { rows, dropped } = normalizeAndFilter(decoded);
+      const { rows, droppedDates } = normalizeAndFilter(decoded);
       if (!rows.length) {
         throw new Error(`${symbol} 新浪全量日线为空或无法解码`);
       }
-      return { rows, dropped };
+      return { rows, droppedDates };
     })();
     historyCache.set(marketCode, pending);
     pending.catch(() => historyCache.delete(marketCode));
@@ -374,29 +394,29 @@ export async function fetchSinaUnadjustedPrices(
   endDate: string,
 ): Promise<ProviderFetchResult<PricePoint>> {
   if (canUseRecentEndpoint(startDate, endDate)) {
-    const { rows, dropped } = await recentKline(symbol, startDate, endDate, "none");
+    const { rows, droppedDates } = await recentKline(symbol, startDate, endDate, "none");
     return {
       rows: rows.map(({ date, close }) => ({ date, close })),
-      issues: dropped > 0 ? [`新浪丢弃了 ${dropped} 行非法 OHLCV 数据`] : [],
+      issues: droppedDateIssues(droppedDates),
     };
   }
   let rows: NormalizedSinaBar[];
-  let dropped = 0;
+  let droppedDates: string[];
   try {
     const full = await fullHistory(symbol);
     rows = inRequestedRange(full.rows, startDate, endDate);
-    dropped = full.dropped;
+    droppedDates = full.droppedDates;
   } catch (error) {
     if (!(error instanceof HttpStatusError) || error.status !== 404) {
       throw error;
     }
     const recent = await recentKline(symbol, startDate, endDate, "none");
     rows = recent.rows;
-    dropped = recent.dropped;
+    droppedDates = recent.droppedDates;
   }
   return {
     rows: rows.map(({ date, close }) => ({ date, close })),
-    issues: dropped > 0 ? [`新浪丢弃了 ${dropped} 行非法 OHLCV 数据`] : [],
+    issues: droppedDateIssues(droppedDates),
   };
 }
 
@@ -406,22 +426,22 @@ export async function fetchSinaAdjustedBars(
   endDate: string,
 ): Promise<ProviderFetchResult<AdjustedBar>> {
   if (canUseRecentEndpoint(startDate, endDate)) {
-    const { rows, dropped } = await recentKline(symbol, startDate, endDate, "qfq");
+    const { rows, droppedDates } = await recentKline(symbol, startDate, endDate, "qfq");
     return {
       rows: rows.map((row) => ({ ...row, adjustment: "qfq" })),
-      issues: dropped > 0 ? [`新浪丢弃了 ${dropped} 行非法 OHLCV 数据`] : [],
+      issues: droppedDateIssues(droppedDates),
     };
   }
   let history: NormalizedSinaBar[];
   let factors: Array<[string, number]>;
-  let dropped = 0;
+  let droppedDates: string[];
   try {
     const [full, factorData] = await Promise.all([
       fullHistory(symbol),
       qfqFactors(symbol),
     ]);
     history = full.rows;
-    dropped = full.dropped;
+    droppedDates = full.droppedDates;
     factors = factorData;
   } catch (error) {
     if (!(error instanceof HttpStatusError) || error.status !== 404) {
@@ -430,7 +450,7 @@ export async function fetchSinaAdjustedBars(
     const recent = await recentKline(symbol, startDate, endDate, "qfq");
     return {
       rows: recent.rows.map((row) => ({ ...row, adjustment: "qfq" })),
-      issues: recent.dropped > 0 ? [`新浪丢弃了 ${recent.dropped} 行非法 OHLCV 数据`] : [],
+      issues: droppedDateIssues(recent.droppedDates),
     };
   }
   let factorIndex = 0;
@@ -458,6 +478,6 @@ export async function fetchSinaAdjustedBars(
       ...row,
       adjustment: "qfq",
     })),
-    issues: dropped > 0 ? [`新浪丢弃了 ${dropped} 行非法 OHLCV 数据`] : [],
+    issues: droppedDateIssues(droppedDates),
   };
 }

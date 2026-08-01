@@ -165,7 +165,7 @@ describe("LocalDatabase", () => {
     expect(database.listLedger()).toEqual([]);
   });
 
-  it("导出并恢复当前 Schema 2 的不可变回测试验、投资事实与行情来源", async () => {
+  it("导出并恢复当前 Schema 1 的不可变回测试验、投资事实与行情来源", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-r1-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -205,8 +205,8 @@ describe("LocalDatabase", () => {
     ]);
 
     const backup = database.exportBackup();
-    expect(backup.schemaVersion).toBe(2);
-    expect(backup.schemaFingerprint).toContain("valuation-boundary-v3");
+    expect(backup.schemaVersion).toBe(1);
+    expect(backup.schemaFingerprint).toContain("coverage-split-v1");
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -238,6 +238,316 @@ describe("LocalDatabase", () => {
       requestedThrough: "2026-07-24",
       resultStatus: "data",
     });
+  });
+
+  /**
+   * P1-2 验收：无回撤的合法回测备份必须能成功往返。
+   * 覆盖四种场景：单交易日、单调上涨、有回撤且已恢复、有回撤且截至期末未恢复。
+   * 每个场景执行 exportBackup → validateBackup → restoreBackup 后结果完全一致。
+   */
+  it("P1-2 回撤指标条件校验下的备份往返覆盖四种回撤场景", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-drawdown-roundtrip-"),
+    );
+    temporaryDirectories.push(directory);
+
+    /**
+     * 构造一个 BacktestResult，允许覆盖 metrics 字段和日期区间。
+     * 单交易日场景 actualStartDate === actualEndDate，价格序列仅一行。
+     */
+    const buildResult = (
+      experimentId: string,
+      id: string,
+      overrides: {
+        actualStartDate: string;
+        actualEndDate: string;
+        metrics: BacktestResult["metrics"];
+      },
+    ): BacktestResult => ({
+      id,
+      experimentId,
+      symbol: "601398",
+      name: "工商银行",
+      requestedStartDate: "2024-01-01",
+      requestedEndDate: "2024-04-01",
+      actualStartDate: overrides.actualStartDate,
+      actualEndDate: overrides.actualEndDate,
+      monthlyAmount: 3000,
+      buyDay: 1,
+      rangeYears: 3,
+      dividendTiming: "ex_date",
+      strategyKey: `601398|3|3000|1|ex_date|${BACKTEST_CALIBER_VERSION}`,
+      metrics: overrides.metrics,
+      transactions: [],
+      equityCurve: [],
+      priceSeries: [
+        {
+          date: overrides.actualStartDate,
+          close: 5,
+        },
+        ...(overrides.actualStartDate !== overrides.actualEndDate
+          ? [{ date: overrides.actualEndDate, close: 5.1 }]
+          : []),
+      ],
+      chartData: { status: "unavailable", reason: "test" },
+      warnings: [],
+      provenance: [
+        {
+          source: "test",
+          fetchedAt: "2024-04-01T00:00:00Z",
+          dataCutoff: overrides.actualEndDate,
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      ],
+      createdAt: "2024-04-01T00:00:00Z",
+    });
+
+    /** 无回撤场景的统一 metrics */
+    const noDrawdownMetrics: BacktestResult["metrics"] = {
+      totalContribution: 3000,
+      endingAsset: 3100,
+      totalPnl: 100,
+      xirr: 0.05,
+      maxDrawdown: 0,
+      maxDrawdownPeakDate: null,
+      maxDrawdownTroughDate: null,
+      longestDrawdownMonths: 0,
+      longestDrawdownStart: null,
+      longestDrawdownEnd: null,
+      longestDrawdownRecovered: true,
+      totalDividend: 0,
+      endingCash: 0,
+    };
+
+    /** 有回撤且已恢复的 metrics */
+    const recoveredDrawdownMetrics: BacktestResult["metrics"] = {
+      totalContribution: 9000,
+      endingAsset: 9500,
+      totalPnl: 500,
+      xirr: 0.08,
+      maxDrawdown: -0.15,
+      maxDrawdownPeakDate: "2024-01-15",
+      maxDrawdownTroughDate: "2024-02-15",
+      longestDrawdownMonths: 2,
+      longestDrawdownStart: "2024-01-15",
+      longestDrawdownEnd: "2024-03-15",
+      longestDrawdownRecovered: true,
+      totalDividend: 0,
+      endingCash: 0,
+    };
+
+    /** 有回撤且截至期末未恢复的 metrics */
+    const unrecoveredDrawdownMetrics: BacktestResult["metrics"] = {
+      totalContribution: 9000,
+      endingAsset: 8500,
+      totalPnl: -500,
+      xirr: -0.06,
+      maxDrawdown: -0.2,
+      maxDrawdownPeakDate: "2024-01-15",
+      maxDrawdownTroughDate: "2024-03-15",
+      longestDrawdownMonths: 3,
+      longestDrawdownStart: "2024-01-15",
+      longestDrawdownEnd: "2024-04-01",
+      longestDrawdownRecovered: false,
+      totalDividend: 0,
+      endingCash: 0,
+    };
+
+    const scenarios: Array<{
+      label: string;
+      experimentId: string;
+      resultId: string;
+      actualStartDate: string;
+      actualEndDate: string;
+      metrics: BacktestResult["metrics"];
+    }> = [
+      {
+        label: "单交易日回测无回撤",
+        experimentId: "exp-single-day",
+        resultId: "exp-single-day-result",
+        actualStartDate: "2024-01-15",
+        actualEndDate: "2024-01-15",
+        metrics: noDrawdownMetrics,
+      },
+      {
+        label: "单调上涨回测无回撤",
+        experimentId: "exp-monotonic",
+        resultId: "exp-monotonic-result",
+        actualStartDate: "2024-01-01",
+        actualEndDate: "2024-03-01",
+        metrics: noDrawdownMetrics,
+      },
+      {
+        label: "有回撤且已恢复",
+        experimentId: "exp-recovered",
+        resultId: "exp-recovered-result",
+        actualStartDate: "2024-01-01",
+        actualEndDate: "2024-03-15",
+        metrics: recoveredDrawdownMetrics,
+      },
+      {
+        label: "有回撤且截至期末未恢复",
+        experimentId: "exp-unrecovered",
+        resultId: "exp-unrecovered-result",
+        actualStartDate: "2024-01-01",
+        actualEndDate: "2024-04-01",
+        metrics: unrecoveredDrawdownMetrics,
+      },
+    ];
+
+    const sourceDatabase = await openDatabase(
+      join(directory, "source.sqlite"),
+    );
+    const experiments: BacktestExperiment[] = scenarios.map((scenario) => ({
+      experimentId: scenario.experimentId,
+      createdAt: "2024-04-01T00:00:00Z",
+      request: {
+        symbols: ["601398"],
+        startDate: "2024-01-01",
+        endDate: "2024-04-01",
+        monthlyAmount: 3000,
+        buyDay: 1,
+        rangeYears: 3,
+        dividendTiming: "ex_date",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+      dataCutoff: scenario.actualEndDate,
+      caliberVersion: BACKTEST_CALIBER_VERSION,
+      status: "completed",
+      results: [
+        buildResult(
+          scenario.experimentId,
+          scenario.resultId,
+          {
+            actualStartDate: scenario.actualStartDate,
+            actualEndDate: scenario.actualEndDate,
+            metrics: scenario.metrics,
+          },
+        ),
+      ],
+    }));
+
+    for (const experiment of experiments) {
+      sourceDatabase.saveBacktestExperimentWithMarketData(experiment, []);
+    }
+
+    const backup = sourceDatabase.exportBackup();
+    expect(backup.backtestExperiments).toHaveLength(scenarios.length);
+
+    // 校验后恢复到全新数据库
+    const restored = await openDatabase(join(directory, "restored.sqlite"));
+    const validated = validateBackup(
+      backup,
+      restored.getSchemaVersion(),
+      restored.getSchemaFingerprint(),
+    );
+    restored.restoreBackup(validated);
+
+    // 逐场景断言：metrics 字段完全一致
+    for (const scenario of scenarios) {
+      const restoredExperiment = restored.getBacktestExperiment(
+        scenario.experimentId,
+      );
+      expect(restoredExperiment).toBeDefined();
+      const restoredResult = restoredExperiment?.results[0];
+      expect(restoredResult).toBeDefined();
+      expect(restoredResult?.id).toBe(scenario.resultId);
+      expect(restoredResult?.metrics).toEqual(scenario.metrics);
+    }
+
+    // 反向校验：把单交易日场景的 maxDrawdown 改为 0 但保留峰谷日期，必须被校验拒绝。
+    const tamperedNoDrawdown = structuredClone(backup);
+    const singleDayExperiment = tamperedNoDrawdown.backtestExperiments.find(
+      (item) => item.experimentId === "exp-single-day",
+    );
+    expect(singleDayExperiment).toBeDefined();
+    singleDayExperiment!.results[0].metrics.maxDrawdownPeakDate = "2024-01-15";
+    expect(() =>
+      validateBackup(
+        tamperedNoDrawdown,
+        restored.getSchemaVersion(),
+        restored.getSchemaFingerprint(),
+      ),
+    ).toThrow("备份回测无回撤但保留了峰谷日期");
+
+    // 反向校验：把已恢复回撤场景的峰谷日期置为 null，必须被校验拒绝。
+    const tamperedWithDrawdown = structuredClone(backup);
+    const recoveredExperiment = tamperedWithDrawdown.backtestExperiments.find(
+      (item) => item.experimentId === "exp-recovered",
+    );
+    expect(recoveredExperiment).toBeDefined();
+    recoveredExperiment!.results[0].metrics.maxDrawdownPeakDate = null;
+    expect(() =>
+      validateBackup(
+        tamperedWithDrawdown,
+        restored.getSchemaVersion(),
+        restored.getSchemaFingerprint(),
+      ),
+    ).toThrow("备份回测存在回撤但缺少峰谷日期");
+
+    // 反向校验：把未恢复场景的 longestDrawdownStart 置为 null，
+    // 而 longestDrawdownEnd 保留，必须被校验拒绝（必须同时为空或同时非空）。
+    const tamperedMismatched = structuredClone(backup);
+    const unrecoveredExperiment = tamperedMismatched.backtestExperiments.find(
+      (item) => item.experimentId === "exp-unrecovered",
+    );
+    expect(unrecoveredExperiment).toBeDefined();
+    unrecoveredExperiment!.results[0].metrics.longestDrawdownStart = null;
+    expect(() =>
+      validateBackup(
+        tamperedMismatched,
+        restored.getSchemaVersion(),
+        restored.getSchemaFingerprint(),
+      ),
+    ).toThrow("备份回测最长回撤起止日期必须同时为空或同时非空");
+  });
+
+  /**
+   * P2-3 验收：备份校验必须验证核心财务恒等式，拒绝手工修改但结构合法的备份。
+   */
+  it("P2-3 备份校验拒绝违反财务恒等式的手工修改", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-finance-invariants-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    database.saveBacktestExperimentWithMarketData(
+      experiment("experiment-finance", "2026-07-24T09:30:00Z", 150000),
+      [],
+    );
+
+    const restored = await openDatabase(join(directory, "restored.sqlite"));
+    const version = restored.getSchemaVersion();
+    const fingerprint = restored.getSchemaFingerprint();
+    const valid = database.exportBackup();
+
+    // 1. totalPnl ≠ endingAsset - totalContribution
+    const tamperedPnl = structuredClone(valid);
+    tamperedPnl.backtestExperiments[0].results[0].metrics.totalPnl = 999999;
+    expect(() =>
+      validateBackup(tamperedPnl, version, fingerprint),
+    ).toThrow("备份回测财务恒等式不成立");
+
+    // 2. actualEndDate > experiment.dataCutoff（P2-3 dataCutoff 一致性校验）
+    const tamperedCutoff = structuredClone(valid);
+    const exp = tamperedCutoff.backtestExperiments[0];
+    exp.dataCutoff = "2020-01-01";
+    expect(() =>
+      validateBackup(tamperedCutoff, version, fingerprint),
+    ).toThrow("备份回测 actualEndDate(2026-07-24) 晚于试验 dataCutoff(2020-01-01)");
+
+    // 3. actualEndDate ≠ priceSeries 最后日期（需先添加价格序列数据）
+    const tamperedPriceSeries = structuredClone(valid);
+    const resultWithPrices = tamperedPriceSeries.backtestExperiments[0].results[0];
+    resultWithPrices.priceSeries = [
+      { date: "2023-07-24", close: 5 },
+      { date: "2026-07-23", close: 6 },
+    ];
+    // actualEndDate 保持 "2026-07-24"，但 priceSeries 最后日期为 "2026-07-23"
+    expect(() =>
+      validateBackup(tamperedPriceSeries, version, fingerprint),
+    ).toThrow("备份回测 actualEndDate(2026-07-24) 与价格序列截止日(2026-07-23)不一致");
   });
 
   it("合法空行情区间独立持久化并随备份恢复", async () => {
@@ -375,7 +685,7 @@ describe("LocalDatabase", () => {
 
     const oldFingerprint = structuredClone(valid);
     oldFingerprint.schemaFingerprint =
-      "stock-income-r1-schema-2-2026-07-30";
+      "stock-income-r1-schema-1-2026-07-30";
     expect(() => validateBackup(oldFingerprint, version, fingerprint)).toThrow(
       "备份结构或 schema 版本不兼容",
     );
@@ -444,7 +754,7 @@ describe("LocalDatabase", () => {
     );
   });
 
-  it("拒绝打开非 Schema 2 数据库且不修改既有数据", async () => {
+  it("拒绝打开非 Schema 1 数据库且不修改既有数据", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-incompatible-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "legacy.sqlite");
@@ -458,7 +768,7 @@ describe("LocalDatabase", () => {
     const before = readFileSync(filePath);
 
     await expect(openDatabase(filePath)).rejects.toThrow(
-      "仅支持 Schema 2",
+      "仅支持 Schema 1",
     );
     expect(readFileSync(filePath)).toEqual(before);
     expect(existsSync(`${filePath}-wal`)).toBe(false);
@@ -470,7 +780,7 @@ describe("LocalDatabase", () => {
     untouched.close();
   });
 
-  it("拒绝指纹不匹配的 Schema 2 数据库且不修改既有文件", async () => {
+  it("拒绝指纹不匹配的 Schema 1 数据库且不修改既有文件", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-fingerprint-"));
     temporaryDirectories.push(directory);
     const filePath = join(directory, "app.sqlite");
@@ -485,7 +795,7 @@ describe("LocalDatabase", () => {
     const before = readFileSync(filePath);
 
     await expect(openDatabase(filePath)).rejects.toThrow(
-      "Schema 2 指纹不匹配",
+      "Schema 1 指纹不匹配",
     );
     expect(readFileSync(filePath)).toEqual(before);
     const untouched = new BetterSqlite3(filePath, { readonly: true });
@@ -510,7 +820,7 @@ describe("LocalDatabase", () => {
     damaged.close();
 
     await expect(openDatabase(filePath)).rejects.toThrow(
-      "Schema 2 指纹不匹配",
+      "Schema 1 指纹不匹配",
     );
     const untouched = new BetterSqlite3(filePath, { readonly: true });
     expect(

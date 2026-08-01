@@ -207,15 +207,51 @@ function assertBacktestResult(
     assertFiniteRecord(metric[key], `指标 ${key}`);
   }
   assertFiniteRecord(metric.xirr, "指标 xirr", true);
-  for (const key of [
-    "maxDrawdownPeakDate",
-    "maxDrawdownTroughDate",
-    "longestDrawdownStart",
-    "longestDrawdownEnd",
-  ] as const) {
-    if (!validDate(metric[key])) {
-      throw new Error(`备份回测指标日期 ${key} 非法`);
+  // P1-2：回撤日期字段按指标状态进行条件校验。
+  // - maxDrawdown < 0：peakDate、troughDate 必须是合法日期
+  // - maxDrawdown === 0：peakDate、troughDate 必须为 null
+  // - 存在最长回撤阶段：start、end 必须是合法日期
+  // - 不存在回撤阶段：start、end 必须为 null，recovered=true
+  // 非空日期必须为合法日期字符串。此循环保证后续条件分支中非 null 值已是合法日期。
+  for (const value of [
+    metric.maxDrawdownPeakDate,
+    metric.maxDrawdownTroughDate,
+    metric.longestDrawdownStart,
+    metric.longestDrawdownEnd,
+  ]) {
+    if (value !== null && !validDate(value)) {
+      throw new Error("备份回测指标回撤日期非法");
     }
+  }
+  if (metric.maxDrawdown < 0) {
+    if (
+      metric.maxDrawdownPeakDate === null ||
+      metric.maxDrawdownTroughDate === null
+    ) {
+      throw new Error("备份回测存在回撤但缺少峰谷日期");
+    }
+  } else if (metric.maxDrawdown === 0) {
+    if (
+      metric.maxDrawdownPeakDate !== null ||
+      metric.maxDrawdownTroughDate !== null
+    ) {
+      throw new Error("备份回测无回撤但保留了峰谷日期");
+    }
+  } else {
+    // maxDrawdown > 0 视为非法：领域定义中回撤始终 <= 0。
+    throw new Error("备份回测 maxDrawdown 必须为非正数");
+  }
+  // P1-2：longestDrawdownStart 与 longestDrawdownEnd 必须同时为空或同时非空。
+  const hasStart = metric.longestDrawdownStart !== null;
+  const hasEnd = metric.longestDrawdownEnd !== null;
+  if (hasStart !== hasEnd) {
+    throw new Error("备份回测最长回撤起止日期必须同时为空或同时非空");
+  }
+  if (hasStart) {
+    // 非空日期的合法性已由上方循环保证，此处无需再次调用 validDate。
+  } else if (!metric.longestDrawdownRecovered) {
+    // 不存在回撤阶段时，recovered 必须为 true（无回撤即无未恢复状态）。
+    throw new Error("备份回测无回撤阶段但标记为未恢复");
   }
   if (typeof metric.longestDrawdownRecovered !== "boolean") {
     throw new Error("备份回测最长回撤恢复状态非法");
@@ -322,6 +358,33 @@ function assertBacktestResult(
       throw new Error("备份回测来源信息非法");
     }
   }
+  // P2-3：核心财务恒等式校验，防止手工修改但结构合法的备份恢复出矛盾结果。
+  // 1. totalPnl = endingAsset - totalContribution（允许 0.01 舍入误差）
+  const expectedPnl =
+    metric.endingAsset - metric.totalContribution;
+  if (Math.abs(metric.totalPnl - expectedPnl) > 0.01) {
+    throw new Error(
+      `备份回测财务恒等式不成立：totalPnl(${metric.totalPnl}) ≠ endingAsset(${metric.endingAsset}) - totalContribution(${metric.totalContribution})`,
+    );
+  }
+  // 2. actualEndDate 必须等于价格序列最后一个交易日（价格序列非空时）
+  if (result.priceSeries.length) {
+    const lastPriceDate = result.priceSeries[result.priceSeries.length - 1]!.date;
+    if (lastPriceDate !== result.actualEndDate) {
+      throw new Error(
+        `备份回测 actualEndDate(${result.actualEndDate}) 与价格序列截止日(${lastPriceDate})不一致`,
+      );
+    }
+  }
+  // 3. endingAsset 必须等于权益曲线最后一个资产值（权益曲线非空时）
+  if (result.equityCurve.length) {
+    const lastEquity = result.equityCurve[result.equityCurve.length - 1]!;
+    if (Math.abs(lastEquity.asset - metric.endingAsset) > 0.01) {
+      throw new Error(
+        `备份回测 endingAsset(${metric.endingAsset}) 与权益曲线期末资产(${lastEquity.asset})不一致`,
+      );
+    }
+  }
 }
 
 function assertBacktestExperiments(
@@ -349,6 +412,12 @@ function assertBacktestExperiments(
     }
     for (const result of experiment.results) {
       assertBacktestResult(result, experiment);
+      // P2-3：dataCutoff 与回测证据一致——回测实际截止日不能晚于试验数据截止日。
+      if (result.actualEndDate > experiment.dataCutoff) {
+        throw new Error(
+          `备份回测 actualEndDate(${result.actualEndDate}) 晚于试验 dataCutoff(${experiment.dataCutoff})`,
+        );
+      }
       resultIds.push(result.id);
     }
   }
@@ -420,13 +489,7 @@ function assertMarketSnapshots(backup: BackupPayload): void {
       !validDate(row.trade_date) ||
       !positive(row.close) ||
       !validDate(row.data_cutoff) ||
-      !validDate(row.requested_from) ||
-      !validDate(row.requested_through) ||
-      row.requested_from > row.requested_through ||
-      row.trade_date < row.requested_from ||
-      row.trade_date > row.requested_through ||
-      row.trade_date > row.data_cutoff ||
-      row.data_cutoff > row.requested_through
+      row.trade_date > row.data_cutoff
     ) {
       throw new Error("备份包含非法实盘行情快照");
     }
@@ -461,8 +524,7 @@ function assertMarketSnapshots(backup: BackupPayload): void {
     const matching = backup.liveMarketPrices.filter(
       (price) =>
         price.symbol === row.symbol &&
-        price.requested_from === row.requested_from &&
-        price.requested_through === row.requested_through &&
+        price.coverage_id === row.coverage_id &&
         price.adjustment === row.adjustment,
     );
     const actualCutoff =

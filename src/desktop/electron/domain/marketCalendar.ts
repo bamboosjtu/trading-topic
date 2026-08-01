@@ -84,6 +84,36 @@ export function isConfirmedMarketClosureDate(date: string): boolean {
   );
 }
 
+/**
+ * 指定年度是否已有上交所正式公告日历。只有拥有正式日历的年度才能
+ * 逐交易日核对行情完整性；其余年度仅能依靠周末规则和 120 天阈值。
+ */
+export function hasOfficialCalendar(year: number): boolean {
+  return ANNUAL_MARKET_CALENDARS.some(
+    (calendar) => calendar.year === year && calendar.status === "official",
+  );
+}
+
+/**
+ * 列出 `[startDate, endDate]` 内、拥有正式日历年度中应当有行情的交易日。
+ * 不含正式日历的年度返回空数组，调用方不应据此判定完整性。
+ */
+export function expectedTradingDatesInRange(
+  startDate: string,
+  endDate: string,
+): string[] {
+  if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
+    return [];
+  }
+  const result: string[] = [];
+  for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
+    const year = Number(date.slice(0, 4));
+    if (!hasOfficialCalendar(year)) continue;
+    if (!isConfirmedMarketClosureDate(date)) result.push(date);
+  }
+  return result;
+}
+
 export function isConfirmedMarketClosureRange(
   startDate: string,
   endDate: string,
