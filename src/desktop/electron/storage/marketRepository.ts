@@ -103,6 +103,9 @@ function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
       const parsed = JSON.parse(row.issues_json) as unknown;
       if (Array.isArray(parsed)) {
         issues = parsed as StoredMarketCoverage["issues"];
+      } else {
+        // P2-3：合法 JSON 但不是数组也视为损坏。
+        throw new Error("issues_json 不是数组");
       }
     } catch {
       // P2：损坏的 issues_json 不能静默降级为无问题详情。
@@ -117,6 +120,20 @@ function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
         ];
       }
     }
+  }
+  // P2-3：partial 覆盖的 issues 为空数组或不包含 error 级别问题时，
+  // 同样视为损坏，生成通用 error 保持 partial 状态。
+  if (
+    row.result_status === "partial" &&
+    (!issues || !issues.some((issue) => issue.severity === "error"))
+  ) {
+    issues = [
+      {
+        type: "invalid_ohlcv",
+        severity: "error",
+        message: "覆盖问题详情损坏或缺少 error 级别问题",
+      },
+    ];
   }
   return {
     coverageId: row.coverage_id,

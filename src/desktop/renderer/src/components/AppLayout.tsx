@@ -109,6 +109,7 @@ export function AppLayout() {
                         type="button"
                         aria-current={active ? "page" : undefined}
                         className={`nav-item${active ? " active" : ""}`}
+                        title={item.label}
                         onClick={() => navigate(item.key)}
                       >
                         <span className="nav-item-icon">{item.icon}</span>

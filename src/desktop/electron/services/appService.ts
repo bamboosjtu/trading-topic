@@ -233,53 +233,6 @@ function normalizeRanges(
   });
 }
 
-/**
- * P1-3：筛选与查询月份相关的持久化 partial 覆盖问题。
- *
- * 相关性判定：
- * - 覆盖为 partial；
- * - 覆盖请求区间与 [monthStart, monthEnd] 有交集；
- * - issues 中存在 error 级别问题落在交集内。
- *
- * 返回的 issues 用于写入收益日历的 externalIssues，
- * 使重启或离线时收益日历也能反映 partial 质量状态。
- */
-function relevantCoverageIssuesForMonth(
-  coverage: readonly StoredMarketCoverage[],
-  month: string,
-  monthEndDate: string,
-): string[] {
-  if (!coverage.length) return [];
-  const monthStart = `${month}-01`;
-  const issues: string[] = [];
-  for (const item of coverage) {
-    if (item.resultStatus !== "partial") continue;
-    const overlapStart =
-      monthStart > item.requestedFrom ? monthStart : item.requestedFrom;
-    const overlapEnd =
-      monthEndDate < item.requestedThrough
-        ? monthEndDate
-        : item.requestedThrough;
-    if (overlapStart > overlapEnd) continue;
-    const errorIssues = (item.issues ?? []).filter((issue) => {
-      if (issue.severity !== "error") return false;
-      if (!issue.date) return true;
-      return issue.date >= overlapStart && issue.date <= overlapEnd;
-    });
-    if (errorIssues.length) {
-      const detail = errorIssues
-        .map((issue) =>
-          issue.date ? `${issue.date} ${issue.message}` : issue.message,
-        )
-        .join("；");
-      issues.push(
-        `${item.symbol} 行情覆盖 ${item.requestedFrom}..${item.requestedThrough} 存在数据质量问题：${detail}`,
-      );
-    }
-  }
-  return issues;
-}
-
 function incomePriceRanges(
   entries: readonly LedgerEntry[],
   query: IncomeCalendarQuery,
@@ -1167,20 +1120,16 @@ export class AppService {
       monthEnd(query.month),
       currentMarketDate(),
     ].sort()[0];
-    // P1-3：将持久化的 partial 覆盖问题纳入收益日历读模型，
-    // 使重启或离线时收益日历与持仓页质量状态一致。
-    const persistedCoverageIssues = relevantCoverageIssuesForMonth(
-      snapshot.coverage,
-      query.month,
-      requestedMonthEnd,
-    );
+    // P1-2 + P1-3：将持久化覆盖记录整体传入 buildIncomeCalendar，
+    // 由其在 selectedSymbols + 持仓区间 + 月份范围内统一过滤。
     return buildIncomeCalendar(
       snapshot.entries,
       snapshot.prices,
       this.localStockUniverse(),
       query,
-      [...issues, ...persistedCoverageIssues],
+      issues,
       { factAsOfDate, valuationCutoff: actualMonthCutoff },
+      snapshot.coverage,
     );
   }
 

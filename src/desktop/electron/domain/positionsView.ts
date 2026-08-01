@@ -25,12 +25,15 @@ import {
 } from "./dateUtils";
 import {
   canonicalLedgerOrderDescending,
-  currentHoldingStart,
+  holdingIntervals,
   reduceLedger,
   type LedgerPositionState,
 } from "./ledgerReducer";
 import {
+  applyCoverageImpairments,
+  buildCoverageImpairments,
   buildDailyAttribution,
+  coverageIssueStrings,
   rowsBySymbol,
   type DailyAttribution,
 } from "./dailyAttribution";
@@ -350,57 +353,11 @@ function investmentXirr(
 }
 
 /**
- * P1-1：筛选与当前持仓和估值区间相关的 partial 覆盖记录。
+ * P1-3：将持久化覆盖损伤应用到持仓读模型。
  *
- * 相关性判定：
- * - 覆盖 symbol 属于当前持仓；
- * - 覆盖请求区间与持仓区间 [positionStartDate, valuationCutoff] 有交集；
- * - 覆盖为 partial 且 issues 中存在 error 级别问题落在交集内。
- *
- * 返回的 issues 用于写入 quality.issues，使 status 自动降级为 partial。
+ * 复用 dailyAttribution 的 buildCoverageImpairments + applyCoverageImpairments，
+ * 使 partial 覆盖不仅改变质量状态，还使受影响日期的收益指标失效。
  */
-function relevantPartialCoverageIssues(
-  coverage: readonly StoredMarketCoverage[],
-  heldSymbols: readonly string[],
-  positionStartBySymbol: ReadonlyMap<string, string>,
-  valuationCutoff: string | null,
-): string[] {
-  if (!coverage.length || !heldSymbols.length || !valuationCutoff) {
-    return [];
-  }
-  const heldSet = new Set(heldSymbols);
-  const issues: string[] = [];
-  for (const item of coverage) {
-    if (item.resultStatus !== "partial") continue;
-    if (!heldSet.has(item.symbol)) continue;
-    const positionStart = positionStartBySymbol.get(item.symbol);
-    if (!positionStart) continue;
-    // 求持仓区间与覆盖请求区间的交集
-    const overlapStart =
-      positionStart > item.requestedFrom ? positionStart : item.requestedFrom;
-    const overlapEnd =
-      valuationCutoff < item.requestedThrough
-        ? valuationCutoff
-        : item.requestedThrough;
-    if (overlapStart > overlapEnd) continue;
-    const errorIssues = (item.issues ?? []).filter((issue) => {
-      if (issue.severity !== "error") return false;
-      if (!issue.date) return true;
-      return issue.date >= overlapStart && issue.date <= overlapEnd;
-    });
-    if (errorIssues.length) {
-      const detail = errorIssues
-        .map((issue) =>
-          issue.date ? `${issue.date} ${issue.message}` : issue.message,
-        )
-        .join("；");
-      issues.push(
-        `${item.symbol} 行情覆盖 ${item.requestedFrom}..${item.requestedThrough} 存在数据质量问题：${detail}`,
-      );
-    }
-  }
-  return issues;
-}
 
 export function buildPositionsOverview(
   entries: readonly LedgerEntry[],
@@ -423,6 +380,24 @@ export function buildPositionsOverview(
   const currentPositions = [...state.positions.entries()].filter(
     ([, position]) => position.quantity > 1e-8,
   );
+  // P1-3：在 positions map 之前计算覆盖损伤并应用到日度序列，
+  // 使 periodPerformance 和 dayPnl 都能反映 partial 覆盖造成的缺失。
+  const heldSymbolsForImpairment = new Set(
+    currentPositions.map(([symbol]) => symbol),
+  );
+  const impairments = coverage?.length
+    ? buildCoverageImpairments(
+        coverage,
+        heldSymbolsForImpairment,
+        holdingIntervals(entries, model.factAsOfDate),
+        model.effectiveEntries
+          .map((entry) => entry.businessDate)
+          .sort()
+          .at(0) ?? model.factAsOfDate,
+        model.cutoff ?? model.factAsOfDate,
+      )
+    : [];
+  const impairedDaily = applyCoverageImpairments(model.daily, impairments);
   const positions: PositionView[] = currentPositions.map(([symbol, position]) => {
     const quote = model.latestPrices.get(symbol);
     const hasPostValuationFact =
@@ -463,15 +438,16 @@ export function buildPositionsOverview(
     );
     const symbolPeriodPerformance = hasPostValuationFact
       ? emptyPeriodPerformance()
-      : periodPerformance(model.daily, model.cutoff, symbol);
-    // P-UI：当日盈亏近似 = 市值 × 当日收益率 / (1 + 当日收益率)
+      : periodPerformance(impairedDaily, model.cutoff, symbol);
+    // P1-1：当日盈亏直接读取估值截止日的归因金额，不再由收益率反推。
+    // 反推公式在分红/交易场景下不准确（如分红日会低估）。
+    const dayContribution = impairedDaily
+      .find((day) => day.date === model.cutoff)
+      ?.contributions.get(symbol);
     const dayPnl =
-      marketValue !== null && symbolPeriodPerformance.day !== null
-        ? roundMoney(
-            (marketValue * symbolPeriodPerformance.day) /
-              (1 + symbolPeriodPerformance.day),
-          )
-        : null;
+      dayContribution?.totalPnl == null
+        ? null
+        : roundMoney(dayContribution.totalPnl);
     return {
       symbol,
       name: names.get(symbol) ?? symbol,
@@ -545,27 +521,9 @@ export function buildPositionsOverview(
     model.cutoff ?? lastFactDate,
     marketValue,
   );
-  // P1-1/P1-2：将 partial 覆盖的 error 问题纳入读模型，使质量状态在应用重启后仍为 partial。
-  // 持仓起始日取该标的当前持仓周期的开始日，避免旧历史覆盖的 partial 错误标记
-  // 影响当前持仓的质量状态。
-  const heldSymbols = currentPositions.map(([symbol]) => symbol);
-  const positionStartBySymbol = new Map<string, string>();
-  for (const symbol of heldSymbols) {
-    const start = currentHoldingStart(
-      model.effectiveEntries,
-      symbol,
-      model.factAsOfDate,
-    );
-    if (start) positionStartBySymbol.set(symbol, start);
-  }
-  const partialCoverageIssues = coverage
-    ? relevantPartialCoverageIssues(
-        coverage,
-        heldSymbols,
-        positionStartBySymbol,
-        model.cutoff,
-      )
-    : [];
+  // P1-3：覆盖损伤已在上文计算并应用到 impairedDaily，
+  // 这里仅将结构化问题转为字符串传给 qualityFor。
+  const partialCoverageIssues = coverageIssueStrings(impairments);
   return {
     quality: qualityFor(model, hasFacts, partialCoverageIssues),
     hasLedgerEntries: hasFacts,
@@ -585,7 +543,7 @@ export function buildPositionsOverview(
     },
     portfolioPerformance: model.postValuationFacts.length
       ? emptyPeriodPerformance()
-      : periodPerformance(model.daily, model.cutoff),
+      : periodPerformance(impairedDaily, model.cutoff),
     positions,
     valuationSource: model.priceSource,
     provenance: model.provenance,

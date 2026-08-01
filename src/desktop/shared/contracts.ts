@@ -162,7 +162,7 @@ export interface EquityPoint {
   nav?: number;
 }
 
-export interface BacktestMetrics {
+interface BacktestMetrics {
   totalContribution: number;
   endingAsset: number;
   totalPnl: number;
@@ -599,7 +599,7 @@ export interface DividendReinvestmentPreview {
   warnings: string[];
 }
 
-export interface HealthResponse {
+interface HealthResponse {
   status: "ok";
   version: string;
   storage: "sqlite";

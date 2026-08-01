@@ -4,11 +4,12 @@ import type {
   IncomeCalendarView,
   LedgerEntry,
   StockInfo,
+  StoredMarketCoverage,
   StoredMarketPrice,
 } from "../../shared/contracts";
 import { currentMarketDate, monthEnd } from "./dateUtils";
 import { roundMoney } from "./finance";
-import { reduceLedger } from "./ledgerReducer";
+import { holdingIntervals, reduceLedger } from "./ledgerReducer";
 import {
   buildLiveModel,
   qualityFor,
@@ -16,7 +17,12 @@ import {
   type LiveModelBoundary,
 } from "./positionsView";
 import { namesMap } from "./liveViewSupport";
-import type { DailyAttribution } from "./dailyAttribution";
+import {
+  applyCoverageImpairments,
+  buildCoverageImpairments,
+  coverageIssueStrings,
+  type DailyAttribution,
+} from "./dailyAttribution";
 
 function incomeMetric(
   days: readonly DailyAttribution[],
@@ -54,6 +60,7 @@ export function buildIncomeCalendar(
     factAsOfDate: [monthEnd(query.month), currentMarketDate()].sort()[0],
     valuationCutoff: monthEnd(query.month),
   },
+  coverage: readonly StoredMarketCoverage[] = [],
 ): IncomeCalendarView {
   if (!/^\d{4}-\d{2}$/.test(query.month)) {
     throw new Error("收益月份必须使用 YYYY-MM 格式");
@@ -76,6 +83,16 @@ export function buildIncomeCalendar(
     : query.scope === "current"
       ? activeSymbols
       : new Set(model.effectiveEntries.flatMap((entry) => entry.symbol ?? []));
+  // P1-2 + P1-3：在 buildIncomeCalendar 内统一过滤覆盖损伤，
+  // 按 selectedSymbols + 持仓区间 + 月份/年度范围筛选。
+  const year = query.month.slice(0, 4);
+  const impairments = buildCoverageImpairments(
+    coverage,
+    selectedSymbols,
+    holdingIntervals(entries, boundary.factAsOfDate),
+    `${year}-01-01`,
+    monthEnd(query.month),
+  );
 
   const filterDay = (day: DailyAttribution): DailyAttribution => {
     if (!query.symbol && query.scope === "all") return day;
@@ -138,18 +155,20 @@ export function buildIncomeCalendar(
     };
   };
 
-  const filteredDaily = model.daily
-    .map(filterDay)
-    .filter(
-      (day) =>
-        (!query.symbol && query.scope === "all") ||
-        day.contributions.size > 0 ||
-        day.events.length > 0,
-    );
+  const filteredDaily = applyCoverageImpairments(
+    model.daily
+      .map(filterDay)
+      .filter(
+        (day) =>
+          (!query.symbol && query.scope === "all") ||
+          day.contributions.size > 0 ||
+          day.events.length > 0,
+      ),
+    impairments,
+  );
   const monthDays = filteredDaily.filter((day) =>
     day.date.startsWith(query.month),
   );
-  const year = query.month.slice(0, 4);
   const throughMonth = filteredDaily.filter(
     (day) => day.date <= `${query.month}-31`,
   );
@@ -221,13 +240,18 @@ export function buildIncomeCalendar(
   const hasScopedFacts = model.effectiveEntries.some(
     (entry) => entry.symbol && selectedSymbols.has(entry.symbol),
   );
+  const coverageIssues = coverageIssueStrings(impairments);
   return {
     quality: qualityFor(
       qualityModel,
       hasScopedFacts,
-      monthDays.some((day) => day.isPartial)
-        ? ["所选月份存在缺失行情，部分收益无法计算", ...externalIssues]
-        : [...externalIssues],
+      [
+        ...(monthDays.some((day) => day.isPartial)
+          ? ["所选月份存在缺失行情，部分收益无法计算"]
+          : []),
+        ...coverageIssues,
+        ...externalIssues,
+      ],
       // 已结束历史月份只判断所需区间是否完整，不因距今天较久标记过期。
       query.month >= currentMarketDate().slice(0, 7),
     ),

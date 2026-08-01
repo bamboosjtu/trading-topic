@@ -409,6 +409,7 @@ export function TradesPage() {
                 rowKey="id"
                 columns={columns}
                 dataSource={ledger.data.rows}
+                scroll={{ x: 1280 }}
                 pagination={{
                   current: ledger.data.page,
                   pageSize: ledger.data.pageSize,

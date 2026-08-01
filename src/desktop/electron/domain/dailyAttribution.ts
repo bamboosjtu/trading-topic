@@ -1,6 +1,7 @@
 import type {
   IncomeCalendarDay,
   LedgerEntry,
+  StoredMarketCoverage,
   StoredMarketPrice,
 } from "../../shared/contracts";
 import { addDays, validDate } from "./dateUtils";
@@ -8,6 +9,7 @@ import { roundMoney } from "./finance";
 import {
   holdingIntervals,
   ledgerEntryAmount,
+  type HoldingInterval,
   reduceLedger,
 } from "./ledgerReducer";
 import { projectInvestmentCash } from "./investmentCashProjection";
@@ -365,4 +367,204 @@ export function buildDailyAttribution(
     });
   }
   return daily;
+}
+
+/**
+ * P1-3：结构化的覆盖损伤信息。
+ *
+ * - `impairedDates`：有具体日期的 error，该日期的收益不可信。
+ * - `impairedRanges`：无具体日期的 error，与查询区间相交的整个范围都不可信。
+ * - `descriptions`：人类可读的问题描述，用于 quality.issues。
+ */
+export interface CoverageImpairment {
+  symbol: string;
+  impairedDates: Set<string>;
+  impairedRanges: Array<{ from: string; through: string }>;
+  descriptions: string[];
+}
+
+/**
+ * P1-2 + P1-3：从持久化覆盖记录中筛选与查询相关的损伤。
+ *
+ * 过滤维度：
+ * - 覆盖为 partial；
+ * - symbol 属于 selectedSymbols；
+ * - 覆盖请求区间与持仓区间在 [rangeStart, rangeEnd] 内有交集；
+ * - error 级别问题的日期落在交集内（有日期）或整个交集不可信（无日期）。
+ */
+export function buildCoverageImpairments(
+  coverage: readonly StoredMarketCoverage[],
+  selectedSymbols: Set<string>,
+  intervalsBySymbol: Map<string, HoldingInterval[]>,
+  rangeStart: string,
+  rangeEnd: string,
+): CoverageImpairment[] {
+  if (!coverage.length || !selectedSymbols.size) return [];
+  const impairments: CoverageImpairment[] = [];
+  for (const item of coverage) {
+    if (item.resultStatus !== "partial") continue;
+    if (!selectedSymbols.has(item.symbol)) continue;
+    const intervals = intervalsBySymbol.get(item.symbol) ?? [];
+    // 求覆盖区间与持仓区间在查询范围内的交集
+    const relevantIntervals = intervals
+      .map((interval) => {
+        const from =
+          interval.startDate > item.requestedFrom
+            ? interval.startDate
+            : item.requestedFrom;
+        const through =
+          interval.endDate < item.requestedThrough
+            ? interval.endDate
+            : item.requestedThrough;
+        const clampedFrom = from > rangeStart ? from : rangeStart;
+        const clampedThrough = through < rangeEnd ? through : rangeEnd;
+        return clampedFrom <= clampedThrough
+          ? { from: clampedFrom, through: clampedThrough }
+          : null;
+      })
+      .filter((v): v is { from: string; through: string } => v !== null);
+    if (!relevantIntervals.length) continue;
+    const errorIssues = (item.issues ?? []).filter(
+      (issue) => issue.severity === "error",
+    );
+    if (!errorIssues.length) continue;
+    const impairedDates = new Set<string>();
+    const impairedRanges: Array<{ from: string; through: string }> = [];
+    const descriptions: string[] = [];
+    for (const issue of errorIssues) {
+      if (issue.date) {
+        const inRange =
+          issue.date >= rangeStart &&
+          issue.date <= rangeEnd &&
+          relevantIntervals.some(
+            (r) => issue.date! >= r.from && issue.date! <= r.through,
+          );
+        if (inRange) impairedDates.add(issue.date);
+      } else {
+        impairedRanges.push(...relevantIntervals);
+      }
+      descriptions.push(
+        issue.date ? `${issue.date} ${issue.message}` : issue.message,
+      );
+    }
+    if (impairedDates.size || impairedRanges.length) {
+      impairments.push({
+        symbol: item.symbol,
+        impairedDates,
+        impairedRanges,
+        descriptions,
+      });
+    }
+  }
+  return impairments;
+}
+
+/**
+ * P1-3：将覆盖损伤应用到日度归因序列。
+ *
+ * - 标记已有日期中受影响证券的 totalPnl = null、isPartial = true；
+ * - 为缺失的损伤日期注入合成 partial 日，使期间收益自动返回 null。
+ */
+export function applyCoverageImpairments(
+  daily: readonly DailyAttribution[],
+  impairments: readonly CoverageImpairment[],
+): DailyAttribution[] {
+  if (!impairments.length) return [...daily];
+  const impairmentBySymbol = new Map(
+    impairments.map((imp) => [imp.symbol, imp]),
+  );
+  const marked = daily.map((day) => {
+    let changed = false;
+    const newContributions = new Map(day.contributions);
+    for (const [symbol, contribution] of newContributions) {
+      const impairment = impairmentBySymbol.get(symbol);
+      if (!impairment) continue;
+      const isImpaired =
+        impairment.impairedDates.has(day.date) ||
+        impairment.impairedRanges.some(
+          (range) => day.date >= range.from && day.date <= range.through,
+        );
+      if (isImpaired && contribution.totalPnl !== null) {
+        changed = true;
+        newContributions.set(symbol, { ...contribution, totalPnl: null });
+      }
+    }
+    if (!changed) return day;
+    const values = [...newContributions.values()];
+    const marketPriceValues = values.map((v) => v.marketPricePnl);
+    const marketPricePnl = marketPriceValues.some((v) => v === null)
+      ? null
+      : roundMoney(marketPriceValues.reduce<number>((s, v) => s + v!, 0));
+    const dividendPnl = roundMoney(
+      values.reduce((s, v) => s + v.dividendPnl, 0),
+    );
+    const tradingCostPnl = roundMoney(
+      values.reduce((s, v) => s + v.tradingCostPnl, 0),
+    );
+    const totalPnl =
+      marketPricePnl === null
+        ? null
+        : roundMoney(marketPricePnl + dividendPnl + tradingCostPnl);
+    const capitalBase = values.reduce((s, v) => s + v.capitalBase, 0);
+    return {
+      ...day,
+      contributions: newContributions,
+      totalPnl,
+      marketPricePnl,
+      dividendPnl,
+      tradingCostPnl,
+      capitalBase,
+      returnRate:
+        totalPnl !== null && capitalBase > 0
+          ? totalPnl / capitalBase
+          : null,
+      isPartial: true,
+    };
+  });
+  // 为缺失的损伤日期注入合成 partial 日
+  const existingDates = new Set(marked.map((day) => day.date));
+  const synthetic: DailyAttribution[] = [];
+  for (const impairment of impairments) {
+    for (const date of impairment.impairedDates) {
+      if (existingDates.has(date)) continue;
+      synthetic.push({
+        date,
+        totalPnl: null,
+        marketPricePnl: null,
+        dividendPnl: 0,
+        tradingCostPnl: 0,
+        capitalBase: 0,
+        returnRate: null,
+        isPartial: true,
+        hasMarketData: false,
+        contributions: new Map([
+          [
+            impairment.symbol,
+            {
+              holdingChange: 0,
+              marketPricePnl: null,
+              dividendPnl: 0,
+              tradingCostPnl: 0,
+              totalPnl: null,
+              returnRate: null,
+              capitalBase: 0,
+            },
+          ],
+        ]),
+        events: [],
+      });
+    }
+  }
+  return synthetic.length
+    ? [...marked, ...synthetic].sort((a, b) => a.date.localeCompare(b.date))
+    : marked;
+}
+
+export function coverageIssueStrings(
+  impairments: readonly CoverageImpairment[],
+): string[] {
+  return impairments.map(
+    (imp) =>
+      `${imp.symbol} 行情覆盖存在数据质量问题：${imp.descriptions.join("；")}`,
+  );
 }

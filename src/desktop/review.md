@@ -1,6 +1,6 @@
 # 投资研究实验室 R1 桌面应用评审报告
 
-> 评审日期：2026-08-01（第七轮，P0 partial 覆盖修复 + P1 持仓周期 + P2 写入校验 + UI 响应式收敛）
+> 评审日期：2026-08-01（第七轮，P0 partial 覆盖修复 + P1 持仓周期 + P2 写入校验 + UI 响应式收敛；第八轮，P1 当日盈亏/收益日历过滤/收益失效 + P2 UI/存储加固）
 >
 > 评审范围：`src/desktop/` 全量源码、`docs/product/` 文档一致性、`AGENTS.md` 工程约束
 >
@@ -79,6 +79,18 @@
 | UI-5 | 持仓明细、交易流水、收益日历在大屏幕下未像定投回测一样响应 | [renderer/src/index.css](renderer/src/index.css) | `@media (min-width: 2560px)` 取消 `max-width` 留白方案，改为占满可用宽度并整体调大字号/间距：页面标题 32px、指标数值 22px、实盘表格 14px、日历格子 110px、定投图表 480px 等；交易流水搜索框列改为 `minmax(210px, 420px)` 避免无限拉伸；收益日历新增 `@media (max-width: 1450px)` 断点改为上下布局，避免右侧详情挤压左侧日历 |
 | 测试 | P0/P2 关键分支缺少针对性测试 | [services/appService.test.ts](electron/services/appService.test.ts)、[storage/database.test.ts](electron/storage/database.test.ts) | 新增 5 个 P0 测试：中间日期错误修复后前缀价格不丢失、错误在 requestedFrom 当天仍重试、无日期 error 重试整个区间、再次 partial 不缩水、修复后全月收益与完整数据一致；新增 3 个 P2 测试：写入时拒绝 partial 缺少 error issues、拒绝非 partial 携带 issues、读取损坏 issues_json 生成通用 error |
 
+## 2.4 第八轮新增修复
+
+| 编号 | 问题 | 修复位置 | 修复方式 |
+| --- | --- | --- | --- |
+| P1-1 | 持仓表"当日盈亏"由收益率反推，分红/交易场景下不准确 | [domain/positionsView.ts](electron/domain/positionsView.ts) | 改为直接读取估值截止日的日度归因 `contribution.totalPnl`，不再使用 `市值 × 收益率 / (1 + 收益率)` 反推公式 |
+| P1-2 | 收益日历 partial 未按查询范围过滤（查询单标的时其他标的的 partial 也降级） | [domain/incomeCalendar.ts](electron/domain/incomeCalendar.ts)、[services/appService.ts](electron/services/appService.ts) | 删除 appService 中的 `relevantCoverageIssuesForMonth`；改为将覆盖记录整体传入 `buildIncomeCalendar`，在 `selectedSymbols` + `holdingIntervals` + 月份/年度范围内统一过滤 |
+| P1-3 | partial 只改变质量状态，未使受影响收益指标失效 | [domain/dailyAttribution.ts](electron/domain/dailyAttribution.ts)、[domain/incomeCalendar.ts](electron/domain/incomeCalendar.ts)、[domain/positionsView.ts](electron/domain/positionsView.ts) | 新增 `buildCoverageImpairments` + `applyCoverageImpairments`：有日期 error 注入合成 partial 日使期间收益返回 null；无日期 error 标记整个相交范围为不可信；持仓页和收益日历统一复用 |
+| UI-P1 | 1280~1599 窗口下交易流水筛选区仍固定列宽导致溢出 | [renderer/src/index.css](renderer/src/index.css)、[PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx)、[TradesPage.tsx](renderer/src/pages/TradesPage.tsx) | `@media (max-width: 1599px)` 中 `.ledger-filter-panel` 改为 `repeat(3, minmax(0, 1fr))`；持仓表和流水表显式设置 `scroll={{ x: 1280 }}` |
+| P2-1 | 折叠导航隐藏文字后无 Tooltip | [AppLayout.tsx](renderer/src/components/AppLayout.tsx) | 导航按钮增加 `title={item.label}`，折叠状态下悬停可见标签 |
+| P2-2 | 翻页后保留当前页不可见的选中证券 | [PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx) | 翻页时自动清除 `selectedSymbol`，避免区间表现引用不可见标的 |
+| P2-3 | 合法 JSON 但不是数组时 issues_json 静默消失 | [storage/marketRepository.ts](electron/storage/marketRepository.ts) | `mapStoredMarketCoverage` 中：非数组 JSON 抛异常进入 catch；partial 覆盖 issues 为空数组或不包含 error 级别问题时也生成通用 error |
+
 ## 3. 仍待处理的问题
 
 ### 3.1 P1-R：真实行情冒烟与便携包未在本轮验证
@@ -125,7 +137,7 @@
 | 文档链接 | PASS |
 | 文档与实现一致性 | **本地设置 UI 简述两处仍写 Schema 2**（见 §3.2） |
 | 类型检查 / 测试 / 构建 | PASS |
-| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项 + 第六轮 7 项 + 第七轮 P0/P1/P2/UI 11 项全部完成 |
+| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项 + 第六轮 7 项 + 第七轮 11 项 + 第八轮 7 项全部完成 |
 | 发布前真实行情与便携包验证 | **未执行**（见 §3.1） |
 
 **总体**：第四至七轮 P0/P1/P2 问题清单的代码层修复与 UI 优化已全部收敛，单元测试（174/174）与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。P2-3（Worker 只传 filePath）列为后续优化。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。

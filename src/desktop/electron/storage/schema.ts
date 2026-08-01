@@ -15,7 +15,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   caliberVersion: BACKTEST_CALIBER_VERSION,
 };
 
-export function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
+function schemaShapeFingerprint(database: BetterSqlite3.Database): string {
   const schema = rows<{
     type: string;
     name: string;

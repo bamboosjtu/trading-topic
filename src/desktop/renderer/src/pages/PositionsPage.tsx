@@ -128,6 +128,10 @@ export function PositionsPage() {
       setSelectedSymbol(undefined);
     }
   }, [rows, selectedSymbol]);
+  // P2-2：翻页时清除选中证券，避免区间表现引用当前页不可见的标的
+  useEffect(() => {
+    setSelectedSymbol(undefined);
+  }, [currentPage]);
   const selected =
     overview.data?.positions.find((row) => row.symbol === selectedSymbol) ??
     null;
@@ -361,6 +365,7 @@ export function PositionsPage() {
                 rowKey="symbol"
                 columns={columns}
                 dataSource={rows}
+                scroll={{ x: 1280 }}
                 pagination={{
                   current: currentPage,
                   pageSize,

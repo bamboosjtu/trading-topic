@@ -2795,6 +2795,14 @@ a:focus-visible,
     grid-template-columns: minmax(360px, 1fr);
     gap: 12px;
   }
+
+  .ledger-filter-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ledger-filter-actions {
+    justify-self: end;
+  }
 }
 
 @keyframes workspace-in {
