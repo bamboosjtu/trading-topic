@@ -1,17 +1,17 @@
-# 攒股收息 R1 桌面应用评审报告
+# 投资研究实验室 R1 桌面应用评审报告
 
-> 评审日期：2026-08-01（第五轮，P1/P2 修复后收敛）
+> 评审日期：2026-08-01（第六轮，P1/P2 修复 + UI 优化后收敛）
 >
 > 评审范围：`src/desktop/` 全量源码、`docs/product/` 文档一致性、`AGENTS.md` 工程约束
 >
-> 评审基线：`git status` 含本轮 P1/P2 修复改动；`npm run typecheck` / `npm test` / `npm run build` 均通过
+> 评审基线：`git status` 含本轮 P1/P2 修复与 UI 优化改动；`npm run typecheck` / `npm test` / `npm run build` 均通过
 
 ## 1. 本轮验证结果
 
 | 项目 | 命令 | 结果 |
 | --- | --- | --- |
 | 类型检查 | `npm run typecheck` | PASS |
-| 单元测试 | `npm test` | 161/161 PASS（1 smoke 用例预期 skipped，发布前手动 `npm run smoke:market-data` 跑实） |
+| 单元测试 | `npm test` | 166/166 PASS（1 smoke 用例预期 skipped，发布前手动 `npm run smoke:market-data` 跑实） |
 | 构建 | `npm run build` | PASS（main / preload / renderer / backupRestoreWorker 四入口） |
 | 测试文件 | — | 17 passed / 1 skipped，覆盖领域、适配器、存储、服务、导出、冷启动恢复、备份往返 |
 
@@ -49,6 +49,19 @@
 | P2-4 | 备份 Worker 缺少退出兜底和超时 | [main.ts](electron/main.ts) | 新增 `worker.on("exit")` 监听和 60 秒超时；`message` / `error` / `exit` / `timeout` 统一 cleanup 并 resolve/reject |
 | P2-5 | 2024 年以前未实现跨源日期集合完整性校验（文档与实现不一致） | [review.md](review.md) | 修正 §2 P2-1 描述：明确 2024 年以前只有启发式校验（升序/非周末/缺口上限/重叠价格一致性），不比较完整日期集合，主源尾部完整时不访问备用源 |
 | P2-6 | 日历使用英文 | [renderer/src/main.tsx](renderer/src/main.tsx) | `dayjs.locale("zh-cn")`，DatePicker 等组件月份选择面板显示中文 |
+
+## 2.2 第六轮新增修复
+
+| 编号 | 问题 | 修复位置 | 修复方式 |
+| --- | --- | --- | --- |
+| P1-1 | 持久化的 partial 状态没有进入持仓初始读模型 | [domain/positionsView.ts](electron/domain/positionsView.ts)、[services/appService.ts](electron/services/appService.ts) | `liveDataSnapshot()` 增加 `coverage` 字段；`buildPositionsOverview()` 接收覆盖记录并按当前持仓和估值区间筛选相关 partial 覆盖，`quality.status = partial` 时 `issues` 保留原因；重启或重新进入页面后读模型仍能反映 partial 状态 |
+| P1-2 | 内部数据质量问题被错误表述为"尾部不完整" | [services/appService.ts](electron/services/appService.ts) | 分离 `tailStatus`（最新正式交易日是否存在）与 `qualityStatus`（历史内部是否存在坏行）两个维度；`refreshPositionsMarket` 通过单日区间 `[endDate, endDate]` 判断尾部，最新交易日价格存在即 `tailComplete = true`，避免"实际价格截止 = 请求截止"却报告尾部不完整的语义矛盾 |
+| P1-3 | 价格行冲突策略阻断合法的同日清仓再买入 | [services/appService.ts](electron/services/appService.ts) | 新增 `normalizeRanges()`，在数据请求前按证券合并重叠或相邻区间（如 `2026-01-01..2026-06-10` 与 `2026-06-10..2026-08-01` 合并为 `2026-01-01..2026-08-01`）；合并后只拉取、保存一次，避免同日清仓再买入、同日多次买卖、历史区间首尾相接等场景触发"行情价格行冲突" |
+| P2-1 | partial 只保存状态，不保存原因和缺失日期 | [storage/schema.ts](electron/storage/schema.ts)、[storage/marketRepository.ts](electron/storage/marketRepository.ts)、[storage/backupRepository.ts](electron/storage/backupRepository.ts)、[domain/backupValidation.ts](electron/domain/backupValidation.ts)、[shared/contracts.ts](shared/contracts.ts) | `live_market_coverage` 新增 `issues_json` 列，持久化 `{date, type, severity, message}` 列表；备份导出/恢复完整携带 `issues_json`；备份校验要求 partial 覆盖必须包含合法 `issues_json`，非 partial 覆盖不得携带 |
+| P2-2 | 备份校验没有确认价格行位于覆盖请求区间内 | [domain/backupValidation.ts](electron/domain/backupValidation.ts) | 对每个 `matching` 价格行增加 `requested_from <= trade_date <= requested_through` 约束，防止手工修改的备份包含早于 `requested_from` 的价格行 |
+| P2-4 | 新增关键分支的针对性测试不足 | [services/appService.test.ts](electron/services/appService.test.ts)、[storage/database.test.ts](electron/storage/database.test.ts) | 新增服务级测试：前复权抛错回测成功且 `chartData = error`、前复权尾部不完整 `chartData = unavailable`、不复权 warning 进入 `result.warnings`、partial 覆盖在数据库重开后仍使持仓质量为 partial、partial 但最新日存在时尾部 complete、同日清仓再买入不产生覆盖冲突、旧 partial 被完整覆盖替换后备份往返成功 |
+| UI | 应用名称、导航标签、持仓翻页与布局 | [renderer/src/components/AppLayout.tsx](renderer/src/components/AppLayout.tsx)、[renderer/src/pages/BacktestPage.tsx](renderer/src/pages/BacktestPage.tsx)、[renderer/src/pages/PositionsPage.tsx](renderer/src/pages/PositionsPage.tsx)、[renderer/src/index.css](renderer/src/index.css)、[renderer/index.html](renderer/index.html)、[electron/main.ts](electron/main.ts)、[electron/export/workbookInternals.ts](electron/export/workbookInternals.ts)、[package.json](package.json)、[README.md](README.md) | 应用名"攒股收息"统一改为"投资研究实验室"（窗口标题、导出文件名、Excel creator、productName、README）；导航"历史回测"改为"定投回测"；持仓明细当前持仓表 `pageSize = 10` 启用翻页；指标条由两行合并为一行；调整 `live-page` / `live-table-panel` flex 属性消除 1920×1080 下底部留白 |
+| P2-3 | 备份 Worker 仍复制两次大型 JSON 对象 | — | R1 不阻断，列为后续优化：主进程只传 `filePath` 给 Worker，Worker 读取/解析/校验后返回临时规范化文件路径或分块结果 |
 
 ## 3. 仍待处理的问题
 
@@ -97,7 +110,7 @@
 | 文档链接 | PASS |
 | 文档与实现一致性 | **本地设置 UI 简述两处仍写 Schema 2**（见 §3.2） |
 | 类型检查 / 测试 / 构建 | PASS |
-| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项全部完成 |
+| P1/P2 修复 | 第四轮 9 项 + 第五轮 9 项 + 第六轮 7 项 + UI 优化全部完成 |
 | 发布前真实行情与便携包验证 | **未执行**（见 §3.1） |
 
-**总体**：第四、五轮 P1/P2 问题清单的代码层修复已全部收敛，单元测试与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。
+**总体**：第四、五、六轮 P1/P2 问题清单的代码层修复与 UI 优化已全部收敛，单元测试（166/166）与构建均通过。发布前剩余两件事：(1) 由具备联网环境的发布者执行 `npm run smoke:market-data` 与 `npm run pack:portable` 并保留证据；(2) 修正 [本地设置_ui_brief.md](../../docs/product/desktop_ui/本地设置_ui_brief.md) 两处 "Schema 2" 描述为 "Schema 1"。P2-3（Worker 只传 filePath）列为后续优化。第二轮评审的功能性建议（现金账户闭环等）按 §3.3 优先级排期。

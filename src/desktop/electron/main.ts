@@ -66,7 +66,7 @@ function createWindow(): void {
     minWidth: 1920,
     minHeight: 900,
     backgroundColor: "#f6f8fb",
-    title: "攒股收息",
+    title: "投资研究实验室",
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
@@ -140,7 +140,7 @@ function registerIpc(): void {
       const experiment = service.getBacktestExperiment(experimentId);
       const result = await dialog.showSaveDialog({
         title: "导出回测试验",
-        defaultPath: `攒股收息-回测试验-${timestamp()}.xlsx`,
+        defaultPath: `投资研究实验室-回测试验-${timestamp()}.xlsx`,
         filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
       });
       if (result.canceled || !result.filePath) return { cancelled: true };
@@ -161,7 +161,7 @@ function registerIpc(): void {
     const overview = service.getPositionsOverview();
     const result = await dialog.showSaveDialog({
       title: "导出持仓明细",
-      defaultPath: `攒股收息-持仓明细-${timestamp()}.xlsx`,
+      defaultPath: `投资研究实验室-持仓明细-${timestamp()}.xlsx`,
       filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
     });
     if (result.canceled || !result.filePath) return { cancelled: true };
@@ -179,7 +179,7 @@ function registerIpc(): void {
     const exportResult = service.exportLedger({ ...query, page: 1, pageSize: 100 });
     const result = await dialog.showSaveDialog({
       title: "导出交易流水",
-      defaultPath: `攒股收息-交易流水-${timestamp()}.xlsx`,
+      defaultPath: `投资研究实验室-交易流水-${timestamp()}.xlsx`,
       filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
     });
     if (result.canceled || !result.filePath) return { cancelled: true };
@@ -201,7 +201,7 @@ function registerIpc(): void {
       const view = await service.getIncomeCalendar(query);
       const result = await dialog.showSaveDialog({
         title: "导出收益日历",
-        defaultPath: `攒股收息-收益日历-${query.month}-${timestamp()}.xlsx`,
+        defaultPath: `投资研究实验室-收益日历-${query.month}-${timestamp()}.xlsx`,
         filters: [{ name: "Excel 工作簿", extensions: ["xlsx"] }],
       });
       if (result.canceled || !result.filePath) return { cancelled: true };
@@ -243,7 +243,7 @@ function registerIpc(): void {
   ipcMain.handle("backup:export", async () => {
     const result = await dialog.showSaveDialog({
       title: "导出 JSON 备份",
-      defaultPath: `攒股收息-backup-${timestamp()}.json`,
+      defaultPath: `投资研究实验室-backup-${timestamp()}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (result.canceled || !result.filePath) return { cancelled: true };
@@ -369,7 +369,7 @@ function registerIpc(): void {
   ipcMain.handle("logs:export", async () => {
     const result = await dialog.showSaveDialog({
       title: "导出运行日志",
-      defaultPath: `攒股收息-log-${timestamp()}.txt`,
+      defaultPath: `投资研究实验室-log-${timestamp()}.txt`,
       filters: [{ name: "Text", extensions: ["txt"] }],
     });
     if (result.canceled || !result.filePath) return { cancelled: true };
@@ -391,7 +391,7 @@ app
   .catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     dialog.showErrorBox(
-      "攒股收息无法启动",
+      "投资研究实验室无法启动",
       `${message}\n\nMVP 不迁移或兼容旧数据库。请保留原文件，并使用新的本地数据目录启动当前版本。`,
     );
     app.quit();

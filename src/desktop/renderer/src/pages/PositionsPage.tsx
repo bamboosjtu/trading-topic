@@ -246,18 +246,14 @@ export function PositionsPage() {
           <QualityNotice quality={overview.data.quality} />
           <LiveMetricStrip
             items={[
-              { label: "当前持仓市值", value: money(overview.data.metrics.marketValue), helper: overview.data.valuationSource, icon: <StockOutlined />, tone: "blue" },
-              { label: "累计买入支出", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
-              { label: "累计卖出净收入", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
-              { label: "累计净投入", value: money(overview.data.metrics.netInvestment), helper: "外部买入 − 卖出 − 外部分红", icon: <FundOutlined />, tone: "indigo" },
-              { label: "待再投入分红", value: money(overview.data.metrics.pendingReinvestmentCash), helper: "仍留在组合内的分红现金", icon: <GiftOutlined />, tone: "orange" },
+              { label: "持仓市值", value: money(overview.data.metrics.marketValue), helper: overview.data.valuationSource, icon: <StockOutlined />, tone: "blue" },
+              { label: "累计买入", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
+              { label: "累计卖出", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
+              { label: "累计净投入", value: money(overview.data.metrics.netInvestment), helper: "买入 − 卖出 − 外部分红", icon: <FundOutlined />, tone: "indigo" },
               { label: "累计分红", value: money(overview.data.metrics.cumulativeDividend), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
-            ]}
-          />
-          <LiveMetricStrip
-            items={[
-              { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "持仓市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
-              { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出净收入 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
+              { label: "待再投入", value: money(overview.data.metrics.pendingReinvestmentCash), helper: "组合内分红现金", icon: <GiftOutlined />, tone: "orange" },
+              { label: "未实现收益", value: money(overview.data.metrics.unrealizedPnl, true), helper: "市值 − 剩余成本", icon: <StockOutlined />, tone: "blue", valueClass: pnlClass(overview.data.metrics.unrealizedPnl) },
+              { label: "已实现收益", value: money(overview.data.metrics.realizedPnl, true), helper: "卖出 − 释放成本", icon: <TransactionOutlined />, tone: "green", valueClass: pnlClass(overview.data.metrics.realizedPnl) },
               { label: "投资总收益", value: money(overview.data.metrics.totalReturn, true), helper: "市值 + 卖出 + 分红 − 买入", icon: <ArrowUpOutlined />, tone: "red", valueClass: pnlClass(overview.data.metrics.totalReturn) },
               { label: "XIRR", value: percent(overview.data.metrics.xirr, true), helper: XIRR_STATUS_TEXT[overview.data.metrics.xirrStatus], icon: <ArrowUpOutlined />, tone: "violet", valueClass: pnlClass(overview.data.metrics.xirr) },
             ]}

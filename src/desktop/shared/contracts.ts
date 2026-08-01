@@ -641,6 +641,11 @@ export interface MarketDataCacheEntry {
    * 省略时由 `saveLiveMarketPriceSnapshots` 根据是否有价格推导为 `data` / `empty`。
    */
   resultStatus?: "data" | "empty" | "partial";
+  /**
+   * P2-1：partial 覆盖的 error 级别问题列表，持久化为 `issues_json`。
+   * 用于解释 partial 原因、计算 `confirmedCoverageThrough`（首个错误日期前）和审计。
+   */
+  issues?: MarketDataIssue[];
 }
 
 export interface StoredMarketPrice {
@@ -674,6 +679,11 @@ export interface StoredMarketCoverage {
    * prices 已保存但覆盖不确认完整，`missingLivePriceRanges` 会重新请求。
    */
   resultStatus: "data" | "empty" | "partial";
+  /**
+   * P2-1：partial 覆盖的 error 级别问题列表（从 `issues_json` 反序列化）。
+   * 用于解释 partial 原因和计算 `confirmedCoverageThrough`（首个错误日期前）。
+   */
+  issues?: MarketDataIssue[];
 }
 
 export interface BackupPayload {
@@ -722,6 +732,8 @@ export interface BackupPayload {
     adjustment: "none" | "qfq";
     empty_evidence: "exchange_calendar" | "outside_listing" | null;
     result_status: "data" | "empty" | "partial";
+    /** P2-1：partial 覆盖的 error 级别问题 JSON；非 partial 时为 null。 */
+    issues_json: string | null;
   }>;
   corporateActions: Array<{
     symbol: string;

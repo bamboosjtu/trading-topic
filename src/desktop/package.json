@@ -2,7 +2,7 @@
   "name": "desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "攒股收息 R1 桌面应用",
+  "description": "投资研究实验室 R1 桌面应用",
   "author": "trading-topic",
   "engines": {
     "node": ">=22"
@@ -51,7 +51,7 @@
   },
   "build": {
     "appId": "cn.tradingtopic.dividenddesk",
-    "productName": "攒股收息",
+    "productName": "投资研究实验室",
     "executableName": "dividend-desk",
     "directories": {
       "output": "release"

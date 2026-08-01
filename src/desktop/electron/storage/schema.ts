@@ -6,7 +6,7 @@ import { rows } from "./dbUtil";
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA_FINGERPRINT =
-  "stock-income-r1-schema-1-2026-08-01-coverage-split-v1-partial";
+  "stock-income-r1-schema-1-2026-08-01-coverage-split-v1-partial-issues";
 export const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -177,6 +177,7 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         empty_evidence TEXT
           CHECK (empty_evidence IS NULL OR empty_evidence IN ('exchange_calendar', 'outside_listing')),
         result_status TEXT NOT NULL CHECK (result_status IN ('data', 'empty', 'partial')),
+        issues_json TEXT,
         UNIQUE (symbol, requested_from, requested_through, adjustment)
       );
       CREATE TABLE corporate_actions (

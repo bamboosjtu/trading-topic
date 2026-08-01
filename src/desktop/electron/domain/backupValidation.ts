@@ -553,6 +553,42 @@ function assertMarketSnapshots(backup: BackupPayload): void {
     ) {
       throw new Error("备份包含非法行情覆盖记录");
     }
+    // P2-1：issues_json 字段校验。
+    // - 非 partial 覆盖必须为 null；
+    // - partial 覆盖必须为合法 JSON 数组，元素结构符合 MarketDataIssue。
+    if (row.result_status !== "partial" && row.issues_json !== null) {
+      throw new Error("备份非 partial 覆盖包含非法的 issues_json");
+    }
+    if (row.result_status === "partial") {
+      if (row.issues_json === null) {
+        throw new Error("备份 partial 覆盖缺少 issues_json 详情");
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.issues_json);
+      } catch {
+        throw new Error("备份 partial 覆盖的 issues_json 不是合法 JSON");
+      }
+      if (!Array.isArray(parsed) || !parsed.length) {
+        throw new Error("备份 partial 覆盖的 issues_json 必须是非空数组");
+      }
+      for (const issue of parsed) {
+        if (
+          !isObject(issue) ||
+          typeof issue.severity !== "string" ||
+          !["warning", "error"].includes(issue.severity) ||
+          typeof issue.type !== "string" ||
+          !["invalid_ohlcv", "invalid_date", "duplicate", "gap"].includes(
+            issue.type,
+          ) ||
+          typeof issue.message !== "string" ||
+          (issue.date !== undefined &&
+            (typeof issue.date !== "string" || !validDate(issue.date)))
+        ) {
+          throw new Error("备份 partial 覆盖的 issue 结构非法");
+        }
+      }
+    }
     const matching = backup.liveMarketPrices.filter(
       (price) =>
         price.symbol === row.symbol &&
@@ -567,6 +603,18 @@ function assertMarketSnapshots(backup: BackupPayload): void {
         (!matching.length || actualCutoff !== row.data_cutoff))
     ) {
       throw new Error("备份行情覆盖与价格行不一致");
+    }
+    // P2-2：逐行校验价格行 trade_date 必须位于覆盖请求区间内。
+    // 防止手工修改的备份包含早于 requested_from 或晚于 requested_through 的价格行。
+    for (const price of matching) {
+      if (
+        price.trade_date < row.requested_from ||
+        price.trade_date > row.requested_through
+      ) {
+        throw new Error(
+          `备份行情价格行 ${price.symbol} ${price.trade_date} 超出覆盖请求区间 ${row.requested_from}..${row.requested_through}`,
+        );
+      }
     }
     coverageKeys.push(
       `${row.symbol}|${row.requested_from}|${row.requested_through}|${row.adjustment}`,

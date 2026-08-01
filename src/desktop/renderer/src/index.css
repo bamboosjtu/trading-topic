@@ -257,7 +257,11 @@ a:focus-visible,
 }
 
 .app-content {
+  flex: auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 16px 28px 18px;
   background:
@@ -266,7 +270,11 @@ a:focus-visible,
 }
 
 .workspace-enter {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   animation: workspace-in 200ms ease-out both;
 }
 
@@ -1557,9 +1565,17 @@ a:focus-visible,
 
 /* 实盘三页：沿用冷白 / 墨蓝 / 亮蓝设计系统。 */
 .live-page {
-  display: grid;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   gap: 10px;
+  min-height: 0;
+}
+
+.live-page > .live-table-panel {
+  flex: 1 1 auto;
+  min-height: 320px;
 }
 
 .live-page-heading {
@@ -1635,17 +1651,17 @@ a:focus-visible,
 
 .live-metric-strip {
   display: grid;
-  min-height: 100px;
+  min-height: 88px;
   align-items: center;
-  padding: 9px 8px;
+  padding: 8px 4px;
 }
 
 .live-metric {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 13px;
-  padding: 0 20px;
+  gap: 10px;
+  padding: 0 12px;
   border-right: 1px solid #e8edf3;
 }
 
@@ -1655,13 +1671,13 @@ a:focus-visible,
 
 .live-metric-icon {
   display: inline-flex;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   flex: none;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .live-metric-icon.blue {

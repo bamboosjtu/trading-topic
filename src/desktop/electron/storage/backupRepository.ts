@@ -152,6 +152,8 @@ export function restoreBackup(
         row.adjustment,
         row.empty_evidence,
         row.result_status,
+        // P2-1：恢复时一并写入 issues_json，保留 partial 原因。
+        row.issues_json,
       );
     }
     const insertLivePrice = database.prepare(

@@ -1152,3 +1152,330 @@ describe("AppService 实盘流水", () => {
     expect(result.overview.positions[0].marketValue).toBeNull();
   });
 });
+
+describe("AppService P1-1/P1-2/P1-3 修复", () => {
+  it("partial 覆盖使持仓读模型降级，数据库重开后仍为 partial", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-partial-"));
+    temporaryDirectories.push(directory);
+    const dbPath = join(directory, "app.sqlite");
+    const database = await LocalDatabase.open(dbPath);
+    openDatabases.push(database);
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    const service = new AppService(database);
+    database.addLedger({
+      id: "holding",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    // 直接持久化一个 partial 覆盖：含 2026-07-15 内部错误，但 2026-07-31 有价格。
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-14", close: 5.1 },
+          { date: "2026-07-16", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T08:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2026-07-15",
+            type: "invalid_ohlcv",
+            severity: "error",
+            message: "OHLCV 校验失败：开盘价 0 非正数",
+          },
+        ],
+      },
+    ]);
+
+    // 直接调用 getPositionsOverview，应感知 partial 状态。
+    const overview1 = service.getPositionsOverview();
+    expect(overview1.quality.status).toBe("partial");
+    expect(
+      overview1.quality.issues.some((issue) => issue.includes("2026-07-15")),
+    ).toBe(true);
+
+    // 覆盖记录已持久化 issues_json。
+    const coverage = database.listLiveMarketCoverage(["601398"]);
+    expect(coverage[0]?.resultStatus).toBe("partial");
+    expect(coverage[0]?.issues?.length).toBe(1);
+    expect(coverage[0]?.issues?.[0]?.date).toBe("2026-07-15");
+
+    // 关闭数据库并重新打开，partial 状态应持久化。
+    database.close();
+    const reopened = await LocalDatabase.open(dbPath);
+    openDatabases.push(reopened);
+    const reopenedService = new AppService(reopened);
+    const overview2 = reopenedService.getPositionsOverview();
+    expect(overview2.quality.status).toBe("partial");
+    expect(
+      overview2.quality.issues.some((issue) => issue.includes("2026-07-15")),
+    ).toBe(true);
+  });
+
+  it("完整覆盖替代 partial 后持仓质量恢复为 ready", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    database.addLedger({
+      id: "holding",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    // 先保存 partial 覆盖。
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T08:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2026-07-15",
+            type: "gap",
+            severity: "error",
+            message: "缺失 2026-07-15 行情",
+          },
+        ],
+      },
+    ]);
+    expect(service.getPositionsOverview().quality.status).toBe("partial");
+
+    // 用完整覆盖替代 partial（旧 partial 被删除）。
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-15", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T10:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+      },
+    ]);
+    expect(service.getPositionsOverview().quality.status).toBe("ready");
+  });
+
+  it("partial 但最新交易日存在时 tailStatus 为 complete", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    database.addLedger({
+      id: "holding",
+      type: "buy",
+      businessDate: "2026-07-01",
+      recordedAt: "2026-07-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    // 刷新返回 partial（内部 error）但 tailStatus = complete（最新日有价格）。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      rows: [
+        { date: "2026-07-14", close: 5.1 },
+        { date: "2026-07-16", close: 5.2 },
+        { date: "2026-07-31", close: 5.3 },
+      ],
+      requestedThrough: "2026-07-31",
+      dataCutoff: "2026-07-31",
+      tailStatus: "complete",
+      issues: [
+        {
+          date: "2026-07-15",
+          type: "gap",
+          severity: "error",
+          message: "缺失 2026-07-15 行情",
+        },
+      ],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-31T08:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const result = await service.refreshPositionsMarket();
+    // P1-2：tailStatus 只取决于最新交易日是否有价格，不因内部坏行降级。
+    expect(result.tailStatus).toBe("complete");
+    expect(result.actualCutoff).toBe("2026-07-31");
+    // 但质量仍为 partial，因为存在 error 级别问题。
+    expect(result.overview.quality.status).toBe("partial");
+    expect(result.issues.some((issue) => issue.includes("2026-07-15"))).toBe(true);
+  });
+
+  it("同日清仓再买入不会产生覆盖冲突", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T08:00:00Z"));
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    // 2026-06-10 上午卖出全部，下午重新买入 → 区间 A 和 B 在 06-10 首尾相接。
+    database.addLedger({
+      id: "buy1",
+      type: "buy",
+      businessDate: "2026-06-01",
+      recordedAt: "2026-06-01T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      fee: 0,
+    });
+    database.addLedger({
+      id: "sell1",
+      type: "sell",
+      businessDate: "2026-06-10",
+      recordedAt: "2026-06-10T01:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5.5,
+      quantity: 100,
+      fee: 0,
+    });
+    database.addLedger({
+      id: "buy2",
+      type: "buy",
+      businessDate: "2026-06-10",
+      recordedAt: "2026-06-10T02:00:00Z",
+      currency: "CNY",
+      source: "user",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      price: 5.6,
+      quantity: 200,
+      fee: 0,
+    });
+
+    // 收益日历会生成两个首尾相接的区间，normalizeRanges 合并为一个。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: [{ date: "2026-06-10", close: 5.5 }],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-06-10T08:00:00Z",
+          dataCutoff: "2026-06-10",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+    );
+
+    // 不应抛出"行情价格行冲突"。
+    const view = await service.getIncomeCalendar({
+      month: "2026-06",
+      scope: "all",
+    });
+    expect(view).toBeDefined();
+    // 06-10 只应请求一次（合并后）。
+    const calls = vi.mocked(fetchUnadjustedPrices).mock.calls.filter(
+      (call) => call[0] === "601398",
+    );
+    // 06-10 不会被重复请求。
+    expect(calls.filter((call) => call[1] === "2026-06-10" && call[2] === "2026-06-10")).toHaveLength(0);
+  });
+});

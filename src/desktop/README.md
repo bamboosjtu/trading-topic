@@ -1,4 +1,4 @@
-# 攒股收息 R1 桌面应用
+# 投资研究实验室 R1 桌面应用
 
 R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见
 [PRD_R1.md](../../docs/product/PRD_R1.md)，进程与隔离边界见
@@ -34,7 +34,7 @@ npm run build
 # 发布前受控联网验证沪深京、ETF、腾讯/新浪和来源落库；
 # 成功证据写入并保留在 artifacts/market-data-smoke.json
 npm run smoke:market-data
-# 生成 release/攒股收息-<版本>-portable-x64.exe
+# 生成 release/投资研究实验室-<版本>-portable-x64.exe
 npm run pack:portable
 ```
 

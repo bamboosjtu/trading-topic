@@ -658,6 +658,100 @@ describe("LocalDatabase", () => {
     ).toThrow("备份包含非法行情覆盖记录");
   });
 
+  it("P2-1/P2-2 partial 覆盖含 issues_json 随备份往返，且价格行区间校验生效", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stock-income-partial-backup-"));
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    database.saveLiveMarketPriceSnapshots([
+      {
+        symbol: "601398",
+        prices: [
+          { date: "2026-07-01", close: 5 },
+          { date: "2026-07-14", close: 5.1 },
+          { date: "2026-07-16", close: 5.2 },
+          { date: "2026-07-31", close: 5.3 },
+        ],
+        dividends: [],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T08:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2026-07-15",
+            type: "invalid_ohlcv",
+            severity: "error",
+            message: "OHLCV 校验失败",
+          },
+        ],
+      },
+    ]);
+
+    // 导出并校验备份。
+    const backup = database.exportBackup();
+    const coverageRow = backup.liveMarketCoverage[0]!;
+    expect(coverageRow.result_status).toBe("partial");
+    expect(coverageRow.issues_json).toContain("2026-07-15");
+    expect(coverageRow.issues_json).toContain("invalid_ohlcv");
+
+    const restored = await openDatabase(join(directory, "restored.sqlite"));
+    const validated = validateBackup(
+      backup,
+      restored.getSchemaVersion(),
+      restored.getSchemaFingerprint(),
+    );
+    restored.restoreBackup(validated);
+    const restoredCoverage = restored.listLiveMarketCoverage(["601398"])[0]!;
+    expect(restoredCoverage.resultStatus).toBe("partial");
+    expect(restoredCoverage.issues?.[0]?.date).toBe("2026-07-15");
+    expect(restoredCoverage.issues?.[0]?.type).toBe("invalid_ohlcv");
+
+    // P2-2：手工修改价格行日期到请求区间外，校验应拒绝。
+    const outOfRangeBackup = structuredClone(validated);
+    outOfRangeBackup.liveMarketPrices[0]!.trade_date = "2026-06-30";
+    // 同时修改 data_cutoff 以避免其他校验失败
+    outOfRangeBackup.liveMarketPrices[0]!.data_cutoff = "2026-07-31";
+    expect(() =>
+      validateBackup(
+        outOfRangeBackup,
+        database.getSchemaVersion(),
+        database.getSchemaFingerprint(),
+      ),
+    ).toThrow("超出覆盖请求区间");
+
+    // P2-1：partial 覆盖缺少 issues_json 时应拒绝。
+    const missingIssuesBackup = structuredClone(validated);
+    missingIssuesBackup.liveMarketCoverage[0]!.issues_json = null;
+    expect(() =>
+      validateBackup(
+        missingIssuesBackup,
+        database.getSchemaVersion(),
+        database.getSchemaFingerprint(),
+      ),
+    ).toThrow("缺少 issues_json 详情");
+
+    // P2-1：非 partial 覆盖包含 issues_json 时应拒绝。
+    const nonPartialWithIssuesBackup = structuredClone(validated);
+    nonPartialWithIssuesBackup.liveMarketCoverage[0]!.result_status = "data";
+    nonPartialWithIssuesBackup.liveMarketCoverage[0]!.issues_json =
+      '[{"type":"gap","severity":"error","message":"x"}]';
+    expect(() =>
+      validateBackup(
+        nonPartialWithIssuesBackup,
+        database.getSchemaVersion(),
+        database.getSchemaFingerprint(),
+      ),
+    ).toThrow("非法的 issues_json");
+  });
+
   it("拒绝缺失当前设置、资产类型、目录来源或工作区字段的旧备份", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-backup-contract-"));
     temporaryDirectories.push(directory);

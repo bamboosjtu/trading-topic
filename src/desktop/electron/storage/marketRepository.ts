@@ -43,6 +43,7 @@ export const LIVE_MARKET_COVERAGE_COLUMNS = [
   "adjustment",
   "empty_evidence",
   "result_status",
+  "issues_json",
 ] as const;
 
 interface MarketPriceRow {
@@ -91,10 +92,22 @@ interface MarketCoverageRow {
   adjustment: "none" | "qfq";
   empty_evidence: "exchange_calendar" | "outside_listing" | null;
   result_status: "data" | "empty" | "partial";
+  issues_json: string | null;
 }
 
 /** 将 live_market_coverage SQL 行映射为 StoredMarketCoverage。 */
 function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
+  let issues: StoredMarketCoverage["issues"] | undefined;
+  if (row.issues_json) {
+    try {
+      const parsed = JSON.parse(row.issues_json) as unknown;
+      if (Array.isArray(parsed)) {
+        issues = parsed as StoredMarketCoverage["issues"];
+      }
+    } catch {
+      // 损坏的 issues_json 不影响基本读模型，忽略并降级为无问题详情。
+    }
+  }
   return {
     coverageId: row.coverage_id,
     symbol: row.symbol,
@@ -113,6 +126,7 @@ function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
       ? { emptyEvidence: row.empty_evidence }
       : {}),
     resultStatus: row.result_status,
+    ...((issues && issues.length) ? { issues } : {}),
   };
 }
 
@@ -269,6 +283,10 @@ export function saveLiveMarketPriceSnapshots(
         entry.provenance.adjustment,
         entry.provenance.emptyEvidence ?? null,
         resultStatus,
+        // P2-1：partial 覆盖持久化 error 级别问题列表，用于审计和 confirmedCoverageThrough。
+        resultStatus === "partial" && entry.issues?.length
+          ? JSON.stringify(entry.issues)
+          : null,
       );
       const coverageId = Number(coverageResult.lastInsertRowid);
       for (const row of entry.prices) {

@@ -173,10 +173,24 @@ function confirmedCoverageThrough(
   if (coverage.resultStatus === "empty") {
     return coverage.emptyEvidence ? coverage.requestedThrough : null;
   }
-  // P1-3：partial 状态表示请求范围内存在 error 级别行情问题，
-  // 覆盖不确认完整，返回 null 让 missingLivePriceRanges 重新请求该区间。
+  // P1-2：partial 状态不返回 null（会导致最新交易日也被视为缺失）。
+  // 返回首个 error 日期前一天的连续覆盖截止日；无具体日期时返回 dataCutoff。
+  // 这使得 tailStatus 只取决于最新交易日是否有价格，而非内部坏行。
   if (coverage.resultStatus === "partial") {
-    return null;
+    if (!coverage.dataCutoff) return null;
+    const errorDates = (coverage.issues ?? [])
+      .filter((issue) => issue.severity === "error" && issue.date)
+      .map((issue) => issue.date!)
+      .filter(
+        (date) =>
+          date >= coverage.requestedFrom &&
+          date <= coverage.requestedThrough,
+      )
+      .sort();
+    if (errorDates.length && errorDates[0]! > coverage.requestedFrom) {
+      return addDays(errorDates[0]!, -1);
+    }
+    return coverage.dataCutoff;
   }
   if (!coverage.dataCutoff) return null;
   if (coverage.dataCutoff >= coverage.requestedThrough) {
@@ -194,6 +208,39 @@ interface LivePriceRange {
   symbol: string;
   startDate: string;
   endDate: string;
+}
+
+/**
+ * P1-3：按证券合并重叠或相邻的请求区间。
+ * 同日清仓再买入会生成首尾相接的区间（A.end === B.start），
+ * 不合并会导致两个快照都包含同一天价格，写入时触发价格行冲突。
+ */
+function normalizeRanges(
+  ranges: readonly LivePriceRange[],
+): LivePriceRange[] {
+  const bySymbol = new Map<string, LivePriceRange[]>();
+  for (const range of ranges) {
+    const list = bySymbol.get(range.symbol) ?? [];
+    list.push(range);
+    bySymbol.set(range.symbol, list);
+  }
+  return [...bySymbol.entries()].flatMap(([symbol, list]) => {
+    const sorted = [...list].sort((a, b) =>
+      a.startDate.localeCompare(b.startDate),
+    );
+    type DateRange = { startDate: string; endDate: string };
+    const merged: DateRange[] = [];
+    for (const range of sorted) {
+      const last = merged.at(-1);
+      if (last && range.startDate <= last.endDate) {
+        // 重叠或相邻：扩展到更大的 endDate
+        last.endDate = range.endDate > last.endDate ? range.endDate : last.endDate;
+      } else {
+        merged.push({ startDate: range.startDate, endDate: range.endDate });
+      }
+    }
+    return merged.map((r) => ({ symbol, ...r }));
+  });
 }
 
 function incomePriceRanges(
@@ -735,6 +782,7 @@ export class AppService {
   private liveDataSnapshot(entries?: LedgerEntry[]): {
     entries: LedgerEntry[];
     prices: ReturnType<LocalDatabase["listLiveMarketPrices"]>;
+    coverage: ReturnType<LocalDatabase["listLiveMarketCoverage"]>;
   } {
     const loaded = entries ?? this.database.listLedger();
     const { effective } = activeLedgerEntries(loaded, currentMarketDate());
@@ -744,6 +792,8 @@ export class AppService {
     return {
       entries: loaded,
       prices: this.database.listLiveMarketPrices(symbols),
+      // P1-1：读取覆盖记录，使 buildPositionsOverview 能感知 partial 状态。
+      coverage: this.database.listLiveMarketCoverage(symbols),
     };
   }
 
@@ -809,9 +859,11 @@ export class AppService {
   private async fetchLivePriceRanges(
     ranges: readonly LivePriceRange[],
   ): Promise<{ issues: string[] }> {
+    // P1-3：按证券合并重叠或相邻区间，避免同日清仓再买入产生价格行冲突。
+    const normalized = normalizeRanges(ranges);
     const snapshots: MarketDataCacheEntry[] = [];
     const issues: string[] = [];
-    for (const range of this.missingLivePriceRanges(ranges)) {
+    for (const range of this.missingLivePriceRanges(normalized)) {
       try {
         const response = await fetchMarketPrices(
           range.symbol,
@@ -820,13 +872,15 @@ export class AppService {
         );
         // P1-3：检测请求区间内的 error 级别行情问题。
         // 即使尾部完整，只要请求范围内存在 error（如被丢弃的非法 OHLCV 行），
-        // 覆盖标记为 partial，confirmedCoverageThrough 返回 null，
-        // missingLivePriceRanges 后续会重新请求该区间。
-        const hasError = hasErrorInRequestRange(
-          response.issues,
-          range.startDate,
-          range.endDate,
+        // 覆盖标记为 partial，confirmedCoverageThrough 返回首个错误日期前的截止日，
+        // missingLivePriceRanges 后续会重新请求错误日期之后的区间。
+        const errorIssuesInRange = response.issues.filter(
+          (issue) =>
+            issue.severity === "error" &&
+            (!issue.date ||
+              (issue.date >= range.startDate && issue.date <= range.endDate)),
         );
+        const hasError = errorIssuesInRange.length > 0;
         snapshots.push({
           symbol: range.symbol,
           prices: response.rows,
@@ -834,7 +888,13 @@ export class AppService {
           provenance: response.provenance,
           requestedFrom: range.startDate,
           requestedThrough: range.endDate,
-          ...(hasError ? { resultStatus: "partial" as const } : {}),
+          ...(hasError
+            ? {
+                resultStatus: "partial" as const,
+                // P2-1：持久化 error 级别问题列表，用于审计和读模型。
+                issues: errorIssuesInRange,
+              }
+            : {}),
         });
         if (response.tailStatus === "incomplete") {
           issues.push(
@@ -875,6 +935,8 @@ export class AppService {
       snapshot.prices,
       this.localStockUniverse(),
       { factAsOfDate, valuationCutoff },
+      // P1-1：传入覆盖记录，使读模型能感知 partial 状态。
+      snapshot.coverage,
     );
   }
 
@@ -912,11 +974,13 @@ export class AppService {
         range.endDate,
       );
       // P1-3：检测请求区间内的 error 级别行情问题，标记覆盖为 partial。
-      const hasError = hasErrorInRequestRange(
-        response.issues,
-        range.startDate,
-        range.endDate,
+      const errorIssuesInRange = response.issues.filter(
+        (issue) =>
+          issue.severity === "error" &&
+          (!issue.date ||
+            (issue.date >= range.startDate && issue.date <= range.endDate)),
       );
+      const hasError = errorIssuesInRange.length > 0;
       snapshots.push({
         symbol: range.symbol,
         prices: response.rows,
@@ -924,7 +988,13 @@ export class AppService {
         provenance: response.provenance,
         requestedFrom: range.startDate,
         requestedThrough: range.endDate,
-        ...(hasError ? { resultStatus: "partial" as const } : {}),
+        ...(hasError
+          ? {
+              resultStatus: "partial" as const,
+              // P2-1：持久化 error 级别问题列表，用于审计和读模型。
+              issues: errorIssuesInRange,
+            }
+          : {}),
       });
       if (response.tailStatus === "incomplete") {
         fetchIssues.push(
@@ -935,13 +1005,10 @@ export class AppService {
         );
       }
       // P1-1：error 级别问题即使尾部完整也标记数据质量降级。
-      const errorIssues = response.issues.filter(
-        (issue) => issue.severity === "error",
-      );
-      if (errorIssues.length) {
+      if (hasError) {
         hasDataQualityError = true;
         fetchIssues.push(
-          `${range.symbol} 行情数据质量问题：${formatMarketIssues(errorIssues).join("；")}`,
+          `${range.symbol} 行情数据质量问题：${formatMarketIssues(errorIssuesInRange).join("；")}`,
         );
       }
     }
@@ -959,14 +1026,21 @@ export class AppService {
       latestBySymbol.size === symbols.length
         ? [...latestBySymbol.values()].sort()[0]
         : null;
-    const tailComplete =
-      this.missingLivePriceRanges(
-        symbols.map((symbol) => ({
-          symbol,
-          startDate: endDate,
-          endDate,
-        })),
-      ).length === 0;
+    // P1-2：tailStatus 只取决于最新正式交易日是否有价格，不因内部坏行降级。
+    // missingLivePriceRanges 对 partial 覆盖会返回首个错误日期之后的缺失区间，
+    // 但只要 endDate 本身有价格（所有标的），tail 就是 complete。
+    // 内部数据质量问题通过 qualityStatus = partial 表达，与 tailStatus 独立。
+    const tailMissingDueToClosure = this.missingLivePriceRanges(
+      symbols.map((symbol) => ({
+        symbol,
+        startDate: endDate,
+        endDate,
+      })),
+    );
+    const hasEndPriceForAll = symbols.every(
+      (symbol) => latestBySymbol.get(symbol) === endDate,
+    );
+    const tailComplete = tailMissingDueToClosure.length === 0 || hasEndPriceForAll;
     const overview = this.getPositionsOverview();
     const refreshIssue = tailComplete
       ? null

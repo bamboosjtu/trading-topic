@@ -7,6 +7,7 @@ import type {
   PeriodPerformance,
   PositionsOverview,
   StockInfo,
+  StoredMarketCoverage,
   StoredMarketPrice,
   XirrStatus,
 } from "../../shared/contracts";
@@ -346,11 +347,65 @@ function investmentXirr(
     : { value, status: "ready" };
 }
 
+/**
+ * P1-1：筛选与当前持仓和估值区间相关的 partial 覆盖记录。
+ *
+ * 相关性判定：
+ * - 覆盖 symbol 属于当前持仓；
+ * - 覆盖请求区间与持仓区间 [positionStartDate, valuationCutoff] 有交集；
+ * - 覆盖为 partial 且 issues 中存在 error 级别问题落在交集内。
+ *
+ * 返回的 issues 用于写入 quality.issues，使 status 自动降级为 partial。
+ */
+function relevantPartialCoverageIssues(
+  coverage: readonly StoredMarketCoverage[],
+  heldSymbols: readonly string[],
+  positionStartBySymbol: ReadonlyMap<string, string>,
+  valuationCutoff: string | null,
+): string[] {
+  if (!coverage.length || !heldSymbols.length || !valuationCutoff) {
+    return [];
+  }
+  const heldSet = new Set(heldSymbols);
+  const issues: string[] = [];
+  for (const item of coverage) {
+    if (item.resultStatus !== "partial") continue;
+    if (!heldSet.has(item.symbol)) continue;
+    const positionStart = positionStartBySymbol.get(item.symbol);
+    if (!positionStart) continue;
+    // 求持仓区间与覆盖请求区间的交集
+    const overlapStart =
+      positionStart > item.requestedFrom ? positionStart : item.requestedFrom;
+    const overlapEnd =
+      valuationCutoff < item.requestedThrough
+        ? valuationCutoff
+        : item.requestedThrough;
+    if (overlapStart > overlapEnd) continue;
+    const errorIssues = (item.issues ?? []).filter((issue) => {
+      if (issue.severity !== "error") return false;
+      if (!issue.date) return true;
+      return issue.date >= overlapStart && issue.date <= overlapEnd;
+    });
+    if (errorIssues.length) {
+      const detail = errorIssues
+        .map((issue) =>
+          issue.date ? `${issue.date} ${issue.message}` : issue.message,
+        )
+        .join("；");
+      issues.push(
+        `${item.symbol} 行情覆盖 ${item.requestedFrom}..${item.requestedThrough} 存在数据质量问题：${detail}`,
+      );
+    }
+  }
+  return issues;
+}
+
 export function buildPositionsOverview(
   entries: readonly LedgerEntry[],
   prices: readonly StoredMarketPrice[],
   stocks: readonly StockInfo[],
   boundary?: LiveModelBoundary,
+  coverage?: readonly StoredMarketCoverage[],
 ): PositionsOverview {
   const model = buildLiveModel(
     entries,
@@ -468,8 +523,27 @@ export function buildPositionsOverview(
     model.cutoff ?? lastFactDate,
     marketValue,
   );
+  // P1-1：将 partial 覆盖的 error 问题纳入读模型，使质量状态在应用重启后仍为 partial。
+  // 持仓起始日取该标的当前持仓周期内的首笔有效事实日（保守用最早有效事实日）。
+  const heldSymbols = currentPositions.map(([symbol]) => symbol);
+  const positionStartBySymbol = new Map<string, string>();
+  for (const symbol of heldSymbols) {
+    const firstDate = model.effectiveEntries
+      .filter((entry) => entry.symbol === symbol)
+      .map((entry) => entry.businessDate)
+      .sort()[0];
+    if (firstDate) positionStartBySymbol.set(symbol, firstDate);
+  }
+  const partialCoverageIssues = coverage
+    ? relevantPartialCoverageIssues(
+        coverage,
+        heldSymbols,
+        positionStartBySymbol,
+        model.cutoff,
+      )
+    : [];
   return {
-    quality: qualityFor(model, hasFacts),
+    quality: qualityFor(model, hasFacts, partialCoverageIssues),
     hasLedgerEntries: hasFacts,
     metrics: {
       marketValue: hasFacts ? marketValue : null,

@@ -28,7 +28,7 @@ const NAV_GROUPS: NavigationGroup[] = [
   {
     label: "研究",
     items: [
-      { key: "/backtest", icon: <FundProjectionScreenOutlined />, label: "历史回测" },
+      { key: "/backtest", icon: <FundProjectionScreenOutlined />, label: "定投回测" },
     ],
   },
   {
@@ -89,10 +89,10 @@ export function AppLayout() {
       >
         <div className="flex h-full flex-col">
           <div className="app-brand">
-            <div className="brand-mark">攒</div>
+            <div className="brand-mark">研</div>
             <div className="brand-copy">
-              <div className="brand-name">攒股收息</div>
-              <div className="brand-en">DIVIDEND DESK</div>
+              <div className="brand-name">投资研究实验室</div>
+              <div className="brand-en">INVESTMENT LAB</div>
             </div>
           </div>
 

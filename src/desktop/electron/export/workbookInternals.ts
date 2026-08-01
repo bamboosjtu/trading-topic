@@ -29,7 +29,7 @@ export const PNL_PERCENT_NUM_FMT = "[Red]+0.00%;[Green]-0.00%;0.00%";
 /** 创建带统一 creator/created 元数据的工作簿。 */
 export function createWorkbook(): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "攒股收息";
+  workbook.creator = "投资研究实验室";
   workbook.created = new Date();
   return workbook;
 }

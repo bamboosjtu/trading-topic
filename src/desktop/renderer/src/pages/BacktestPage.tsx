@@ -243,7 +243,7 @@ export function BacktestPage() {
   return (
     <div className="backtest-page">
       <header className="page-heading backtest-heading">
-        <h1>历史回测</h1>
+        <h1>定投回测</h1>
         <div className="backtest-heading-meta">
           <p>固定金额、定投买入、分红再投资，长期走势与收益风险分析</p>
           <button
