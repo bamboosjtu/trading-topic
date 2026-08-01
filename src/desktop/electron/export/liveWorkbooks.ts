@@ -6,8 +6,9 @@ import type {
 import {
   addProvenanceSheet,
   createWorkbook,
-  MONEY_NUM_FMT,
-  PERCENT_NUM_FMT,
+  MONEY_NEUTRAL_NUM_FMT,
+  PNL_MONEY_NUM_FMT,
+  PNL_PERCENT_NUM_FMT,
   styleWorksheet,
   workbookToBuffer,
 } from "./workbookInternals";
@@ -53,18 +54,18 @@ export async function buildPositionsWorkbook(
     "cumulativeSellNetIncome",
     "netInvestment",
     "pendingReinvestmentCash",
-    "unrealizedPnl",
-    "realizedPnl",
     "cumulativeDividend",
-    "totalReturn",
   ]) {
-    sheet.getColumn(key).numFmt = MONEY_NUM_FMT;
+    sheet.getColumn(key).numFmt = MONEY_NEUTRAL_NUM_FMT;
+  }
+  for (const key of ["unrealizedPnl", "realizedPnl", "totalReturn"]) {
+    sheet.getColumn(key).numFmt = PNL_MONEY_NUM_FMT;
   }
   for (const key of ["averageCost", "lastPrice"]) {
     sheet.getColumn(key).numFmt = "0.000";
   }
   sheet.getColumn("quantity").numFmt = "#,##0.00";
-  sheet.getColumn("xirr").numFmt = PERCENT_NUM_FMT;
+  sheet.getColumn("xirr").numFmt = PNL_PERCENT_NUM_FMT;
   styleWorksheet(sheet);
   addProvenanceSheet(workbook, overview.provenance);
   return workbookToBuffer(workbook);
@@ -104,9 +105,9 @@ export async function buildIncomeCalendarWorkbook(
     "dividendPnl",
     "tradingCostPnl",
   ]) {
-    days.getColumn(key).numFmt = MONEY_NUM_FMT;
+    days.getColumn(key).numFmt = PNL_MONEY_NUM_FMT;
   }
-  days.getColumn("returnRate").numFmt = PERCENT_NUM_FMT;
+  days.getColumn("returnRate").numFmt = PNL_PERCENT_NUM_FMT;
   styleWorksheet(days);
 
   const contributions = workbook.addWorksheet("标的贡献");
@@ -131,7 +132,7 @@ export async function buildIncomeCalendarWorkbook(
     "tradingCostPnl",
     "totalPnl",
   ]) {
-    contributions.getColumn(key).numFmt = MONEY_NUM_FMT;
+    contributions.getColumn(key).numFmt = PNL_MONEY_NUM_FMT;
   }
   styleWorksheet(contributions);
   addProvenanceSheet(workbook, view.provenance);
@@ -187,7 +188,7 @@ export async function buildLedgerWorkbook(
     });
   }
   for (const key of ["amount", "fee", "perShare"]) {
-    sheet.getColumn(key).numFmt = MONEY_NUM_FMT;
+    sheet.getColumn(key).numFmt = MONEY_NEUTRAL_NUM_FMT;
   }
   sheet.getColumn("price").numFmt = "0.000";
   sheet.getColumn("quantity").numFmt = "#,##0.00";

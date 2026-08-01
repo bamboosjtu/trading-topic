@@ -214,7 +214,12 @@ describe("LocalDatabase", () => {
     const restored = await openDatabase(
       join(directory, "restored.sqlite"),
     );
-    restored.restoreBackup(backup);
+    const validated = validateBackup(
+      backup,
+      restored.getSchemaVersion(),
+      restored.getSchemaFingerprint(),
+    );
+    restored.restoreBackup(validated);
     expect(restored.listLedger()[0].source).toBe("restore");
     expect(restored.getBacktestExperiment("experiment-1")?.results[0].id).toBe(
       "experiment-1-result",
@@ -294,7 +299,11 @@ describe("LocalDatabase", () => {
     ]);
 
     const restored = await openDatabase(join(directory, "restored.sqlite"));
-    const validBackup = database.exportBackup();
+    const validBackup = validateBackup(
+      database.exportBackup(),
+      restored.getSchemaVersion(),
+      restored.getSchemaFingerprint(),
+    );
     restored.restoreBackup(validBackup);
     expect(restored.listLiveMarketCoverage(["601398"])[0]).toMatchObject({
       requestedFrom: "2026-02-15",

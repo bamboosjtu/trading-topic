@@ -54,17 +54,34 @@ export function marketCalendarDiagnostics(
 }
 
 /**
- * 行情尾部只能由请求结束日期所在年度的官方日历确认。历史区间内部允许
- * 缺少年度日历，因为内部缺口仍由行情结构校验负责，不能据此推断休市。
- * 历史浏览、备份、日志和设置不调用此门禁，应用本身也不会因此退出。
+ * 校验行情请求区间的日期格式与顺序，不检查年度日历可用性。
+ *
+ * 年度日历的检查已从联网前门禁改为后置判断：数据精确到达请求结束日时
+ * 不需要日历；数据截止早于结束日时由 `isConfirmedMarketClosureRange`
+ * 判断尾部缺口是否属于合法休市。历史区间内部始终不需要年度日历。
  */
-export function assertMarketCalendarOfficialForRange(
+export function assertValidMarketDateRange(
   startDate: string,
   endDate: string,
 ): void {
   if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
     throw new Error("行情请求区间必须使用合法且有序的 YYYY-MM-DD");
   }
+}
+
+/**
+ * 行情尾部只能由请求结束日期所在年度的官方日历确认。历史区间内部允许
+ * 缺少年度日历，因为内部缺口仍由行情结构校验负责，不能据此推断休市。
+ * 历史浏览、备份、日志和设置不调用此门禁，应用本身也不会因此退出。
+ *
+ * @deprecated 新调用方应使用 {@link assertValidMarketDateRange}；
+ * 年度日历检查已改为后置判断，见 `marketTailStatus`。
+ */
+export function assertMarketCalendarOfficialForRange(
+  startDate: string,
+  endDate: string,
+): void {
+  assertValidMarketDateRange(startDate, endDate);
   const endYear = Number(endDate.slice(0, 4));
   const endCalendar = ANNUAL_MARKET_CALENDARS.find(
     (item) => item.year === endYear,

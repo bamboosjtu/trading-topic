@@ -12,26 +12,35 @@ function provider(
 ): MarketDataProvider {
   return {
     source,
-    fetchPrices: vi.fn(async () => [
-      { date: "2026-07-27", close },
-      { date: "2026-07-28", close: close + 0.1 },
-    ]),
-    fetchAdjustedBars: vi.fn(async () => [
-      {
-        date: "2026-07-28",
-        open: close,
-        high: close + 0.2,
-        low: close - 0.1,
-        close: close + 0.1,
-        volume: 100,
-        adjustment: "qfq" as const,
-      },
-    ]),
+    fetchPrices: vi.fn(async () => ({
+      rows: [
+        { date: "2026-07-27", close },
+        { date: "2026-07-28", close: close + 0.1 },
+      ],
+      issues: [],
+    })),
+    fetchAdjustedBars: vi.fn(async () => ({
+      rows: [
+        {
+          date: "2026-07-28",
+          open: close,
+          high: close + 0.2,
+          low: close - 0.1,
+          close: close + 0.1,
+          volume: 100,
+          adjustment: "qfq" as const,
+        },
+      ],
+      issues: [],
+    })),
   };
 }
 
 describe("腾讯主源与新浪整段兜底", () => {
-  it("缺少请求结束年度官方日历时在访问行情源前给出明确原因", async () => {
+  it("缺少请求结束年度官方日历时不阻止联网，由数据完整性判断", async () => {
+    // 年度日历检查已从联网前门禁改为后置判断。
+    // 即使结束年度（2023）没有官方日历，请求仍应到达数据源。
+    // 数据源返回区间外日期时由 assertRequestedRange 拦截。
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
 
@@ -45,16 +54,22 @@ describe("腾讯主源与新浪整段兜底", () => {
         fallback,
         new Date("2026-07-30T08:00:00Z"),
       ),
-    ).rejects.toThrow("请求结束日期所在年度");
-    expect(primary.fetchPrices).not.toHaveBeenCalled();
-    expect(fallback.fetchPrices).not.toHaveBeenCalled();
+    ).rejects.toThrow("请求区间之外");
+    // 关键：网络请求已被发起，而非被日历门禁拦截
+    expect(primary.fetchPrices).toHaveBeenCalled();
   });
 
   it("两个来源均合法返回空区间时保留空结果而不是报数据源失败", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([]);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
     const result = await fetchWithProviderFallback(
       "prices",
       "601398",
@@ -79,7 +94,10 @@ describe("腾讯主源与新浪整段兜底", () => {
     vi.mocked(primary.fetchPrices).mockRejectedValueOnce(
       new Error("HTTP 503"),
     );
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
     await expect(
       fetchWithProviderFallback(
         "prices",
@@ -98,10 +116,14 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("腾讯结构异常且新浪返回空时拒绝生成永久空覆盖", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([
-      { date: "not-a-date", close: 5 },
-    ]);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce({
+      rows: [{ date: "not-a-date", close: 5 }],
+      issues: [],
+    });
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
     await expect(
       fetchWithProviderFallback(
         "prices",
@@ -120,8 +142,14 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("两源均空但区间包含正常交易日时保持待重试而不是确认休市", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([]);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
     await expect(
       fetchWithProviderFallback(
         "prices",
@@ -138,10 +166,14 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("异常候选行情不能被备用源空结果掩盖为合法休市区间", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([
-      { date: "2026-07-28", close: -1 },
-    ]);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce({
+      rows: [{ date: "2026-07-28", close: -1 }],
+      issues: [],
+    });
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
     await expect(
       fetchWithProviderFallback(
         "prices",
@@ -187,11 +219,14 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("收盘后腾讯缺少当天尾部时继续请求新浪完整区间", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([
-      { date: "2026-07-27", close: 5 },
-      { date: "2026-07-28", close: 5.1 },
-      { date: "2026-07-29", close: 5.2 },
-    ]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [
+        { date: "2026-07-27", close: 5 },
+        { date: "2026-07-28", close: 5.1 },
+        { date: "2026-07-29", close: 5.2 },
+      ],
+      issues: [],
+    });
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -219,7 +254,10 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("腾讯尾部不完整且新浪为空时显式返回 incomplete 和兜底问题", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([]);
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [],
+      issues: [],
+    });
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -253,13 +291,17 @@ describe("腾讯主源与新浪整段兜底", () => {
   it("新浪非空结果也校验尾部，两源均不完整时选择较新的截止日", async () => {
     const primary = provider("tencent", 5);
     const fallback = provider("sina", 5);
-    vi.mocked(primary.fetchPrices).mockResolvedValueOnce([
-      { date: "2026-07-27", close: 5 },
-      { date: "2026-07-28", close: 5.1 },
-    ]);
-    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce([
-      { date: "2026-07-27", close: 5 },
-    ]);
+    vi.mocked(primary.fetchPrices).mockResolvedValueOnce({
+      rows: [
+        { date: "2026-07-27", close: 5 },
+        { date: "2026-07-28", close: 5.1 },
+      ],
+      issues: [],
+    });
+    vi.mocked(fallback.fetchPrices).mockResolvedValueOnce({
+      rows: [{ date: "2026-07-27", close: 5 }],
+      issues: [],
+    });
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -312,38 +354,44 @@ describe("腾讯主源与新浪整段兜底", () => {
 
   it("前复权 K 线兜底也执行跨源收盘价一致性校验", async () => {
     const primary = provider("tencent", 5);
-    vi.mocked(primary.fetchAdjustedBars).mockImplementationOnce(async () => [
-      {
-        date: "2026-07-28",
-        open: 5,
-        high: 5.2,
-        low: 4.9,
-        close: 5.1,
-        volume: 100,
-        adjustment: "qfq",
-      },
-    ]);
+    vi.mocked(primary.fetchAdjustedBars).mockImplementationOnce(async () => ({
+      rows: [
+        {
+          date: "2026-07-28",
+          open: 5,
+          high: 5.2,
+          low: 4.9,
+          close: 5.1,
+          volume: 100,
+          adjustment: "qfq",
+        },
+      ],
+      issues: [],
+    }));
     const fallback = provider("sina", 6);
-    vi.mocked(fallback.fetchAdjustedBars).mockResolvedValueOnce([
-      {
-        date: "2026-07-28",
-        open: 6,
-        high: 6.2,
-        low: 5.9,
-        close: 6.1,
-        volume: 100,
-        adjustment: "qfq",
-      },
-      {
-        date: "2026-07-29",
-        open: 6.1,
-        high: 6.3,
-        low: 6,
-        close: 6.2,
-        volume: 100,
-        adjustment: "qfq",
-      },
-    ]);
+    vi.mocked(fallback.fetchAdjustedBars).mockResolvedValueOnce({
+      rows: [
+        {
+          date: "2026-07-28",
+          open: 6,
+          high: 6.2,
+          low: 5.9,
+          close: 6.1,
+          volume: 100,
+          adjustment: "qfq",
+        },
+        {
+          date: "2026-07-29",
+          open: 6.1,
+          high: 6.3,
+          low: 6,
+          close: 6.2,
+          volume: 100,
+          adjustment: "qfq",
+        },
+      ],
+      issues: [],
+    });
 
     await expect(
       fetchWithProviderFallback(

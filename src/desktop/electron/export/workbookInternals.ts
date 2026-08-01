@@ -8,10 +8,23 @@ import type { MarketDataProvenance } from "../../shared/contracts";
  * 避免两份近似的私有实现因排版/配色漂移而割裂。
  */
 
-/** 货币格式：负数红色，正数默认黑色。 */
-export const MONEY_NUM_FMT = "¥#,##0.00;[Red]-¥#,##0.00";
-/** 百分比格式：负数绿色（收益场景下负值用绿色强调），正值默认黑色。 */
-export const PERCENT_NUM_FMT = "0.00%;[Green]-0.00%";
+/**
+ * 中性金额格式：买入支出、卖出收入、累计分红等不带盈亏语义的金额。
+ * 正负数均使用默认黑色，不做红绿着色。
+ */
+export const MONEY_NEUTRAL_NUM_FMT = "¥#,##0.00;-¥#,##0.00;¥0.00";
+
+/**
+ * 盈亏金额格式：A 股语境"红盈绿亏"。
+ * 正数红色（盈利），负数绿色（亏损），零值不着色。
+ */
+export const PNL_MONEY_NUM_FMT = "[Red]+¥#,##0.00;[Green]-¥#,##0.00;¥0.00";
+
+/**
+ * 盈亏百分比格式：A 股语境"红盈绿亏"。
+ * 用于收益率、回撤等盈亏比例字段。
+ */
+export const PNL_PERCENT_NUM_FMT = "[Red]+0.00%;[Green]-0.00%;0.00%";
 
 /** 创建带统一 creator/created 元数据的工作簿。 */
 export function createWorkbook(): ExcelJS.Workbook {

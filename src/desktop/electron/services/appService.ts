@@ -93,6 +93,7 @@ function isCompleteAStockUniverse(stocks: readonly StockInfo[]): boolean {
  */
 interface BacktestMarketDataBundle {
   symbol: string;
+  name: string;
   prices: Awaited<ReturnType<typeof fetchMarketPrices>>;
   dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
   chartData: BacktestResult["chartData"];
@@ -406,6 +407,7 @@ export class AppService {
       );
       marketData.push({
         symbol,
+        name: instrumentMap.get(symbol)?.name ?? symbol,
         prices,
         dividends,
         chartData: { status: "ready", data: adjustedBars.rows },
@@ -425,8 +427,7 @@ export class AppService {
     experimentId: string,
     createdAt: string,
   ): Promise<{ results: BacktestResult[]; dataCutoff: string }> {
-    const stocks = await this.listAStocks();
-    const names = new Map(stocks.map((stock) => [stock.symbol, stock.name]));
+    const names = new Map(marketData.map(({ symbol, name }) => [symbol, name]));
     const dataCutoff = marketData
       .map(({ prices }) => prices.provenance.dataCutoff)
       .filter((date): date is string => Boolean(date))

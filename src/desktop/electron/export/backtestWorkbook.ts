@@ -8,8 +8,9 @@ import type {
 import { backtestResultToSimpleResult } from "../domain/analysis";
 import {
   createWorkbook,
-  MONEY_NUM_FMT,
-  PERCENT_NUM_FMT,
+  MONEY_NEUTRAL_NUM_FMT,
+  PNL_MONEY_NUM_FMT,
+  PNL_PERCENT_NUM_FMT,
   styleWorksheet,
   workbookToBuffer,
 } from "./workbookInternals";
@@ -123,14 +124,14 @@ function addSummarySheet(
     "monthlyAmount",
     "totalContribution",
     "endingAsset",
-    "totalPnl",
     "totalDividend",
     "endingCash",
   ]) {
-    worksheet.getColumn(key).numFmt = MONEY_NUM_FMT;
+    worksheet.getColumn(key).numFmt = MONEY_NEUTRAL_NUM_FMT;
   }
-  worksheet.getColumn("xirr").numFmt = PERCENT_NUM_FMT;
-  worksheet.getColumn("maxDrawdown").numFmt = PERCENT_NUM_FMT;
+  worksheet.getColumn("totalPnl").numFmt = PNL_MONEY_NUM_FMT;
+  worksheet.getColumn("xirr").numFmt = PNL_PERCENT_NUM_FMT;
+  worksheet.getColumn("maxDrawdown").numFmt = PNL_PERCENT_NUM_FMT;
   styleWorksheet(worksheet);
 }
 
@@ -185,12 +186,12 @@ function addDetailSheet(
     "cumulativeDividend",
     "endingCash",
   ]) {
-    worksheet.getColumn(key).numFmt = MONEY_NUM_FMT;
+    worksheet.getColumn(key).numFmt = MONEY_NEUTRAL_NUM_FMT;
   }
   worksheet.getColumn("price").numFmt = "0.00";
   worksheet.getColumn("shares").numFmt = "0.00";
   worksheet.getColumn("cumulativeShares").numFmt = "0.00";
-  worksheet.getColumn("returnRate").numFmt = PERCENT_NUM_FMT;
+  worksheet.getColumn("returnRate").numFmt = PNL_PERCENT_NUM_FMT;
   styleWorksheet(worksheet);
 }
 

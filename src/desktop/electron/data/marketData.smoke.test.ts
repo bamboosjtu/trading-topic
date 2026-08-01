@@ -49,23 +49,20 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
       );
       for (const marketCase of CASES) {
         const priceRowsBySource = new Map<string, PricePoint[]>();
-        const barRowsBySource = new Map<
-          string,
-          Awaited<ReturnType<MarketDataProvider["fetchAdjustedBars"]>>
-        >();
+        const barRowsBySource = new Map<string, AdjustedBar[]>();
         for (const provider of [tencentProvider, sinaProvider]) {
-          let prices: PricePoint[];
-          let bars: Awaited<
-            ReturnType<MarketDataProvider["fetchAdjustedBars"]>
-          > | null = null;
+          let prices: PricePoint[] = [];
+          let bars: AdjustedBar[] = [];
           let priceError: string | null = null;
           let barError: string | null = null;
           try {
-            prices = await provider.fetchPrices(
-              marketCase.symbol,
-              START_DATE,
-              END_DATE,
-            );
+            prices = (
+              await provider.fetchPrices(
+                marketCase.symbol,
+                START_DATE,
+                END_DATE,
+              )
+            ).rows;
           } catch (error) {
             throw new Error(
               `${marketCase.label}/${provider.source}/不复权：${
@@ -74,11 +71,13 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
             );
           }
           try {
-            bars = await provider.fetchAdjustedBars(
-              marketCase.symbol,
-              START_DATE,
-              END_DATE,
-            );
+            bars = (
+              await provider.fetchAdjustedBars(
+                marketCase.symbol,
+                START_DATE,
+                END_DATE,
+              )
+            ).rows;
           } catch (error) {
             barError =
               error instanceof Error ? error.message : String(error);
@@ -104,7 +103,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
               );
             }
           }
-          if (bars) {
+          if (bars.length) {
             validateAdjustedBars(
               bars,
               marketCase.symbol,
@@ -116,7 +115,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
             ...marketCase,
             source: provider.source,
             unadjustedRows: prices.length,
-            qfqRows: bars?.length ?? 0,
+            qfqRows: bars.length,
             ...(priceError ? { unadjustedError: priceError } : {}),
             ...(barError ? { qfqError: barError } : {}),
             dataCutoff: prices.at(-1)?.date,
@@ -178,7 +177,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
 
       const longRangeStart = "2011-07-25";
       const longRangeEnd = END_DATE;
-      const [longPrices, longBars] = await Promise.all([
+      const [longPricesResult, longBarsResult] = await Promise.all([
         sinaProvider.fetchPrices("600519", longRangeStart, longRangeEnd),
         sinaProvider.fetchAdjustedBars(
           "600519",
@@ -186,6 +185,8 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
           longRangeEnd,
         ),
       ]);
+      const longPrices = longPricesResult.rows;
+      const longBars = longBarsResult.rows;
       validatePricePoints(longPrices, "600519", "新浪长区间");
       validateAdjustedBars(longBars, "600519", "新浪长区间");
       expect(longPrices.length).toBeGreaterThan(3_000);

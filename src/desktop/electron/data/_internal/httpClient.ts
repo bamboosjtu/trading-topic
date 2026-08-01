@@ -22,29 +22,47 @@ export interface FetchWithTimeoutOptions extends RequestInit {
 /**
  * 发起带超时的 fetch 请求，自动注入 User-Agent 头。
  *
- * 超时后会 abort 请求并抛出 `<label>请求超时`（无 label 时回退为"数据源"）。
+ * 超时会 abort 请求并抛出 `<label>请求超时`（无 label 时回退为"数据源"）。
+ * 如果调用方传入了外部 `signal`，外部取消会立即生效，超时取消也会生效，
+ * 两者任一触发都会 abort 请求。
+ *
+ * Headers 合并使用 `Headers` 构造器，正确处理 `Headers` 对象、二维数组
+ * 和普通对象三种 `RequestInit.headers` 形态。
+ *
  * 调用方负责检查 `response.ok` 并解析响应体。
  */
 export async function fetchWithTimeout(
   url: URL | string,
   options: FetchWithTimeoutOptions = {},
 ): Promise<Response> {
-  const { timeoutMs = 15_000, label = "数据源", headers, ...rest } = options;
+  const { timeoutMs = 15_000, label = "数据源", headers, signal: externalSignal, ...rest } = options;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  // 组合外部 signal 与超时 signal：外部取消或超时任一触发都 abort。
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
+
   try {
+    // 使用 Headers 构造器正确合并，支持 Headers 对象、数组、普通对象。
+    const mergedHeaders = new Headers(headers);
+    mergedHeaders.set("User-Agent", DEFAULT_USER_AGENT);
+
     const response = await fetch(url, {
       ...rest,
       signal: controller.signal,
-      headers: {
-        "User-Agent": DEFAULT_USER_AGENT,
-        ...headers,
-      },
+      headers: mergedHeaders,
     });
     return response;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`${label}请求超时`);
+      const cause = externalSignal?.aborted ? "外部取消" : "超时";
+      throw new Error(`${label}请求${cause === "外部取消" ? "被外部取消" : "超时"}`);
     }
     throw error;
   } finally {

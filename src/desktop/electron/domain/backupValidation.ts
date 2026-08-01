@@ -7,6 +7,7 @@ import type {
   BackupPayload,
   DividendEvent,
   LedgerEntry,
+  ValidatedBackupPayload,
 } from "../../shared/contracts";
 import { assertBacktestRequest } from "./analysis";
 import { validDate } from "./dateUtils";
@@ -535,7 +536,7 @@ export function validateBackup(
   payload: unknown,
   schemaVersion: number,
   schemaFingerprint: string,
-): BackupPayload {
+): ValidatedBackupPayload {
   if (
     !isObject(payload) ||
     payload.schemaVersion !== schemaVersion ||
@@ -569,5 +570,5 @@ export function validateBackup(
   assertMarketSnapshots(backup);
   assertDirectory(backup);
   assertWorkspace(backup.backtestWorkspace, backup.backtestExperiments);
-  return backup;
+  return backup as ValidatedBackupPayload;
 }

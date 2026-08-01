@@ -18,6 +18,7 @@ import type {
   StoredMarketPrice,
   StoredStockInfo,
   StockInfo,
+  ValidatedBackupPayload,
 } from "../../shared/contracts";
 
 const SCHEMA_VERSION = 2;
@@ -978,13 +979,18 @@ export class LocalDatabase {
   /**
    * 用已校验的备份覆盖当前数据库。
    *
-   * **调用方必须在调用前先执行 `validateBackup(payload, schemaVersion,
-   * schemaFingerprint)`**，确保领域完整性。本方法只负责在事务内写入，
-   * 不再做领域校验——这样 storage 层不再反向依赖 domain。
+   * 参数类型 `ValidatedBackupPayload` 是 branded type，只有
+   * `validateBackup()` 能产生。调用方必须先校验：
    *
-   * 安全校验失败时应由调用方（main 进程）拦截，不会进入此方法。
+   * ```ts
+   * const validated = validateBackup(payload, version, fingerprint);
+   * database.restoreBackup(validated);
+   * ```
+   *
+   * TypeScript 会拒绝直接传入 `BackupPayload` 或 `unknown`，
+   * 避免未校验的备份触发破坏性覆盖。
    */
-  restoreBackup(backup: BackupPayload): void {
+  restoreBackup(backup: ValidatedBackupPayload): void {
     this.database.transaction(() => {
       // 不删除 app_logs 与 schema_metadata：
       // - app_logs 保留恢复操作前后的运行日志，便于审计；

@@ -15,7 +15,7 @@ import {
   fetchSinaUnadjustedPrices,
 } from "./sina";
 import {
-  assertMarketCalendarOfficialForRange,
+  assertValidMarketDateRange,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestWeekdayCandidate,
@@ -27,27 +27,40 @@ import {
   validDate,
 } from "../domain/dateUtils";
 
+/** 适配器返回的行级解析结果：有效行 + 解析期间发现的问题。 */
+export interface ProviderFetchResult<T> {
+  rows: T[];
+  /** 行级解析问题，例如"新浪丢弃了 2 行非法 OHLCV 数据"。 */
+  issues: string[];
+}
+
 export interface MarketDataProvider {
   readonly source: "tencent" | "sina";
   fetchPrices(
     symbol: string,
     startDate: string,
     endDate: string,
-  ): Promise<PricePoint[]>;
+  ): Promise<ProviderFetchResult<PricePoint>>;
   fetchAdjustedBars(
     symbol: string,
     startDate: string,
     endDate: string,
-  ): Promise<AdjustedBar[]>;
+  ): Promise<ProviderFetchResult<AdjustedBar>>;
 }
 
 export const tencentProvider: MarketDataProvider = {
   source: "tencent",
   async fetchPrices(symbol, startDate, endDate) {
-    return (await fetchTencentUnadjustedPrices(symbol, startDate, endDate)).rows;
+    return {
+      rows: (await fetchTencentUnadjustedPrices(symbol, startDate, endDate)).rows,
+      issues: [],
+    };
   },
   async fetchAdjustedBars(symbol, startDate, endDate) {
-    return (await fetchTencentAdjustedBars(symbol, startDate, endDate)).rows;
+    return {
+      rows: (await fetchTencentAdjustedBars(symbol, startDate, endDate)).rows,
+      issues: [],
+    };
   },
 };
 
@@ -209,11 +222,12 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   fallback: MarketDataProvider,
   now = new Date(),
 ): Promise<MarketFetchResult<T>> {
-  assertMarketCalendarOfficialForRange(startDate, endDate);
+  assertValidMarketDateRange(startDate, endDate);
   interface Candidate {
     rows: T[];
     consistencyRows: PricePoint[];
     tailStatus: MarketTailStatus;
+    rowIssues: string[];
   }
 
   const adjustment = operation === "prices" ? "none" : "qfq";
@@ -222,7 +236,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     provider: MarketDataProvider,
     label: "腾讯" | "新浪",
   ): Promise<Candidate> => {
-    const raw =
+    const { rows: raw, issues: rowIssues } =
       operation === "prices"
         ? await provider.fetchPrices(symbol, startDate, endDate)
         : await provider.fetchAdjustedBars(symbol, startDate, endDate);
@@ -261,6 +275,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
               close,
             })),
       tailStatus: marketTailStatus(completed, endDate, now),
+      rowIssues,
     };
   };
 
@@ -277,7 +292,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         requestedThrough: endDate,
         dataCutoff: primaryCandidate.rows.at(-1)?.date ?? null,
         tailStatus: primaryCandidate.tailStatus,
-        issues: [],
+        issues: primaryCandidate.rowIssues,
         provenance: provenance(
           "tencent",
           primaryCandidate.rows,
@@ -321,7 +336,10 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       requestedThrough: endDate,
       dataCutoff: fallbackCandidate.rows.at(-1)?.date ?? null,
       tailStatus: fallbackCandidate.tailStatus,
-      issues: primaryIssue ? [primaryIssue] : [],
+      issues: [
+        ...(primaryIssue ? [primaryIssue] : []),
+        ...fallbackCandidate.rowIssues,
+      ],
       provenance: provenance(
         "sina",
         fallbackCandidate.rows,
@@ -379,9 +397,11 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     } else if (!fallbackIssue && fallbackEmpty) {
       fallbackIssue = "新浪在请求区间返回空数据";
     }
-    const issues = [primaryIssue, fallbackIssue].filter(
-      (issue): issue is string => Boolean(issue),
-    );
+    const issues = [
+      primaryIssue,
+      fallbackIssue,
+      ...selected.candidate.rowIssues,
+    ].filter((issue): issue is string => Boolean(issue));
     return {
       rows: selected.candidate.rows,
       requestedThrough: endDate,

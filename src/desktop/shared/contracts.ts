@@ -696,6 +696,17 @@ export interface BackupPayload {
   backtestWorkspace: BacktestWorkspaceState | null;
 }
 
+/**
+ * Branded type：只有 `domain/backupValidation.ts` 的 `validateBackup()`
+ * 能产生此类型。`storage/database.ts` 的 `restoreBackup()` 只接受此类型，
+ * 使得 TypeScript 在编译期阻止未校验的 `BackupPayload` 或 `unknown`
+ * 直接传入破坏性恢复。运行时无额外开销——brand 是编译期 phantom 字段。
+ */
+declare const __validatedBackup: unique symbol;
+export type ValidatedBackupPayload = BackupPayload & {
+  readonly [__validatedBackup]: true;
+};
+
 export interface MarketCalendarDiagnostic {
   year: number;
   status: "official" | "pending_official_schedule";
