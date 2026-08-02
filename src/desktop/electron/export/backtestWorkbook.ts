@@ -58,11 +58,11 @@ function eventLabel(event: SimpleBacktestRow["event"]): string {
 }
 
 const DATA_QUALITY_REASON_LABELS: Record<
-  "cross_provider_common_gap" | "calendar_coverage_missing",
+  "cross_provider_common_gap" | "calendar_coverage_partial",
   string
 > = {
   cross_provider_common_gap: "两源共同缺口",
-  calendar_coverage_missing: "未覆盖正式交易日历",
+  calendar_coverage_partial: "未覆盖正式交易日历",
 };
 
 /**
@@ -95,14 +95,20 @@ function formatYearRanges(years: readonly number[]): string {
 
 function dataQualityLevelLabel(
   result: BacktestResult,
-): "strict" | "degraded" {
+): "strict" | "research" | "degraded" {
   return result.dataQuality?.level ?? "strict";
 }
 
 function dataQualityReasonsLabel(result: BacktestResult): string {
   const reasons = result.dataQuality?.reasons ?? [];
   if (!reasons.length) return "";
-  return reasons.map((reason) => DATA_QUALITY_REASON_LABELS[reason]).join("、");
+  return reasons
+    .map((reason) => {
+      return DATA_QUALITY_REASON_LABELS[
+        reason as keyof typeof DATA_QUALITY_REASON_LABELS
+      ];
+    })
+    .join("、");
 }
 
 function uncoveredCalendarYearsLabel(result: BacktestResult): string {

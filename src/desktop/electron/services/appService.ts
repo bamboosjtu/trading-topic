@@ -687,34 +687,41 @@ export class AppService {
       // P1：保存本次回测使用过的证券级停复牌证据，便于以后复现为什么
       // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
       result.interruptionsUsed = interruptions;
-      // 组装结构化数据质量模型
+      // 组装结构化数据质量模型（三级：strict / research / degraded）
+      // - cross_provider_common_gap：真实行情异常，触发 degraded
+      // - calendar_coverage_partial：仅日历覆盖不完整，触发 research
+      // - 同时存在两者时升级为 degraded
       const reasons: Array<
-        "cross_provider_common_gap" | "calendar_coverage_missing"
+        "cross_provider_common_gap" | "calendar_coverage_partial"
       > = [];
-      if (
-        prices.issues.some(
-          (issue) =>
-            issue.severity === "warning" &&
-            issue.classification === "cross_provider_common_gap",
-        )
-      ) {
+      const hasCommonGap = prices.issues.some(
+        (issue) =>
+          issue.severity === "warning" &&
+          issue.classification === "cross_provider_common_gap",
+      );
+      if (hasCommonGap) {
         reasons.push("cross_provider_common_gap");
       }
       const uncoveredCalendarYears = prices.uncoveredCalendarYears ?? [];
       if (uncoveredCalendarYears.length > 0) {
-        reasons.push("calendar_coverage_missing");
+        reasons.push("calendar_coverage_partial");
       }
       const officialCalendarYears = prices.officialCalendarYears ?? [];
+      const level: "strict" | "research" | "degraded" = hasCommonGap
+        ? "degraded"
+        : uncoveredCalendarYears.length > 0
+          ? "research"
+          : "strict";
       result.dataQuality = {
-        level: reasons.length === 0 ? "strict" : "degraded",
+        level,
         reasons: [...new Set(reasons)],
         officialCalendarYears,
         uncoveredCalendarYears,
       };
-      // 兼容字段：新数据统一使用 strict/degraded，
-      // degraded_common_gap 仅用于旧数据兼容。
+      // 兼容字段：research 在旧字段中合并为 degraded（旧字段只有 strict/degraded）。
+      // degraded_common_gap 仅用于历史数据兼容。
       result.dataQualityStatus =
-        result.dataQuality.level === "degraded" ? "degraded" : "strict";
+        level === "strict" ? "strict" : "degraded";
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -742,6 +749,20 @@ export class AppService {
     dataCutoff: string,
     marketData: BacktestMarketDataBundle[],
   ): BacktestExperiment {
+    // 实验级数据质量聚合：任一标的存在 cross_provider_common_gap → degraded；
+    // 否则任一标的存在 calendar_coverage_partial → research；
+    // 否则 strict。
+    const experimentReasons = [
+      ...new Set(
+        results.flatMap((r) => r.dataQuality?.reasons ?? []),
+      ),
+    ];
+    const experimentLevel: "strict" | "research" | "degraded" =
+      experimentReasons.includes("cross_provider_common_gap")
+        ? "degraded"
+        : experimentReasons.includes("calendar_coverage_partial")
+          ? "research"
+          : "strict";
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,
@@ -750,20 +771,12 @@ export class AppService {
       dataCutoff,
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
-      dataQualityStatus: results.some(
-        (r) => r.dataQuality?.level === "degraded",
-      )
-        ? "degraded"
-        : "strict",
+      // 兼容字段：research 合并为 degraded
+      dataQualityStatus:
+        experimentLevel === "strict" ? "strict" : "degraded",
       dataQuality: {
-        level: results.some((r) => r.dataQuality?.level === "degraded")
-          ? "degraded"
-          : "strict",
-        reasons: [
-          ...new Set(
-            results.flatMap((r) => r.dataQuality?.reasons ?? []),
-          ),
-        ],
+        level: experimentLevel,
+        reasons: experimentReasons,
         officialCalendarYears: [
           ...new Set(
             results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),

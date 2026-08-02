@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pagination, Select, Skeleton, Table, Tag } from "antd";
+import { Modal, Pagination, Select, Skeleton, Table, Tag, Tooltip } from "antd";
 import { useQuery } from "@tanstack/react-query";
 import { BACKTEST_DETAIL_PAGE_SIZE } from "../../../../shared/constants";
 import {
@@ -8,6 +8,41 @@ import {
   type SimpleBacktestRow,
 } from "../../api/client";
 import { formatYearRanges, money, percent, pnlClass } from "./formatters";
+
+/**
+ * 渲染数据质量等级标签（用于明细弹窗标题）。
+ *
+ * - strict：不显示标签；
+ * - research：灰色"研究口径"标签，鼠标悬停显示未覆盖年份说明；
+ * - degraded：黄色"降级"标签。
+ */
+function DetailDataQualityTag({
+  level,
+  uncoveredCalendarYears,
+}: {
+  level: "strict" | "research" | "degraded";
+  uncoveredCalendarYears: number[];
+}) {
+  if (level === "strict") return null;
+  if (level === "research") {
+    const yearsText = formatYearRanges(uncoveredCalendarYears);
+    const tooltip = yearsText
+      ? `${yearsText} 未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。`
+      : "未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。";
+    return (
+      <Tooltip title={tooltip}>
+        <Tag color="default" bordered={false}>
+          研究口径
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tag color="warning" bordered={false}>
+      降级
+    </Tag>
+  );
+}
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -78,21 +113,12 @@ export function BacktestDetailModal({
             <span className="tabular-nums">{result.symbol}</span>
             <i />
             <span>回测明细</span>
-            {result.dataQuality?.level === "degraded" && (
-              <Tag color="warning" bordered={false}>
-                降级
-              </Tag>
-            )}
-            {result.dataQuality?.reasons.includes(
-              "calendar_coverage_missing",
-            ) &&
-              result.dataQuality.uncoveredCalendarYears.length > 0 && (
-                <span className="detail-modal-degraded-years tabular-nums">
-                  未覆盖年份：{formatYearRanges(
-                    result.dataQuality.uncoveredCalendarYears,
-                  )}
-                </span>
-              )}
+            <DetailDataQualityTag
+              level={result.dataQuality?.level ?? "strict"}
+              uncoveredCalendarYears={
+                result.dataQuality?.uncoveredCalendarYears ?? []
+              }
+            />
           </div>
         ) : (
           "回测明细"

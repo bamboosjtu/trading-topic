@@ -689,9 +689,10 @@ describe("AppService 回测试验", () => {
    * P0 回归：fetchMarketPrices 包装层曾遗漏 officialCalendarYears 与
    * uncoveredCalendarYears 字段转发，导致服务层永远读到空数组，最终错误
    * 标记为 strict。本测试验证全链路：mock 返回未覆盖年份 2016-2023 时，
-   * 回测结果必须为 degraded 且 reasons 包含 calendar_coverage_missing。
+   * 回测结果必须为 research（仅日历覆盖不完整，未触发真实行情异常）
+   * 且 reasons 包含 calendar_coverage_partial。
    */
-  it("P0 回归：未覆盖正式日历的年份触发 calendar_coverage_missing 降级（2016-2026 请求）", async () => {
+  it("P0 回归：未覆盖正式日历的年份触发 calendar_coverage_partial 标记为 research（2016-2026 请求）", async () => {
     const { service, database } = await serviceWithDatabase();
     seedStockUniverse(database,
       completeStockUniverse([
@@ -702,7 +703,7 @@ describe("AppService 回测试验", () => {
     );
     // 关键：mock 返回的对象必须包含 officialCalendarYears 与
     // uncoveredCalendarYears 字段（现在是必填）。
-    // 2016-2023 没有正式日历，必须触发 calendar_coverage_missing 降级。
+    // 2016-2023 没有正式日历，必须触发 calendar_coverage_partial 标记为 research。
     vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
       ...completeMarketResponse({
         rows: [
@@ -773,11 +774,12 @@ describe("AppService 回测试验", () => {
       buyDay: 1,
     });
 
-    // 实验级别：dataQuality.level 必须为 degraded（不能因为字段转发丢失而误判 strict）
-    expect(experiment.dataQuality?.level).toBe("degraded");
+    // 实验级别：dataQuality.level 必须为 research（仅日历覆盖不完整，无真实行情异常）
+    expect(experiment.dataQuality?.level).toBe("research");
+    // 兼容字段：research 合并为 degraded
     expect(experiment.dataQualityStatus).toBe("degraded");
-    // reasons 必须包含 calendar_coverage_missing
-    expect(experiment.dataQuality?.reasons).toContain("calendar_coverage_missing");
+    // reasons 必须包含 calendar_coverage_partial
+    expect(experiment.dataQuality?.reasons).toContain("calendar_coverage_partial");
     // reasons 不应包含 cross_provider_common_gap（mock 数据没有共同缺口）
     expect(experiment.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
     // uncoveredCalendarYears 必须包含 2016-2023
@@ -785,9 +787,9 @@ describe("AppService 回测试验", () => {
       2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
     ]);
     expect(experiment.dataQuality?.officialCalendarYears).toEqual([2024, 2025, 2026]);
-    // 结果级别也应为 degraded
-    expect(experiment.results[0].dataQuality?.level).toBe("degraded");
-    expect(experiment.results[0].dataQuality?.reasons).toContain("calendar_coverage_missing");
+    // 结果级别也应为 research
+    expect(experiment.results[0].dataQuality?.level).toBe("research");
+    expect(experiment.results[0].dataQuality?.reasons).toContain("calendar_coverage_partial");
     expect(experiment.results[0].dataQuality?.reasons).not.toContain("cross_provider_common_gap");
     expect(experiment.results[0].dataQualityStatus).toBe("degraded");
     // 实验已持久化

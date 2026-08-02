@@ -423,12 +423,12 @@ function assertBacktestDataQuality(
   if (!isObject(dq)) {
     throw new Error("备份回测数据质量结构非法");
   }
-  if (!["strict", "degraded"].includes(dq.level)) {
+  if (!["strict", "research", "degraded"].includes(dq.level)) {
     throw new Error("备份回测数据质量等级非法");
   }
   const allowedReasons = [
     "cross_provider_common_gap",
-    "calendar_coverage_missing",
+    "calendar_coverage_partial",
   ];
   if (
     !Array.isArray(dq.reasons) ||
@@ -456,13 +456,28 @@ function assertBacktestDataQuality(
   if (dq.level === "strict" && dq.reasons.length > 0) {
     throw new Error("备份回测数据质量 strict 等级不应有降级原因");
   }
-  // calendar_coverage_missing 必须对应非空 uncovered 年份
-  if (
-    dq.reasons.includes("calendar_coverage_missing") &&
-    dq.uncoveredCalendarYears.length === 0
-  ) {
+  // calendar_coverage_partial 必须对应非空 uncovered 年份
+  const hasPartial = dq.reasons.includes("calendar_coverage_partial");
+  if (hasPartial && dq.uncoveredCalendarYears.length === 0) {
     throw new Error(
-      "备份回测数据质量 calendar_coverage_missing 需要有未覆盖年份",
+      "备份回测数据质量 calendar_coverage_partial 需要有未覆盖年份",
+    );
+  }
+  // research 级别必须由 calendar_coverage_partial 触发，且不能有 cross_provider_common_gap
+  if (dq.level === "research" && !hasPartial) {
+    throw new Error(
+      "备份回测数据质量 research 等级必须包含 calendar_coverage_partial",
+    );
+  }
+  if (dq.level === "research" && dq.reasons.includes("cross_provider_common_gap")) {
+    throw new Error(
+      "备份回测数据质量 research 等级不应包含 cross_provider_common_gap",
+    );
+  }
+  // degraded 级别必须由 cross_provider_common_gap 触发
+  if (dq.level === "degraded" && !dq.reasons.includes("cross_provider_common_gap")) {
+    throw new Error(
+      "备份回测数据质量 degraded 等级必须包含 cross_provider_common_gap",
     );
   }
 }

@@ -140,9 +140,8 @@ export function listBacktestExperiments(
     result_count: number;
     best_xirr: number | null;
     max_drawdown: number | null;
-    is_degraded: number | null;
     has_cross_provider_gap: number | null;
-    has_calendar_missing: number | null;
+    has_calendar_partial: number | null;
   }>(
     database,
     `SELECT
@@ -158,12 +157,6 @@ export function listBacktestExperiments(
        MIN(CAST(json_extract(r.result_json, '$.metrics.maxDrawdown') AS REAL))
          AS max_drawdown,
        MAX(CASE WHEN
-            json_extract(r.result_json, '$.dataQuality.level') = 'degraded' OR
-            json_extract(r.result_json, '$.dataQualityStatus')
-              IN ('degraded', 'degraded_common_gap')
-            THEN 1 ELSE 0 END)
-         AS is_degraded,
-       MAX(CASE WHEN
             json_extract(r.result_json, '$.dataQuality.reasons')
               LIKE '%cross_provider_common_gap%' OR
             json_extract(r.result_json, '$.dataQualityStatus')
@@ -171,10 +164,10 @@ export function listBacktestExperiments(
             THEN 1 ELSE 0 END)
          AS has_cross_provider_gap,
        MAX(CASE WHEN
-            json_extract(r.result_json, '$.dataQuality.reasons')
-              LIKE '%calendar_coverage_missing%'
-            THEN 1 ELSE 0 END)
-         AS has_calendar_missing
+           json_extract(r.result_json, '$.dataQuality.reasons')
+             LIKE '%calendar_coverage_partial%'
+           THEN 1 ELSE 0 END)
+         AS has_calendar_partial
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
      GROUP BY e.id
@@ -182,14 +175,18 @@ export function listBacktestExperiments(
      LIMIT ?`,
     [boundedLimit],
   ).map((row) => {
-      const isDegraded = row.is_degraded === 1;
+      const hasCommonGap = row.has_cross_provider_gap === 1;
+      const hasPartial = row.has_calendar_partial === 1;
+      const level: "strict" | "research" | "degraded" = hasCommonGap
+        ? "degraded"
+        : hasPartial
+          ? "research"
+          : "strict";
       const reasons: Array<
-        "cross_provider_common_gap" | "calendar_coverage_missing"
+        "cross_provider_common_gap" | "calendar_coverage_partial"
       > = [];
-      if (row.has_cross_provider_gap === 1)
-        reasons.push("cross_provider_common_gap");
-      if (row.has_calendar_missing === 1)
-        reasons.push("calendar_coverage_missing");
+      if (hasCommonGap) reasons.push("cross_provider_common_gap");
+      if (hasPartial) reasons.push("calendar_coverage_partial");
       return {
         experimentId: row.id,
         createdAt: row.created_at,
@@ -200,9 +197,10 @@ export function listBacktestExperiments(
         resultCount: row.result_count,
         bestXirr: row.best_xirr,
         maxDrawdown: row.max_drawdown ?? 0,
-        dataQualityStatus: isDegraded ? "degraded" : "strict",
+        // 兼容字段：research 合并为 degraded
+        dataQualityStatus: level === "strict" ? "strict" : "degraded",
         dataQuality: {
-          level: isDegraded ? "degraded" : "strict",
+          level,
           reasons,
           officialCalendarYears: [],
           uncoveredCalendarYears: [],
@@ -230,6 +228,15 @@ export function getBacktestExperiment(
   )[0];
   if (!row) return null;
   const results = listExperimentResults(database, row.id);
+  const experimentReasons = [
+    ...new Set(results.flatMap((r) => r.dataQuality?.reasons ?? [])),
+  ];
+  const experimentLevel: "strict" | "research" | "degraded" =
+    experimentReasons.includes("cross_provider_common_gap")
+      ? "degraded"
+      : experimentReasons.includes("calendar_coverage_partial")
+        ? "research"
+        : "strict";
   return {
     experimentId: row.id,
     createdAt: row.created_at,
@@ -238,18 +245,12 @@ export function getBacktestExperiment(
     caliberVersion: row.caliber_version,
     status: row.status,
     results,
-    dataQualityStatus: results.some(
-      (r) => r.dataQuality?.level === "degraded",
-    )
-      ? "degraded"
-      : "strict",
+    // 兼容字段：research 合并为 degraded
+    dataQualityStatus:
+      experimentLevel === "strict" ? "strict" : "degraded",
     dataQuality: {
-      level: results.some((r) => r.dataQuality?.level === "degraded")
-        ? "degraded"
-        : "strict",
-      reasons: [
-        ...new Set(results.flatMap((r) => r.dataQuality?.reasons ?? [])),
-      ],
+      level: experimentLevel,
+      reasons: experimentReasons,
       officialCalendarYears: [
         ...new Set(
           results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),

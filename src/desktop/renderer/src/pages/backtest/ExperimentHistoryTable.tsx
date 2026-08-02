@@ -1,4 +1,4 @@
-import { Button, Empty, Popconfirm, Skeleton, Table, Tag } from "antd";
+import { Button, Empty, Popconfirm, Skeleton, Table, Tag, Tooltip } from "antd";
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -9,7 +9,42 @@ import {
   RECENT_BACKTEST_EXPERIMENT_LIMIT,
 } from "../../../../shared/constants";
 import type { BacktestExperimentSummary } from "../../api/client";
-import { beijingTimestamp, money, percent, pnlClass } from "./formatters";
+import { beijingTimestamp, formatYearRanges, money, percent, pnlClass } from "./formatters";
+
+/**
+ * 渲染历史实验的数据质量标签。
+ *
+ * - strict：不显示标签；
+ * - research：灰色"研究口径"标签，鼠标悬停显示未覆盖年份说明；
+ * - degraded：黄色"降级"标签。
+ */
+function HistoryDataQualityTag({
+  level,
+  uncoveredCalendarYears,
+}: {
+  level: "strict" | "research" | "degraded";
+  uncoveredCalendarYears: number[];
+}) {
+  if (level === "strict") return null;
+  if (level === "research") {
+    const yearsText = formatYearRanges(uncoveredCalendarYears);
+    const tooltip = yearsText
+      ? `${yearsText} 未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。`
+      : "未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。";
+    return (
+      <Tooltip title={tooltip}>
+        <Tag color="default" bordered={false}>
+          研究口径
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tag color="warning" bordered={false}>
+      降级
+    </Tag>
+  );
+}
 
 interface ExperimentHistoryTableProps {
   experiments: BacktestExperimentSummary[];
@@ -81,11 +116,12 @@ export function ExperimentHistoryTable({
             render: (value: string, row) => (
               <div className="history-created-cell">
                 <strong className="tabular-nums">{createdAtLabel(value)}</strong>
-                {row.dataQuality?.level === "degraded" && (
-                  <Tag color="warning" bordered={false}>
-                    降级
-                  </Tag>
-                )}
+                <HistoryDataQualityTag
+                  level={row.dataQuality?.level ?? "strict"}
+                  uncoveredCalendarYears={
+                    row.dataQuality?.uncoveredCalendarYears ?? []
+                  }
+                />
               </div>
             ),
           },

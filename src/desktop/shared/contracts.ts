@@ -256,10 +256,13 @@ export interface BacktestResult {
    */
   interruptionsUsed: SecurityTradingInterruption[];
   /**
-   * 行情数据质量状态（兼容字段，新代码应使用 dataQuality）：
-   * - `strict`：所有交易日都有独立停牌证据或完整行情，严格回测完成；
-   * - `degraded`：存在降级原因（日历覆盖缺失和/或两源共同缺口）；
+   * 行情数据质量状态（兼容字段，新代码应使用 dataQuality.level）：
+   * - `strict`：所有交易日都有独立停牌证据或完整行情，且请求区间全部由正式交易日历覆盖；
+   * - `degraded`：存在降级原因（两源共同缺口或日历覆盖缺失），包括旧 `research` 状态；
    * - `degraded_common_gap`：旧值，仅用于历史数据兼容。
+   *
+   * 注意：新数据使用 `dataQuality.level` 三级状态（strict/research/degraded），
+   * 此字段仅用于向后兼容，且 research 在此被合并为 degraded。
    */
   dataQualityStatus: "strict" | "degraded" | "degraded_common_gap";
   /**
@@ -273,14 +276,24 @@ export interface BacktestResult {
 /**
  * 回测数据质量模型。
  *
- * 将"回测能否继续计算"和"数据是否得到严格完整性证明"分开：
- * - `strict`：所有年份都有正式交易日历覆盖且无两源共同缺口；
- * - `degraded`：存在未覆盖日历年份或两源共同缺口，回测仍可继续
- *   但不能等同于严格结果。
+ * 采用三级质量状态，避免把"日历覆盖不完整"与"真实行情异常"放在同一等级：
+ * - `strict`：请求区间全部由正式交易日历覆盖，且无两源共同缺口、无来源冲突、
+ *   首尾完整。独立日历验证完整。
+ * - `research`：部分年份没有正式交易日历（`calendar_coverage_partial`），但行情
+ *   结构检查通过、首尾覆盖正常、回测只使用实际返回价格。这是 2011—2023 年长期
+ *   回测的默认状态，属于"未完成官方交易日历的独立逐日核验"，而非数据质量降级。
+ * - `degraded`：已观察到真实行情异常（如两源共同缺口且无独立停牌证据），或
+ *   图表/行情使用降级路径。允许继续计算但需显著告警。
+ *
+ * reasons 说明：
+ * - `cross_provider_common_gap`：腾讯与新浪均缺少同一内部行情区间，且无独立
+ *   停牌证据，触发 degraded。
+ * - `calendar_coverage_partial`：请求区间内存在未覆盖正式交易日历的年份，
+ *   仅触发 research（除非同时存在 cross_provider_common_gap，则升级为 degraded）。
  */
 export interface BacktestDataQuality {
-  level: "strict" | "degraded";
-  reasons: Array<"cross_provider_common_gap" | "calendar_coverage_missing">;
+  level: "strict" | "research" | "degraded";
+  reasons: Array<"cross_provider_common_gap" | "calendar_coverage_partial">;
   officialCalendarYears: number[];
   uncoveredCalendarYears: number[];
 }

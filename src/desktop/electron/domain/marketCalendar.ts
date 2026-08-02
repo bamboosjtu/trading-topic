@@ -123,7 +123,7 @@ export interface MarketCalendarCoverage {
  * 列出 `[startDate, endDate]` 内的预期交易日，同时返回正式日历覆盖信息。
  *
  * 未覆盖正式日历的年份不生成预期交易日，但会在 uncoveredYears 中报告，
- * 供调用方将回测标记为降级（calendar_coverage_missing）。
+ * 供调用方将回测标记为 research（calendar_coverage_partial）。
  */
 export function expectedTradingDatesWithCoverage(
   startDate: string,

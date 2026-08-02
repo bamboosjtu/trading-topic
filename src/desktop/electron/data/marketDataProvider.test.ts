@@ -1,12 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SecurityTradingInterruption } from "../../shared/contracts";
 import type { MarketDataProvider } from "./marketDataProvider";
 import {
   assertCrossProviderConsistency,
   expandInterruptionDates,
+  fetchMarketAdjustedBars,
+  fetchMarketPrices,
   fetchWithProviderFallback,
+  sinaProvider,
+  tencentProvider,
   validateAdjustedBars,
 } from "./marketDataProvider";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function provider(
   source: "tencent" | "sina",
@@ -1102,40 +1110,6 @@ describe("行情结果日历覆盖字段", () => {
     expect(result.officialCalendarYears).toEqual([2026]);
   });
 
-  it("fetchMarketPrices 包装层转发 officialCalendarYears 与 uncoveredCalendarYears（2016-2026 请求）", async () => {
-    // P0 回归：fetchMarketPrices 包装层曾遗漏 officialCalendarYears 与
-    // uncoveredCalendarYears 字段转发，导致服务层永远读到空数组。
-    // 本测试直接驱动 fetchWithProviderFallback（fetchMarketPrices 内部调用它），
-    // 验证返回结果同时包含两个日历字段，且 2016-2026 请求中
-    // uncoveredCalendarYears 包含 2016-2023（正式日历仅 2024/2025/2026）。
-    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
-      date,
-      close: 5 + i * 0.01,
-    }));
-    const primary = staticProvider("tencent", rows);
-    const fallback = staticProvider("sina", rows);
-
-    const result = await fetchWithProviderFallback(
-      "prices",
-      "601398",
-      "2016-01-01",
-      "2026-12-31",
-      primary,
-      fallback,
-      undefined,
-      new Date("2026-07-31T08:00:00Z"),
-    );
-
-    // 关键：两个日历字段必须同时存在于返回结果中（包装层转发后非 undefined）
-    expect(Array.isArray(result.officialCalendarYears)).toBe(true);
-    expect(Array.isArray(result.uncoveredCalendarYears)).toBe(true);
-    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
-    // 2016-2023 没有正式交易日历，必须出现在 uncoveredCalendarYears 中
-    expect(result.uncoveredCalendarYears).toEqual([
-      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
-    ]);
-  });
-
   it("两源均空且为已确认休市区间时返回空结果并携带日历覆盖字段", async () => {
     // 2026-02-15 至 2026-02-23 为春节休市
     const primary = staticProvider("tencent", []);
@@ -1156,5 +1130,149 @@ describe("行情结果日历覆盖字段", () => {
     expect(result.tailStatus).toBe("confirmed_non_trading");
     expect(result.uncoveredCalendarYears).toEqual([]);
     expect(result.officialCalendarYears).toEqual([2026]);
+  });
+});
+
+/**
+ * P2：fetchMarketPrices / fetchMarketAdjustedBars 包装层测试。
+ *
+ * 之前的测试名为"fetchMarketPrices 包装层转发..."但实际调用的是
+ * fetchWithProviderFallback，并未真正驱动包装层。本测试通过 vi.spyOn
+ * 替换模块级 tencentProvider / sinaProvider 的方法，确保
+ * fetchMarketPrices 真正调用包装层并完整转发所有字段（包括
+ * officialCalendarYears / uncoveredCalendarYears / caliberVersion）。
+ */
+describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
+  it("fetchMarketPrices 转发 officialCalendarYears 与 uncoveredCalendarYears（2016-2026 请求）", async () => {
+    // 2016-2023 没有正式交易日历，必须出现在 uncoveredCalendarYears 中
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const spyTencent = vi
+      .spyOn(tencentProvider, "fetchPrices")
+      .mockResolvedValue({ rows, issues: [] });
+    // 主源完整，备用源不会被调用；mock 一个失败便于验证主源路径
+    const spySina = vi
+      .spyOn(sinaProvider, "fetchPrices")
+      .mockResolvedValue({ rows: [], issues: [] });
+
+    const result = await fetchMarketPrices(
+      "601398",
+      "2016-01-01",
+      "2026-12-31",
+      undefined,
+      [],
+    );
+
+    // 关键：包装层必须真正被调用，而非绕过
+    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-12-31");
+    // 关键：两个日历字段必须同时存在于返回结果中
+    expect(Array.isArray(result.officialCalendarYears)).toBe(true);
+    expect(Array.isArray(result.uncoveredCalendarYears)).toBe(true);
+    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    expect(result.uncoveredCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    // 包装层必须附加 caliberVersion
+    expect(result.provenance.caliberVersion).toBeTruthy();
+    expect(result.provenance.source).toBe("tencent");
+    expect(result.provenance.fallbackUsed).toBe(false);
+    // 主源完整时备用源不应被调用
+    expect(spySina).not.toHaveBeenCalled();
+  });
+
+  it("fetchMarketPrices 转发 cross_provider_common_gap classification 与 issues", async () => {
+    // 两源共同缺口：腾讯和新浪都缺少 07-06 至 07-10
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    vi.spyOn(tencentProvider, "fetchPrices").mockResolvedValue({
+      rows,
+      issues: [],
+    });
+    vi.spyOn(sinaProvider, "fetchPrices").mockResolvedValue({
+      rows,
+      issues: [],
+    });
+
+    const result = await fetchMarketPrices(
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      undefined,
+      [],
+    );
+
+    // 共同缺口应降级为 warning，且 classification 必须被转发
+    const commonGaps = result.issues.filter(
+      (i) => i.classification === "cross_provider_common_gap",
+    );
+    expect(commonGaps.length).toBeGreaterThan(0);
+    expect(
+      commonGaps.every((i) => i.severity === "warning"),
+    ).toBe(true);
+  });
+
+  it("fetchMarketAdjustedBars 转发 officialCalendarYears 与 uncoveredCalendarYears", async () => {
+    // 前复权 K 线包装层同样需要转发日历覆盖字段
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      open: 5 + i * 0.01,
+      high: 5.1 + i * 0.01,
+      low: 4.9 + i * 0.01,
+      close: 5 + i * 0.01,
+      volume: 1000,
+      adjustment: "qfq" as const,
+    }));
+    const spyTencent = vi
+      .spyOn(tencentProvider, "fetchAdjustedBars")
+      .mockResolvedValue({ rows, issues: [] });
+    const spySina = vi
+      .spyOn(sinaProvider, "fetchAdjustedBars")
+      .mockResolvedValue({ rows: [], issues: [] });
+
+    const result = await fetchMarketAdjustedBars(
+      "601398",
+      "2016-01-01",
+      "2026-12-31",
+      undefined,
+      [],
+    );
+
+    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-12-31");
+    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    expect(result.uncoveredCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    expect(result.provenance.caliberVersion).toBeTruthy();
+    expect(result.provenance.adjustment).toBe("qfq");
+    expect(spySina).not.toHaveBeenCalled();
+  });
+
+  it("fetchMarketPrices 转发 confirmed_non_trading 空结果与日历字段", async () => {
+    // 2026-02-15 至 2026-02-23 为春节休市：两源均返回空
+    vi.spyOn(tencentProvider, "fetchPrices").mockResolvedValue({
+      rows: [],
+      issues: [],
+    });
+    vi.spyOn(sinaProvider, "fetchPrices").mockResolvedValue({
+      rows: [],
+      issues: [],
+    });
+
+    const result = await fetchMarketPrices(
+      "601398",
+      "2026-02-15",
+      "2026-02-23",
+      undefined,
+      [],
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.tailStatus).toBe("confirmed_non_trading");
+    // 空结果也必须携带日历覆盖字段
+    expect(result.officialCalendarYears).toEqual([2026]);
+    expect(result.uncoveredCalendarYears).toEqual([]);
   });
 });

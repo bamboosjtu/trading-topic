@@ -1,4 +1,4 @@
-import { Alert, Button, Table, Tag } from "antd";
+import { Alert, Button, Table, Tag, Tooltip } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
 import { beijingTimestamp, formatYearRanges, money, percent, pnlClass } from "./formatters";
@@ -8,6 +8,41 @@ interface CurrentExperimentTableProps {
   results: BacktestResult[];
   loading: boolean;
   onDetail: (result: BacktestResult) => void;
+}
+
+/**
+ * 渲染数据质量等级标签。
+ *
+ * - strict：不显示标签（默认状态）；
+ * - research：灰色"研究口径"标签，鼠标悬停显示未覆盖年份说明；
+ * - degraded：黄色"降级"标签。
+ */
+function DataQualityTag({
+  level,
+  uncoveredCalendarYears,
+}: {
+  level: "strict" | "research" | "degraded";
+  uncoveredCalendarYears: number[];
+}) {
+  if (level === "strict") return null;
+  if (level === "research") {
+    const yearsText = formatYearRanges(uncoveredCalendarYears);
+    const tooltip = yearsText
+      ? `${yearsText} 未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。`
+      : "未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。";
+    return (
+      <Tooltip title={tooltip}>
+        <Tag color="default" bordered={false} className="research-tag">
+          研究口径
+        </Tag>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tag color="warning" bordered={false} className="degraded-tag">
+      降级
+    </Tag>
+  );
 }
 
 export function CurrentExperimentTable({
@@ -33,12 +68,11 @@ export function CurrentExperimentTable({
       ),
     ),
   ];
-  const experimentReasons = experiment?.dataQuality?.reasons ?? [];
-  const calendarCoverageMissing =
-    experimentReasons.includes("calendar_coverage_missing");
   const uncoveredCalendarYearsText = experiment?.dataQuality
     ? formatYearRanges(experiment.dataQuality.uncoveredCalendarYears)
     : "";
+  // 仅在 degraded 级别（cross_provider_common_gap）显示黄色大警告
+  const isExperimentDegraded = experiment?.dataQuality?.level === "degraded";
   const commonGapResults = results.filter((result) =>
     (result.dataQuality?.reasons ?? []).includes("cross_provider_common_gap"),
   );
@@ -49,6 +83,24 @@ export function CurrentExperimentTable({
         <div>
           <strong>本次实验结果（按 XIRR 排序）</strong>
           <span>只比较同一请求、同一数据截止时间下的标的结果</span>
+          {experiment?.dataQuality?.level === "research" && (
+            <Tooltip
+              title={
+                uncoveredCalendarYearsText
+                  ? `${uncoveredCalendarYearsText} 未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。`
+                  : "未使用正式交易日历逐日复核。回测仅使用数据源返回的真实交易日期和价格，不进行插值或非交易日成交。"
+              }
+            >
+              <Tag color="default" bordered={false} className="research-tag">
+                研究口径
+              </Tag>
+            </Tooltip>
+          )}
+          {/* {isExperimentDegraded && (
+            <Tag color="warning" bordered={false} className="degraded-tag">
+              降级
+            </Tag>
+          )} */}
         </div>
         {experiment ? (
           <small className="tabular-nums">
@@ -58,16 +110,9 @@ export function CurrentExperimentTable({
           </small>
         ) : null}
       </div>
-      {calendarCoverageMissing ? (
-        <Alert
-          className="comparison-warning"
-          showIcon
-          type="warning"
-          message="本次回测包含尚未由正式交易日历逐日验证的年份"
-          description={`本次回测包含尚未由正式交易日历逐日验证的年份：${uncoveredCalendarYearsText}。回测仍可计算，但无法证明这些年份不存在两源共同缺失，因此结果属于降级证据。`}
-        />
-      ) : null}
-      {commonGapResults.length ? (
+      {/* 仅 degraded 级别（两源共同缺口）显示黄色大警告；
+          research 级别（仅日历覆盖不完整）不显示 Alert，避免过度打扰 */}
+      {isExperimentDegraded && commonGapResults.length ? (
         <Alert
           className="comparison-warning"
           showIcon
@@ -141,11 +186,12 @@ export function CurrentExperimentTable({
               <div className="symbol-cell">
                 <strong>{row.name}</strong>
                 <span className="tabular-nums">{row.symbol}</span>
-                {row.dataQuality?.level === "degraded" && (
-                  <Tag color="warning" className="degraded-tag">
-                    降级
-                  </Tag>
-                )}
+                <DataQualityTag
+                  level={row.dataQuality?.level ?? "strict"}
+                  uncoveredCalendarYears={
+                    row.dataQuality?.uncoveredCalendarYears ?? []
+                  }
+                />
               </div>
             ),
           },
