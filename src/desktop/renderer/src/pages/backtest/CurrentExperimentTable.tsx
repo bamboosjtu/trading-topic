@@ -1,4 +1,4 @@
-import { Alert, Button, Table } from "antd";
+import { Alert, Button, Table, Tag } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
 import { beijingTimestamp, money, percent, pnlClass } from "./formatters";
@@ -104,6 +104,11 @@ export function CurrentExperimentTable({
               <div className="symbol-cell">
                 <strong>{row.name}</strong>
                 <span className="tabular-nums">{row.symbol}</span>
+                {row.dataQualityStatus === "degraded_common_gap" && (
+                  <Tag color="warning" className="degraded-tag">
+                    降级
+                  </Tag>
+                )}
               </div>
             ),
           },

@@ -53,6 +53,18 @@ export interface MarketDataIssue {
    * 用于两源共同缺口降级时精确计算交集，避免只检查起始日导致误判。
    */
   missingDates?: string[];
+  /**
+   * 结构化分类，用于业务状态判断不依赖中文文案。
+   * - `cross_provider_common_gap`：两源共同缺口降级为 warning；
+   * - `single_provider_gap`：仅单源缺口的 error；
+   * - `head_truncation`：头部截断；
+   * - `tail_incomplete`：尾部不完整。
+   */
+  classification?:
+    | "cross_provider_common_gap"
+    | "single_provider_gap"
+    | "head_truncation"
+    | "tail_incomplete";
   type: "invalid_ohlcv" | "invalid_date" | "duplicate" | "gap";
   severity: "warning" | "error";
   message: string;

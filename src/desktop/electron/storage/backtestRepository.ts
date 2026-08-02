@@ -14,12 +14,20 @@ import { insertMarketData } from "./marketRepository";
  * 为旧版本持久化的 BacktestResult 补充新增字段默认值。
  *
  * dataQualityStatus 是 P1-2 新增字段，旧实验 JSON 中不存在。
- * 旧数据没有经历过两源共同缺口降级逻辑，默认为 strict。
+ * P2-1：对 e92fd778 到 ded25eba 之间生成的实验，已允许共同缺口降级
+ * 但尚未保存 dataQualityStatus。此时通过检查旧 warning 文案推断状态。
  */
 function normalizeBacktestResult(raw: unknown): BacktestResult {
   const result = raw as BacktestResult;
   if (!result.dataQualityStatus) {
-    result.dataQualityStatus = "strict";
+    const hasOldCommonGapWarning = result.warnings?.some(
+      (warning) =>
+        warning.includes("腾讯与新浪均未返回") ||
+        warning.includes("按证券不可交易区间处理"),
+    );
+    result.dataQualityStatus = hasOldCommonGapWarning
+      ? "degraded_common_gap"
+      : "strict";
   }
   return result;
 }

@@ -918,4 +918,62 @@ describe("P1 证券级停复牌证据", () => {
       errors.some((e) => e.message.includes("头部截断")),
     ).toBe(true);
   });
+
+  it("P2-3：部分重合日期拆分为连续子区间", async () => {
+    // 腾讯缺少 07-06 至 07-10（5天），新浪有 07-07 但额外缺少 07-13、07-14
+    // 腾讯行数 > 新浪行数 → 腾讯被选中
+    // 选中腾讯后，其 07-06~07-10 缺口拆分：
+    //   07-06: 新浪也缺 → common warning
+    //   07-07: 新浪有  → only_selected error
+    //   07-08~07-10: 新浪也缺 → common warning
+    const tencentRows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const sinaRows = JULY_2026_WEEKDAYS
+      .filter(
+        (d) =>
+          d !== "2026-07-06" &&
+          d !== "2026-07-08" &&
+          d !== "2026-07-09" &&
+          d !== "2026-07-10" &&
+          d !== "2026-07-13" &&
+          d !== "2026-07-14",
+      )
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+
+    const primary = staticProvider("tencent", tencentRows);
+    const fallback = staticProvider("sina", sinaRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const warnings = result.issues.filter(
+      (i) => i.classification === "cross_provider_common_gap",
+    );
+    const errors = result.issues.filter(
+      (i) => i.classification === "single_provider_gap",
+    );
+
+    // 共同缺口应拆分为两段：07-06 和 07-08至07-10
+    expect(warnings.length).toBe(2);
+    expect(warnings[0].missingDates).toEqual(["2026-07-06"]);
+    expect(warnings[1].missingDates).toEqual([
+      "2026-07-08",
+      "2026-07-09",
+      "2026-07-10",
+    ]);
+
+    // 单源缺口：07-07
+    expect(errors.length).toBe(1);
+    expect(errors[0].missingDates).toEqual(["2026-07-07"]);
+    expect(errors[0].severity).toBe("error");
+  });
 });

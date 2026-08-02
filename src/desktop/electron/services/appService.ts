@@ -688,12 +688,11 @@ export class AppService {
       // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
       result.interruptionsUsed = interruptions;
       // P1-2：根据是否存在两源共同缺口降级 warning 判断数据质量状态。
-      // 存在降级 warning 时标记为 degraded_common_gap，否则为 strict。
+      // P2-2：使用结构化 classification 字段判断，不依赖中文文案。
       const hasCommonGapWarning = prices.issues.some(
         (issue) =>
           issue.severity === "warning" &&
-          issue.type === "gap" &&
-          issue.message.includes("腾讯与新浪均未返回"),
+          issue.classification === "cross_provider_common_gap",
       );
       result.dataQualityStatus = hasCommonGapWarning
         ? "degraded_common_gap"

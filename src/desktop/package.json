@@ -21,6 +21,7 @@
     "pretest": "npm run check:domain-boundaries",
     "test": "vitest run",
     "smoke:market-data": "node scripts/run-market-data-smoke.mjs",
+    "release": "npm ci && npm run typecheck && npm test && npm run build && npm run smoke:market-data && npm run pack:portable",
     "preview": "electron-vite preview"
   },
   "devDependencies": {

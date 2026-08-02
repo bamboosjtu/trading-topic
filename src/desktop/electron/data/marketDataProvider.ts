@@ -473,6 +473,13 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
    * - 只有部分日期属于共同缺失 → 拆分为：共同缺口部分 warning + 单源缺口部分 error
    * - 仅对 type === "gap" 执行降级，invalid_ohlcv/invalid_date/duplicate 不受影响
    *
+   * P2-2：降级 issue 携带 classification: "cross_provider_common_gap"，
+   * 单源缺口携带 classification: "single_provider_gap"，
+   * 业务状态判断不再依赖中文文案。
+   *
+   * P2-3：部分重合日期经求交后可能变为非连续序列，输出前按原始
+   * missingDates 中的相邻性再次分组为连续子区间，避免歧义。
+   *
    * 处理原则：
    * - 不插值、不生成虚假收盘价；
    * - 不允许在缺口日期成交（由回测引擎保证）；
@@ -494,6 +501,44 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     const otherFirst = otherSorted[0];
     const otherLast = otherSorted.at(-1) ?? "";
 
+    /**
+     * 判断单个日期是否属于两源共同缺口（非头部/尾部）。
+     * 返回 "common" 或 "only_selected"。
+     */
+    const classifyDate = (
+      date: string,
+    ): "common" | "only_selected" => {
+      if (otherPresentDates.has(date)) return "only_selected";
+      if (date <= selFirst || date >= selLast) return "only_selected";
+      if (date <= otherFirst || date >= otherLast) return "only_selected";
+      return "common";
+    };
+
+    /**
+     * 将日期序列按"原始 missingDates 中的相邻性"分组为连续子区间。
+     * P2-3：求交后 commonMissing 可能变为非连续，需再次分组避免歧义。
+     */
+    const groupConsecutiveRuns = <
+      T extends { date: string; kind: "common" | "only_selected" },
+    >(
+      classified: readonly T[],
+    ): T[][] => {
+      const runs: T[][] = [];
+      let current: T[] = [];
+      let currentKind: "common" | "only_selected" | null = null;
+      for (const item of classified) {
+        if (item.kind === currentKind) {
+          current.push(item);
+        } else {
+          if (current.length) runs.push(current);
+          current = [item];
+          currentKind = item.kind;
+        }
+      }
+      if (current.length) runs.push(current);
+      return runs;
+    };
+
     const result: MarketDataIssue[] = [];
     for (const issue of issues) {
       // 仅对 type === "gap" 的 error 执行降级判断
@@ -502,63 +547,47 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         continue;
       }
       const missingDates = issue.missingDates ?? [issue.date];
-      // 检查每个缺失日是否在另一来源中也缺失，且不是任一来源的头部/尾部
-      const commonMissing: string[] = [];
-      const onlySelectedMissing: string[] = [];
-      for (const date of missingDates) {
-        // 另一来源有该日期 → 单一来源缺口 → 保持 error
-        if (otherPresentDates.has(date)) {
-          onlySelectedMissing.push(date);
-          continue;
-        }
-        // 在选中来源是头部或尾部 → 保持 error
-        if (date <= selFirst || date >= selLast) {
-          onlySelectedMissing.push(date);
-          continue;
-        }
-        // 在另一来源是头部或尾部 → 保持 error
-        if (date <= otherFirst || date >= otherLast) {
-          onlySelectedMissing.push(date);
-          continue;
-        }
-        // 两源共同缺口且前后都有正常行情
-        commonMissing.push(date);
-      }
+      // 按原始顺序分类每个日期
+      const classified = missingDates.map((date) => ({
+        date,
+        kind: classifyDate(date),
+      }));
+      // P2-3：按连续同类分组
+      const runs = groupConsecutiveRuns(classified);
 
-      // 共同缺口部分降级为 warning
-      if (commonMissing.length > 0) {
-        const cStart = commonMissing[0];
-        const cEnd = commonMissing.at(-1) ?? cStart;
-        const cMessage =
-          commonMissing.length === 1
-            ? `${commonMissing[0]} 腾讯与新浪均未返回行情`
-            : `${cStart} 至 ${cEnd} 共 ${commonMissing.length} 个交易日腾讯与新浪均未返回行情`;
-        result.push({
-          date: cStart,
-          ...(commonMissing.length > 1 ? { endDate: cEnd } : {}),
-          missingDates: commonMissing,
-          type: "gap",
-          severity: "warning",
-          message: `${issue.message}（${cMessage}，缺少独立停牌证据，本次按降级数据继续计算）`,
-        });
-      }
-
-      // 单源缺口部分保持 error
-      if (onlySelectedMissing.length > 0) {
-        const sStart = onlySelectedMissing[0];
-        const sEnd = onlySelectedMissing.at(-1) ?? sStart;
-        const sMessage =
-          onlySelectedMissing.length === 1
-            ? `${labelPrefix(issue.message)}缺少 ${sStart} 的行情`
-            : `${labelPrefix(issue.message)}缺少 ${sStart} 至 ${sEnd} 共 ${onlySelectedMissing.length} 个交易日的行情`;
-        result.push({
-          date: sStart,
-          ...(onlySelectedMissing.length > 1 ? { endDate: sEnd } : {}),
-          missingDates: onlySelectedMissing,
-          type: "gap",
-          severity: "error",
-          message: sMessage,
-        });
+      for (const run of runs) {
+        const dates = run.map((item) => item.date);
+        const start = dates[0];
+        const end = dates.at(-1) ?? start;
+        if (run[0].kind === "common") {
+          const cMessage =
+            dates.length === 1
+              ? `${dates[0]} 腾讯与新浪均未返回行情`
+              : `${start} 至 ${end} 共 ${dates.length} 个交易日腾讯与新浪均未返回行情`;
+          result.push({
+            date: start,
+            ...(dates.length > 1 ? { endDate: end } : {}),
+            missingDates: dates,
+            classification: "cross_provider_common_gap",
+            type: "gap",
+            severity: "warning",
+            message: `${issue.message}（${cMessage}，缺少独立停牌证据，本次按降级数据继续计算）`,
+          });
+        } else {
+          const sMessage =
+            dates.length === 1
+              ? `${labelPrefix(issue.message)}缺少 ${start} 的行情`
+              : `${labelPrefix(issue.message)}缺少 ${start} 至 ${end} 共 ${dates.length} 个交易日的行情`;
+          result.push({
+            date: start,
+            ...(dates.length > 1 ? { endDate: end } : {}),
+            missingDates: dates,
+            classification: "single_provider_gap",
+            type: "gap",
+            severity: "error",
+            message: sMessage,
+          });
+        }
       }
     }
     return result;
