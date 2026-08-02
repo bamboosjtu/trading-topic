@@ -488,15 +488,26 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
     expect(interruption?.endDate).toBe("2025-08-17");
   });
 
-  it("仍停牌（无任何截止/复牌日）时使用当前日期作为 endDate", () => {
+  it("无任何截止/复牌日时返回 null，不自行延伸到今天", () => {
+    // P1 边界修复：历史记录字段缺失时不能假设从开始日一直停牌到现在
     const row = {
       SECURITY_CODE: "601088",
       SUSPEND_START_DATE: "2025-08-04",
       SUSPEND_REASON: "重大事项",
     };
     const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption).toBeNull();
+  });
+
+  it("SUSPEND_EXPIRE 作为明确截止日候选", () => {
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-04",
+      SUSPEND_EXPIRE: "2025-08-15",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
     expect(interruption?.startDate).toBe("2025-08-04");
-    expect(interruption?.endDate).toBe("2025-08-20");
+    expect(interruption?.endDate).toBe("2025-08-15");
   });
 
   it("缺少有效开始日时返回 null", () => {

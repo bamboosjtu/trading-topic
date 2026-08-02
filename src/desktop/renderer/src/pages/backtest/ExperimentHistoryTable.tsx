@@ -1,4 +1,4 @@
-import { Button, Empty, Popconfirm, Skeleton, Table } from "antd";
+import { Button, Empty, Popconfirm, Skeleton, Table, Tag } from "antd";
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -78,8 +78,15 @@ export function ExperimentHistoryTable({
             title: "运行时间",
             dataIndex: "createdAt",
             width: 190,
-            render: (value: string) => (
-              <strong className="tabular-nums">{createdAtLabel(value)}</strong>
+            render: (value: string, row) => (
+              <div className="history-created-cell">
+                <strong className="tabular-nums">{createdAtLabel(value)}</strong>
+                {row.dataQualityStatus === "degraded_common_gap" && (
+                  <Tag color="warning" bordered={false}>
+                    降级
+                  </Tag>
+                )}
+              </div>
             ),
           },
           {

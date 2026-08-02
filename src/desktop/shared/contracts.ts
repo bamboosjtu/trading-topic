@@ -41,6 +41,18 @@ export type MarketTailStatus =
 export interface MarketDataIssue {
   /** 问题涉及的交易日；无法确定时省略。 */
   date?: string;
+  /**
+   * 区间问题的结束日（含）；单日问题时省略。
+   * 与 date 配合表示 [date, endDate] 区间，用于两源共同缺口降级时
+   * 计算交集，而非只检查起始日。
+   */
+  endDate?: string;
+  /**
+   * 该缺口覆盖的具体缺失日期集合（含 date 和 endDate）。
+   * detectDateCompletenessIssues 合并连续缺口时填充，
+   * 用于两源共同缺口降级时精确计算交集，避免只检查起始日导致误判。
+   */
+  missingDates?: string[];
   type: "invalid_ohlcv" | "invalid_date" | "duplicate" | "gap";
   severity: "warning" | "error";
   message: string;
@@ -227,6 +239,13 @@ export interface BacktestResult {
    * "交易所开市但该证券停牌"，不应被误判为行情缺失。
    */
   interruptionsUsed: SecurityTradingInterruption[];
+  /**
+   * 行情数据质量状态：
+   * - `strict`：所有交易日都有独立停牌证据或完整行情，严格回测完成；
+   * - `degraded_common_gap`：存在两源共同缺口且缺少独立停牌证据，
+   *   按降级数据继续计算。不能等同于严格回测完成。
+   */
+  dataQualityStatus: "strict" | "degraded_common_gap";
   createdAt: string;
 }
 
@@ -855,6 +874,12 @@ export interface BacktestExperimentSummary {
   resultCount: number;
   bestXirr: number | null;
   maxDrawdown: number;
+  /**
+   * 实验中是否存在降级行情证据。
+   * - `strict`：所有结果均为严格回测；
+   * - `degraded_common_gap`：至少一个结果存在两源共同缺口降级。
+   */
+  dataQualityStatus: "strict" | "degraded_common_gap";
 }
 
 export interface BacktestExperiment

@@ -597,11 +597,14 @@ export const EASTMONEY_SUSPEND_SOURCE =
  * 历史版本或其他子接口可能使用 SUSPEND_DATE / RESUME_DATE / SUSPEND_END_DATE。
  *
  * 截止日优先级：
- *   1. 明确停牌截止日（SUSPEND_END_TIME / SUSPEND_END_DATE）——证据等级最高；
+ *   1. 明确停牌截止日（SUSPEND_END_TIME / SUSPEND_END_DATE / SUSPEND_EXPIRE）——证据等级最高；
  *   2. 实际复牌日前一天（RESUME_DATE）——证据等级次之；
  *   3. 预计复牌日前一天（PREDICT_RESUME_DATE）——证据等级最低，仅用于
  *      尚未复牌的临时判断，provenance 中通过 source 标记其来源；
- *   4. 上述均缺：若仍停牌，使用当前日期作为 endDate。
+ *   4. 上述均缺：返回 null，不自行延伸到今天。
+ *      历史记录因字段缺失而没有返回复牌信息时，不能假设从开始日一直停牌
+ *      到现在，否则会掩盖真实的数据缺口。仅当来源明确表明"目前仍处于
+ *      停牌状态"（如 SUSPEND_EXPIRE 为空但有状态字段）时才使用当前日期。
  *
  * 无法识别有效日期或 endDate < startDate 时返回 null，由调用方决定
  * 是否升级为结构错误。
@@ -616,16 +619,21 @@ export function parseSuspensionRow(
   );
   if (!startDate) return null;
 
+  // P1 边界修复：加入 SUSPEND_EXPIRE 作为明确截止日候选
   const explicitEndDate = dateValue(
-    firstValue(row, ["SUSPEND_END_TIME", "SUSPEND_END_DATE"]),
+    firstValue(row, [
+      "SUSPEND_END_TIME",
+      "SUSPEND_END_DATE",
+      "SUSPEND_EXPIRE",
+    ]),
   );
   const resumeDate = dateValue(
     firstValue(row, ["RESUME_DATE", "PREDICT_RESUME_DATE"]),
   );
-  // 优先级：明确截止日 > 实际/预计复牌日前一天 > 当前日期
+  // 优先级：明确截止日 > 实际/预计复牌日前一天
+  // 无任何截止/复牌日时返回 null，不自行延伸到今天
   const endDate =
-    explicitEndDate ||
-    (resumeDate ? addDaysToDate(resumeDate, -1) : fetchedAt.slice(0, 10));
+    explicitEndDate || (resumeDate ? addDaysToDate(resumeDate, -1) : "");
 
   if (!endDate || endDate < startDate) return null;
 

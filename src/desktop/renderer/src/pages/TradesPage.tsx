@@ -219,7 +219,7 @@ export function TradesPage() {
       if (buyAfter) {
         setBuyPrefill({
           type: "buy",
-          businessDate: dayjs(candidate.paymentDate ?? candidate.exDate),
+          businessDate: dayjs(ledgerEntry.businessDate),
           securityType: candidate.securityType,
           symbol: candidate.symbol,
           instrumentName: candidate.instrumentName,

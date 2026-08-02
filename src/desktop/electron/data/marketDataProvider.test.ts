@@ -857,7 +857,7 @@ describe("P1 证券级停复牌证据", () => {
     expect(warnings.length).toBeGreaterThan(0);
     expect(
       warnings.some((w) =>
-        w.message.includes("腾讯与新浪均未返回该区间行情"),
+        w.message.includes("腾讯与新浪均未返回行情"),
       ),
     ).toBe(true);
   });

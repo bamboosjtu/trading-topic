@@ -98,6 +98,7 @@ function result(
       },
     ],
     interruptionsUsed: [],
+    dataQualityStatus: "strict",
     createdAt: "2026-07-24T00:00:00Z",
   };
 }
@@ -114,6 +115,7 @@ function experiment(
     dataCutoff: "2026-07-24",
     caliberVersion: BACKTEST_CALIBER_VERSION,
     status: "completed",
+    dataQualityStatus: "strict",
     results: [result(id, `${id}-result`, endingAsset)],
   };
 }
@@ -315,6 +317,7 @@ describe("LocalDatabase", () => {
         },
       ],
       interruptionsUsed: [],
+      dataQualityStatus: "strict",
       createdAt: "2024-04-01T00:00:00Z",
     });
 
@@ -430,6 +433,7 @@ describe("LocalDatabase", () => {
       dataCutoff: scenario.actualEndDate,
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
+      dataQualityStatus: "strict",
       results: [
         buildResult(
           scenario.experimentId,

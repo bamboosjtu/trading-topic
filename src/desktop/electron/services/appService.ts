@@ -687,6 +687,17 @@ export class AppService {
       // P1：保存本次回测使用过的证券级停复牌证据，便于以后复现为什么
       // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
       result.interruptionsUsed = interruptions;
+      // P1-2：根据是否存在两源共同缺口降级 warning 判断数据质量状态。
+      // 存在降级 warning 时标记为 degraded_common_gap，否则为 strict。
+      const hasCommonGapWarning = prices.issues.some(
+        (issue) =>
+          issue.severity === "warning" &&
+          issue.type === "gap" &&
+          issue.message.includes("腾讯与新浪均未返回"),
+      );
+      result.dataQualityStatus = hasCommonGapWarning
+        ? "degraded_common_gap"
+        : "strict";
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -722,6 +733,11 @@ export class AppService {
       dataCutoff,
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
+      dataQualityStatus: results.some(
+        (r) => r.dataQualityStatus === "degraded_common_gap",
+      )
+        ? "degraded_common_gap"
+        : "strict",
     };
     this.database.saveBacktestExperimentWithMarketData(
       experiment,
@@ -1451,10 +1467,25 @@ export class AppService {
 
     // P1：业务日期必须是实际到账日。不能默认用 exDate 代替。
     // 没有任何到账日证据时拒绝确认，要求用户填写。
-    const dividendDate = pending.paymentDate ?? input.actualPaymentDate;
+    // P1-4：用户填写的实际到账日优先于公告到账日。
+    // 旧实现 pending.paymentDate ?? input.actualPaymentDate 会忽略用户修改，
+    // 与界面"实际到账日"含义相反。
+    const dividendDate = input.actualPaymentDate ?? pending.paymentDate;
     if (!dividendDate) {
       throw new Error(
         "缺少分红到账日：候选未公告到账日且用户未填写实际到账日，不能默认用除权日代替",
+      );
+    }
+    // 校验：到账日不能早于除权日，不能晚于当前交易日
+    if (pending.exDate && dividendDate < pending.exDate) {
+      throw new Error(
+        `分红到账日 ${dividendDate} 不能早于除权日 ${pending.exDate}`,
+      );
+    }
+    const today = currentMarketDate();
+    if (dividendDate > today) {
+      throw new Error(
+        `分红到账日 ${dividendDate} 不能晚于当前交易日 ${today}`,
       );
     }
 

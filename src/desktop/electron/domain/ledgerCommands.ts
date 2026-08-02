@@ -195,6 +195,26 @@ export function previewLedgerMutation(
     tradeDateContext,
   );
 
+  if (normalizedInput.originDividendEntryId) {
+    if (normalizedInput.type !== "buy") {
+      throw new Error("originDividendEntryId 只能出现在买入记录上");
+    }
+    const origin = entries.find(
+      (entry) => entry.id === normalizedInput.originDividendEntryId,
+    );
+    if (!origin) {
+      throw new Error(
+        `originDividendEntryId 指向的分红记录 ${normalizedInput.originDividendEntryId} 不存在`,
+      );
+    }
+    if (origin.type !== "dividend") {
+      throw new Error("originDividendEntryId 指向的记录不是分红类型");
+    }
+    if (origin.symbol !== normalizedInput.symbol) {
+      throw new Error("originDividendEntryId 指向的分红记录证券代码不一致");
+    }
+  }
+
   const correctedAt = new Date().toISOString();
   const afterEntries = replacingEntryId
     ? [

@@ -10,6 +10,20 @@ import type {
 import { rows } from "./dbUtil";
 import { insertMarketData } from "./marketRepository";
 
+/**
+ * 为旧版本持久化的 BacktestResult 补充新增字段默认值。
+ *
+ * dataQualityStatus 是 P1-2 新增字段，旧实验 JSON 中不存在。
+ * 旧数据没有经历过两源共同缺口降级逻辑，默认为 strict。
+ */
+function normalizeBacktestResult(raw: unknown): BacktestResult {
+  const result = raw as BacktestResult;
+  if (!result.dataQualityStatus) {
+    result.dataQualityStatus = "strict";
+  }
+  return result;
+}
+
 export function insertExperiment(
   database: BetterSqlite3.Database,
   experiment: BacktestExperiment,
@@ -68,7 +82,7 @@ function listExperimentResults(
      WHERE experiment_id = ?
      ORDER BY rowid`,
     [experimentId],
-  ).map((row) => JSON.parse(row.result_json) as BacktestResult);
+  ).map((row) => normalizeBacktestResult(JSON.parse(row.result_json)));
 }
 
 export function listBacktestExperiments(
@@ -88,6 +102,7 @@ export function listBacktestExperiments(
     result_count: number;
     best_xirr: number | null;
     max_drawdown: number | null;
+    has_degraded: number | null;
   }>(
     database,
     `SELECT
@@ -101,7 +116,10 @@ export function listBacktestExperiments(
        MAX(CAST(json_extract(r.result_json, '$.metrics.xirr') AS REAL))
          AS best_xirr,
        MIN(CAST(json_extract(r.result_json, '$.metrics.maxDrawdown') AS REAL))
-         AS max_drawdown
+         AS max_drawdown,
+       MAX(CASE WHEN json_extract(r.result_json, '$.dataQualityStatus')
+            = 'degraded_common_gap' THEN 1 ELSE 0 END)
+         AS has_degraded
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
      GROUP BY e.id
@@ -118,6 +136,8 @@ export function listBacktestExperiments(
       resultCount: row.result_count,
       bestXirr: row.best_xirr,
       maxDrawdown: row.max_drawdown ?? 0,
+      dataQualityStatus:
+        row.has_degraded === 1 ? "degraded_common_gap" : "strict",
     }));
 }
 
@@ -139,6 +159,7 @@ export function getBacktestExperiment(
     [id],
   )[0];
   if (!row) return null;
+  const results = listExperimentResults(database, row.id);
   return {
     experimentId: row.id,
     createdAt: row.created_at,
@@ -146,7 +167,12 @@ export function getBacktestExperiment(
     dataCutoff: row.data_cutoff,
     caliberVersion: row.caliber_version,
     status: row.status,
-    results: listExperimentResults(database, row.id),
+    results,
+    dataQualityStatus: results.some(
+      (r) => r.dataQualityStatus === "degraded_common_gap",
+    )
+      ? "degraded_common_gap"
+      : "strict",
   };
 }
 
@@ -185,7 +211,7 @@ export function getBacktest(
     "SELECT result_json FROM backtest_results WHERE id = ?",
     [id],
   )[0];
-  return row ? (JSON.parse(row.result_json) as BacktestResult) : null;
+  return row ? normalizeBacktestResult(JSON.parse(row.result_json)) : null;
 }
 
 export function getBacktestWorkspace(

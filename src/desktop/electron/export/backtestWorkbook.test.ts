@@ -72,6 +72,7 @@ function result(
     warnings: [],
     provenance: [],
     interruptionsUsed: [],
+    dataQualityStatus: "strict",
     createdAt: "2026-07-24T00:00:00Z",
   };
 }
@@ -96,6 +97,7 @@ describe("回测 XLSX 导出", () => {
       dataCutoff: "2026-07-24",
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
+      dataQualityStatus: "strict",
       results,
     });
     const workbook = new ExcelJS.Workbook();

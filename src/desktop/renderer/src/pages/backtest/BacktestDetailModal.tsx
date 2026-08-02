@@ -78,6 +78,11 @@ export function BacktestDetailModal({
             <span className="tabular-nums">{result.symbol}</span>
             <i />
             <span>回测明细</span>
+            {result.dataQualityStatus === "degraded_common_gap" && (
+              <Tag color="warning" bordered={false}>
+                降级
+              </Tag>
+            )}
           </div>
         ) : (
           "回测明细"

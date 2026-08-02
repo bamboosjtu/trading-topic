@@ -386,6 +386,8 @@ export function simulateBacktest(
     // P1：simulateBacktest 不直接知道停复牌证据；由 appService 在调用后填充。
     // 这里给空数组作为默认值，避免回测结果对象缺少必要字段。
     interruptionsUsed: [],
+    // P1-2：默认 strict，由 appService 在检测到两源共同缺口降级时覆盖。
+    dataQualityStatus: "strict",
     createdAt: experimentContext.createdAt,
   };
 }

@@ -231,6 +231,7 @@ function detectDateCompletenessIssues(
     if (run.length === 1) {
       issues.push({
         date: run[0],
+        missingDates: run,
         type: "gap",
         severity: "error",
         message: `${label}在正式交易日历年度内缺少 ${run[0]} 的行情`,
@@ -240,6 +241,8 @@ function detectDateCompletenessIssues(
       const end = run.at(-1) ?? run[0];
       issues.push({
         date: start,
+        endDate: end,
+        missingDates: run,
         type: "gap",
         severity: "error",
         message: `${label}在正式交易日历年度内缺少 ${start} 至 ${end} 共 ${run.length} 个交易日的行情`,
@@ -464,14 +467,17 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
    * 两源共同缺口兜底：当腾讯和新浪都缺少相同日期，且缺口前后两源都有
    * 正常行情（不是头部或尾部截断）时，将 error 降级为 warning。
    *
+   * P1-1 严格化：旧实现只检查 issue.date（区间起始日），无法证明另一个
+   * 来源也缺少整个区间。现在使用 missingDates 精确计算交集：
+   * - 整个缺口区间的日期都属于两源共同缺失 → 整体降级为 warning
+   * - 只有部分日期属于共同缺失 → 拆分为：共同缺口部分 warning + 单源缺口部分 error
+   * - 仅对 type === "gap" 执行降级，invalid_ohlcv/invalid_date/duplicate 不受影响
+   *
    * 处理原则：
    * - 不插值、不生成虚假收盘价；
    * - 不允许在缺口日期成交（由回测引擎保证）；
    * - 定投计划顺延到下一条真实行情；
    * - 单一来源缺口、头部缺口、尾部缺口仍保持 error。
-   *
-   * 这样即使停牌接口临时不可用，也不会因为两个行情源共同缺少同一段
-   * 数据而完全无法回测。
    */
   const downgradeCrossProviderCommonGaps = (
     issues: MarketDataIssue[],
@@ -480,32 +486,89 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   ): MarketDataIssue[] => {
     if (!selectedRows.length || !otherRows.length) return issues;
 
-    const otherDates = new Set(otherRows.map((r) => r.date));
-    const selectedDates = new Set(selectedRows.map((r) => r.date));
-    const selectedSorted = [...selectedDates].sort();
-    const otherSorted = [...otherDates].sort();
+    const otherPresentDates = new Set(otherRows.map((r) => r.date));
+    const selectedSorted = [...new Set(selectedRows.map((r) => r.date))].sort();
+    const otherSorted = [...otherPresentDates].sort();
     const selFirst = selectedSorted[0];
     const selLast = selectedSorted.at(-1) ?? "";
     const otherFirst = otherSorted[0];
     const otherLast = otherSorted.at(-1) ?? "";
 
-    return issues.map((issue) => {
-      if (issue.severity !== "error" || !issue.date) return issue;
-      const date = issue.date;
-      // 另一来源有该日期 → 单一来源缺口 → 保持 error
-      if (otherDates.has(date)) return issue;
-      // 在选中来源是头部或尾部 → 保持 error
-      if (date <= selFirst || date >= selLast) return issue;
-      // 在另一来源是头部或尾部 → 保持 error
-      if (date <= otherFirst || date >= otherLast) return issue;
-      // 两源共同缺口且前后都有正常行情 → 降级为 warning
-      return {
-        ...issue,
-        severity: "warning",
-        message: `${issue.message}（腾讯与新浪均未返回该区间行情，按证券不可交易区间处理）`,
-      };
-    });
+    const result: MarketDataIssue[] = [];
+    for (const issue of issues) {
+      // 仅对 type === "gap" 的 error 执行降级判断
+      if (issue.type !== "gap" || issue.severity !== "error" || !issue.date) {
+        result.push(issue);
+        continue;
+      }
+      const missingDates = issue.missingDates ?? [issue.date];
+      // 检查每个缺失日是否在另一来源中也缺失，且不是任一来源的头部/尾部
+      const commonMissing: string[] = [];
+      const onlySelectedMissing: string[] = [];
+      for (const date of missingDates) {
+        // 另一来源有该日期 → 单一来源缺口 → 保持 error
+        if (otherPresentDates.has(date)) {
+          onlySelectedMissing.push(date);
+          continue;
+        }
+        // 在选中来源是头部或尾部 → 保持 error
+        if (date <= selFirst || date >= selLast) {
+          onlySelectedMissing.push(date);
+          continue;
+        }
+        // 在另一来源是头部或尾部 → 保持 error
+        if (date <= otherFirst || date >= otherLast) {
+          onlySelectedMissing.push(date);
+          continue;
+        }
+        // 两源共同缺口且前后都有正常行情
+        commonMissing.push(date);
+      }
+
+      // 共同缺口部分降级为 warning
+      if (commonMissing.length > 0) {
+        const cStart = commonMissing[0];
+        const cEnd = commonMissing.at(-1) ?? cStart;
+        const cMessage =
+          commonMissing.length === 1
+            ? `${commonMissing[0]} 腾讯与新浪均未返回行情`
+            : `${cStart} 至 ${cEnd} 共 ${commonMissing.length} 个交易日腾讯与新浪均未返回行情`;
+        result.push({
+          date: cStart,
+          ...(commonMissing.length > 1 ? { endDate: cEnd } : {}),
+          missingDates: commonMissing,
+          type: "gap",
+          severity: "warning",
+          message: `${issue.message}（${cMessage}，缺少独立停牌证据，本次按降级数据继续计算）`,
+        });
+      }
+
+      // 单源缺口部分保持 error
+      if (onlySelectedMissing.length > 0) {
+        const sStart = onlySelectedMissing[0];
+        const sEnd = onlySelectedMissing.at(-1) ?? sStart;
+        const sMessage =
+          onlySelectedMissing.length === 1
+            ? `${labelPrefix(issue.message)}缺少 ${sStart} 的行情`
+            : `${labelPrefix(issue.message)}缺少 ${sStart} 至 ${sEnd} 共 ${onlySelectedMissing.length} 个交易日的行情`;
+        result.push({
+          date: sStart,
+          ...(onlySelectedMissing.length > 1 ? { endDate: sEnd } : {}),
+          missingDates: onlySelectedMissing,
+          type: "gap",
+          severity: "error",
+          message: sMessage,
+        });
+      }
+    }
+    return result;
   };
+
+  /** 从原始 issue message 中提取 label 前缀（如"腾讯"），用于拆分后的 error 文案。 */
+  function labelPrefix(message: string): string {
+    const match = /^(\S+?)(?:在正式交易日历|请求区间)/.exec(message);
+    return match ? match[1] : "";
+  }
 
   let primaryCandidate: Candidate | null = null;
   let primaryIssueMessage: string | null = null;
