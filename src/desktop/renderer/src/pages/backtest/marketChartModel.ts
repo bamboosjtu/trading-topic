@@ -80,6 +80,14 @@ export function buildKlineOption(
       backgroundColor: "#ffffff",
       borderColor: "#dfe6ef",
       textStyle: { color: "#183251", fontSize: 12 },
+      valueFormatter: (value: unknown) => {
+        // 前复权 OHLC 系列在 axis tooltip 中会传入数据数组 [open, close, low, high]，
+        // 系列名那一行不需要格式化数字；MA 均线和 OHLC 四个具体值为数字，保留 2 位小数。
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return value.toFixed(2);
+        }
+        return value;
+      },
     },
     legend: {
       top: 3,

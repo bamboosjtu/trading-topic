@@ -471,6 +471,19 @@ function staticProvider(
   };
 }
 
+/** 模拟网络失败的 provider，用于隔离测试主源的完整性检查行为。 */
+function failingProvider(source: "tencent" | "sina"): MarketDataProvider {
+  return {
+    source,
+    fetchPrices: vi.fn(async () => {
+      throw new Error(`${source} 网络不可用`);
+    }),
+    fetchAdjustedBars: vi.fn(async () => {
+      throw new Error(`${source} 网络不可用`);
+    }),
+  };
+}
+
 const JULY_2026_WEEKDAYS = [
   "2026-07-01", "2026-07-02", "2026-07-03",
   "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10",
@@ -541,8 +554,9 @@ describe("P1-1 严格回测行情完整性检查", () => {
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d !== "2026-07-15")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    // fallback 不可用，隔离测试主源完整性检查本身的行为
     const primary = staticProvider("tencent", rows);
-    const fallback = staticProvider("sina", rows);
+    const fallback = failingProvider("sina");
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -731,8 +745,10 @@ describe("P1 证券级停复牌证据", () => {
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    // fallback 不可用，隔离测试主源完整性检查本身的行为
+    // （两源都缺同一区间时会触发共同缺口降级，此处不测那个路径）
     const primary = staticProvider("tencent", rows);
-    const fallback = staticProvider("sina", rows);
+    const fallback = failingProvider("sina");
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -755,8 +771,9 @@ describe("P1 证券级停复牌证据", () => {
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    // fallback 不可用，隔离测试连续缺口合并逻辑
     const primary = staticProvider("tencent", rows);
-    const fallback = staticProvider("sina", rows);
+    const fallback = failingProvider("sina");
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -789,8 +806,9 @@ describe("P1 证券级停复牌证据", () => {
           (d < "2026-07-13" || d > "2026-07-14"),
       )
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    // fallback 不可用，隔离测试不连续缺口分别生成 error 的行为
     const primary = staticProvider("tencent", rows);
-    const fallback = staticProvider("sina", rows);
+    const fallback = failingProvider("sina");
 
     const result = await fetchWithProviderFallback(
       "prices",
@@ -810,5 +828,94 @@ describe("P1 证券级停复牌证据", () => {
       "2026-07-06",
       "2026-07-13",
     ]);
+  });
+
+  it("两源共同缺口降级为 warning，不阻断回测", async () => {
+    // 模拟腾讯和新浪都缺少 07-06 至 07-10（无停牌证据）
+    // 两源在缺口前后都有正常行情 → 共同缺口 → 降级为 warning
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    const warnings = result.issues.filter((i) => i.severity === "warning");
+    // 共同缺口应降级为 warning，不再有 error
+    expect(errors).toHaveLength(0);
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(
+      warnings.some((w) =>
+        w.message.includes("腾讯与新浪均未返回该区间行情"),
+      ),
+    ).toBe(true);
+  });
+
+  it("单一来源缺口保持 error，不降级", async () => {
+    // 腾讯缺少 07-06 至 07-10，但新浪有完整数据 → 单一来源缺口 → 保持 error
+    const tencentRows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const sinaRows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const primary = staticProvider("tencent", tencentRows);
+    const fallback = staticProvider("sina", sinaRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 新浪有完整数据且无 error → 直接使用新浪，不会进入共同缺口判断
+    // 腾讯的缺口变成 provider 级 warning
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(0);
+    expect(result.provenance.source).toBe("sina");
+  });
+
+  it("两源共同缺口在头部时不降级（保持 error）", async () => {
+    // 腾讯和新浪都缺少 07-01 至 07-03（头部缺口）
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d > "2026-07-03")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      "2020-01-01", // listingDate 使头部截断判定生效
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 头部缺口不降级，保持 error
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(
+      errors.some((e) => e.message.includes("头部截断")),
+    ).toBe(true);
   });
 });

@@ -460,6 +460,53 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   const hasErrorIssues = (candidate: Candidate | null): boolean =>
     candidate?.rowIssues.some((issue) => issue.severity === "error") ?? false;
 
+  /**
+   * 两源共同缺口兜底：当腾讯和新浪都缺少相同日期，且缺口前后两源都有
+   * 正常行情（不是头部或尾部截断）时，将 error 降级为 warning。
+   *
+   * 处理原则：
+   * - 不插值、不生成虚假收盘价；
+   * - 不允许在缺口日期成交（由回测引擎保证）；
+   * - 定投计划顺延到下一条真实行情；
+   * - 单一来源缺口、头部缺口、尾部缺口仍保持 error。
+   *
+   * 这样即使停牌接口临时不可用，也不会因为两个行情源共同缺少同一段
+   * 数据而完全无法回测。
+   */
+  const downgradeCrossProviderCommonGaps = (
+    issues: MarketDataIssue[],
+    selectedRows: readonly { date: string }[],
+    otherRows: readonly { date: string }[],
+  ): MarketDataIssue[] => {
+    if (!selectedRows.length || !otherRows.length) return issues;
+
+    const otherDates = new Set(otherRows.map((r) => r.date));
+    const selectedDates = new Set(selectedRows.map((r) => r.date));
+    const selectedSorted = [...selectedDates].sort();
+    const otherSorted = [...otherDates].sort();
+    const selFirst = selectedSorted[0];
+    const selLast = selectedSorted.at(-1) ?? "";
+    const otherFirst = otherSorted[0];
+    const otherLast = otherSorted.at(-1) ?? "";
+
+    return issues.map((issue) => {
+      if (issue.severity !== "error" || !issue.date) return issue;
+      const date = issue.date;
+      // 另一来源有该日期 → 单一来源缺口 → 保持 error
+      if (otherDates.has(date)) return issue;
+      // 在选中来源是头部或尾部 → 保持 error
+      if (date <= selFirst || date >= selLast) return issue;
+      // 在另一来源是头部或尾部 → 保持 error
+      if (date <= otherFirst || date >= otherLast) return issue;
+      // 两源共同缺口且前后都有正常行情 → 降级为 warning
+      return {
+        ...issue,
+        severity: "warning",
+        message: `${issue.message}（腾讯与新浪均未返回该区间行情，按证券不可交易区间处理）`,
+      };
+    });
+  };
+
   let primaryCandidate: Candidate | null = null;
   let primaryIssueMessage: string | null = null;
   try {
@@ -594,6 +641,17 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     if (primaryIssueMessage) issues.push(providerIssue(primaryIssueMessage));
     if (fallbackIssueMessage) issues.push(providerIssue(fallbackIssueMessage));
     issues.push(...selected.candidate.rowIssues);
+    // 两源共同缺口兜底：腾讯和新浪都缺少相同日期且前后有正常行情时，
+    // 将 error 降级为 warning，避免停牌接口不可用时回测完全阻断。
+    const otherCandidate =
+      selected.source === "tencent" ? fallbackCandidate : primaryCandidate;
+    const downgradedIssues = otherCandidate
+      ? downgradeCrossProviderCommonGaps(
+          issues,
+          selected.candidate.rows,
+          otherCandidate.rows,
+        )
+      : issues;
     // P1-1：保留候选的实际 tailStatus。头部截断但尾部完整时为 "complete"，
     // error 问题负责阻断回测；尾部不完整时为 "incomplete"。
     const tailStatus: MarketTailStatus = selected.candidate.tailStatus;
@@ -602,7 +660,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       requestedThrough: endDate,
       dataCutoff: selected.candidate.rows.at(-1)?.date ?? null,
       tailStatus,
-      issues,
+      issues: downgradedIssues,
       provenance: provenance(
         selected.source,
         selected.candidate.rows,
