@@ -182,3 +182,22 @@ export function deleteTradingInterruption(
     )
     .run(params.symbol, params.startDate, params.endDate, params.reason);
 }
+
+/**
+ * 删除指定 symbol 和 source 的全部停复牌证据。
+ *
+ * 用于自动获取流程刷新前清除旧的同源数据，避免因 endDate 变化
+ * 产生过时记录。手工录入的异源证据不受影响。
+ */
+export function deleteTradingInterruptionsBySymbolAndSource(
+  database: BetterSqlite3.Database,
+  symbol: string,
+  source: string,
+): void {
+  database
+    .prepare(
+      `DELETE FROM security_trading_interruptions
+        WHERE symbol = ? AND source = ?`,
+    )
+    .run(symbol, source);
+}

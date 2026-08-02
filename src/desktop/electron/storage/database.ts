@@ -60,6 +60,7 @@ import {
 import {
   deleteAllTradingInterruptions as deleteAllTradingInterruptionsFrom,
   deleteTradingInterruption as deleteTradingInterruptionFrom,
+  deleteTradingInterruptionsBySymbolAndSource as deleteTradingInterruptionsBySymbolAndSourceFrom,
   insertTradingInterruption as insertTradingInterruptionFrom,
   insertTradingInterruptions as insertTradingInterruptionsFrom,
   listTradingInterruptions as listTradingInterruptionsFrom,
@@ -441,6 +442,18 @@ export class LocalDatabase {
     reason: SecurityTradingInterruption["reason"];
   }): void {
     deleteTradingInterruptionFrom(this.database, params);
+  }
+
+  /** 自动获取刷新前清除指定 symbol + source 的旧停复牌证据。 */
+  deleteTradingInterruptionsBySymbolAndSource(
+    symbol: string,
+    source: string,
+  ): void {
+    deleteTradingInterruptionsBySymbolAndSourceFrom(
+      this.database,
+      symbol,
+      source,
+    );
   }
 
   exportBackup(): BackupPayload {

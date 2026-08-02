@@ -4,6 +4,7 @@ import type {
   DividendEvent,
   PricePoint,
   ReportedCorporateAction,
+  SecurityTradingInterruption,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { fetchWithTimeout } from "./_internal/httpClient";
@@ -577,4 +578,51 @@ export async function fetchCorporateActions(
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
   };
+}
+
+/**
+ * 从东方财富 datacenter API 获取证券停复牌历史。
+ *
+ * 使用 RPT_SUSPENDDATA 报表查询个股停复牌记录，自动生成
+ * SecurityTradingInterruption 证据供行情完整性检查使用。
+ *
+ * 如果 API 返回空或失败，返回空数组——不影响主流程。
+ */
+export async function fetchTradingSuspensions(
+  symbol: string,
+): Promise<SecurityTradingInterruption[]> {
+  const rows = await fetchEastmoneyReport(
+    "RPT_SUSPENDDATA",
+    symbol,
+    "SUSPEND_DATE",
+  );
+  const now = new Date().toISOString();
+  const interruptions: SecurityTradingInterruption[] = [];
+  for (const row of rows) {
+    const suspendDate = dateValue(row["SUSPEND_DATE"]);
+    if (!suspendDate) continue;
+    const resumeDate = dateValue(row["RESUME_DATE"]);
+    // 复牌日不在停牌区间内：endDate = 复牌日前一天
+    // 若仍停牌（无复牌日），使用当前日期作为 endDate
+    const endDate = resumeDate
+      ? addDaysToDate(resumeDate, -1)
+      : now.slice(0, 10);
+    if (endDate < suspendDate) continue;
+    interruptions.push({
+      symbol,
+      startDate: suspendDate,
+      endDate,
+      reason: "suspension",
+      source: "eastmoney_datacenter_RPT_SUSPENDDATA",
+      sourceId: textValue(row["ANNOUNCE_DATE"]) || undefined,
+      fetchedAt: now,
+    });
+  }
+  return interruptions;
+}
+
+function addDaysToDate(date: string, delta: number): string {
+  const d = new Date(date + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
 }

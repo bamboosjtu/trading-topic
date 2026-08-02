@@ -102,6 +102,7 @@ export type {
   PendingDividendDiscoveryResult,
   PerformancePeriod,
   PositionView,
+  SecurityTradingInterruption,
   SecurityType,
   SimpleBacktestRow,
   StockInfo,

@@ -1,9 +1,16 @@
+import { useState } from "react";
 import {
   Alert,
   App,
   Button,
+  DatePicker,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
   Skeleton,
   Table,
   Tag,
@@ -13,6 +20,8 @@ import {
   DatabaseOutlined,
   DownloadOutlined,
   FileTextOutlined,
+  PauseCircleOutlined,
+  PlusOutlined,
   SafetyCertificateOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -21,6 +30,7 @@ import {
   api,
   type DirectoryProvenance,
   type MarketCalendarDiagnostic,
+  type SecurityTradingInterruption,
 } from "../api/client";
 import { beijingTimestamp } from "./_shared/format";
 
@@ -70,6 +80,193 @@ function DirectoryDetails({
           description="首次加载证券目录后显示实际来源"
         />
       )}
+    </section>
+  );
+}
+
+const INTERRUPTION_REASON_LABELS: Record<
+  SecurityTradingInterruption["reason"],
+  string
+> = {
+  suspension: "停牌",
+  delisted: "退市",
+  not_yet_listed: "未上市",
+};
+
+function TradingInterruptionSection() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [form] = Form.useForm();
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const { data: interruptions = [] } = useQuery({
+    queryKey: ["trading-interruptions"],
+    queryFn: () => api.listTradingInterruptions(),
+  });
+
+  const addMutation = useMutation({
+    mutationFn: api.addTradingInterruption,
+    onSuccess: async () => {
+      message.success("停牌证据已添加");
+      setModalOpen(false);
+      form.resetFields();
+      await queryClient.invalidateQueries({
+        queryKey: ["trading-interruptions"],
+      });
+    },
+    onError: (error) => message.error(error.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteTradingInterruption,
+    onSuccess: async () => {
+      message.success("停牌证据已删除");
+      await queryClient.invalidateQueries({
+        queryKey: ["trading-interruptions"],
+      });
+    },
+    onError: (error) => message.error(error.message),
+  });
+
+  const columns: ColumnsType<SecurityTradingInterruption> = [
+    {
+      title: "证券代码",
+      dataIndex: "symbol",
+      width: 110,
+      render: (v: string) => <span className="tabular-nums">{v}</span>,
+    },
+    {
+      title: "起始日",
+      dataIndex: "startDate",
+      width: 120,
+    },
+    {
+      title: "结束日",
+      dataIndex: "endDate",
+      width: 120,
+    },
+    {
+      title: "原因",
+      dataIndex: "reason",
+      width: 90,
+      render: (v: SecurityTradingInterruption["reason"]) => (
+        <Tag>{INTERRUPTION_REASON_LABELS[v]}</Tag>
+      ),
+    },
+    { title: "来源", dataIndex: "source" },
+    {
+      title: "操作",
+      width: 80,
+      render: (_: unknown, record: SecurityTradingInterruption) => (
+        <Popconfirm
+          title="确认删除这条停牌证据？"
+          onConfirm={() =>
+            deleteMutation.mutate({
+              symbol: record.symbol,
+              startDate: record.startDate,
+              endDate: record.endDate,
+              reason: record.reason,
+            })
+          }
+        >
+          <Button type="link" danger size="small">
+            删除
+          </Button>
+        </Popconfirm>
+      ),
+    },
+  ];
+
+  const handleSubmit = () => {
+    form.validateFields().then((values) => {
+      addMutation.mutate({
+        symbol: values.symbol,
+        startDate: values.dateRange[0].format("YYYY-MM-DD"),
+        endDate: values.dateRange[1].format("YYYY-MM-DD"),
+        reason: values.reason,
+        source: values.source,
+        sourceId: values.sourceId || undefined,
+      });
+    });
+  };
+
+  return (
+    <section className="workspace-panel settings-section">
+      <div className="settings-section-title">
+        <PauseCircleOutlined />
+        <div>
+          <h2>证券级停复牌证据</h2>
+          <p>
+            录入公司公告披露的临时停牌、退市或未上市区间。行情完整性检查会排除这些日期，
+            避免把合法停牌误判为行情缺失。
+          </p>
+        </div>
+      </div>
+      <div className="settings-actions">
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setModalOpen(true)}
+        >
+          添加停牌证据
+        </Button>
+      </div>
+      <Table
+        rowKey={(r) => `${r.symbol}-${r.startDate}-${r.endDate}-${r.reason}`}
+        size="small"
+        pagination={false}
+        columns={columns}
+        dataSource={interruptions}
+        locale={{ emptyText: "暂无停牌证据" }}
+      />
+      <Modal
+        title="添加停牌证据"
+        open={modalOpen}
+        onOk={handleSubmit}
+        onCancel={() => setModalOpen(false)}
+        confirmLoading={addMutation.isPending}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="symbol"
+            label="证券代码"
+            rules={[
+              { required: true, pattern: /^\d{6}$/, message: "请输入 6 位证券代码" },
+            ]}
+          >
+            <Input placeholder="如 601088" />
+          </Form.Item>
+          <Form.Item
+            name="dateRange"
+            label="停牌区间（含首尾，复牌日不在内）"
+            rules={[{ required: true, message: "请选择停牌区间" }]}
+          >
+            <DatePicker.RangePicker />
+          </Form.Item>
+          <Form.Item
+            name="reason"
+            label="原因"
+            rules={[{ required: true, message: "请选择原因" }]}
+          >
+            <Select placeholder="选择不交易原因">
+              <Select.Option value="suspension">停牌</Select.Option>
+              <Select.Option value="delisted">退市</Select.Option>
+              <Select.Option value="not_yet_listed">未上市</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="source"
+            label="证据来源"
+            rules={[{ required: true, message: "请填写来源" }]}
+          >
+            <Input placeholder="如 eastmoney_announcement" />
+          </Form.Item>
+          <Form.Item name="sourceId" label="来源 ID（可选）">
+            <Input placeholder="公告或记录 ID" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </section>
   );
 }
@@ -258,6 +455,8 @@ export function SettingsPage() {
               dataSource={diagnostics.data?.marketCalendars ?? []}
             />
           </section>
+
+          <TradingInterruptionSection />
 
           <section className="workspace-panel settings-section">
             <div className="settings-section-title">

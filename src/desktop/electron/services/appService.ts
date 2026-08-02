@@ -43,7 +43,10 @@ import {
   fetchAStockUniverse,
   fetchDomesticEtfUniverse,
 } from "../data/stockUniverse";
-import { fetchCorporateActions } from "../data/tencent";
+import {
+  fetchCorporateActions,
+  fetchTradingSuspensions,
+} from "../data/tencent";
 import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
@@ -443,6 +446,8 @@ export class AppService {
     const instrumentMap = new Map(
       stocks.map((instrument) => [instrument.symbol, instrument]),
     );
+    // 自动获取停牌证据，避免合法停牌被误判为行情缺失
+    await this.refreshTradingInterruptions(canonicalRequest.symbols);
     for (const symbol of canonicalRequest.symbols) {
       const instrument = instrumentMap.get(symbol);
       if (!instrument || instrument.securityType !== "stock") {
@@ -946,6 +951,42 @@ export class AppService {
     );
   }
 
+  /**
+   * 自动获取并存储证券级停复牌证据。
+   *
+   * 对每个 symbol 调用东方财富 API 获取停复牌历史，清除同源旧数据后
+   * 写入新证据。API 失败时记录日志并跳过该 symbol，不影响其他标的
+   * 或主流程。
+   */
+  async refreshTradingInterruptions(
+    symbols: readonly string[],
+  ): Promise<void> {
+    const AUTO_SOURCE = "eastmoney_datacenter_RPT_SUSPENDDATA";
+    for (const symbol of symbols) {
+      try {
+        const interruptions = await fetchTradingSuspensions(symbol);
+        // 清除同源旧数据，避免 endDate 变化后残留过时记录
+        this.database.deleteTradingInterruptionsBySymbolAndSource(
+          symbol,
+          AUTO_SOURCE,
+        );
+        if (interruptions.length) {
+          this.database.insertTradingInterruptions(interruptions);
+          this.database.log(
+            "info",
+            `自动获取停牌证据：${symbol} ${interruptions.length} 条`,
+          );
+        }
+      } catch (error) {
+        // 停牌证据获取失败不阻断行情刷新——完整性检查会按"无停牌证据"处理
+        this.database.log(
+          "warn",
+          `停牌证据获取失败(${symbol})：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
   async refreshPositionsMarket(): Promise<MarketRefreshResult> {
     const symbols = this.getPositionsOverview().positions.map(
       (position) => position.symbol,
@@ -959,6 +1000,14 @@ export class AppService {
         issues: [],
       };
     }
+    // 自动获取停牌证据和分红候选——不阻断行情刷新主流程
+    await this.refreshTradingInterruptions(symbols);
+    await this.discoverPendingDividends().catch((error) => {
+      this.database.log(
+        "warn",
+        `分红候选自动发现失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
     const endDate = this.completedMarketDate();
     const startDate = addMonths(
       endDate,
