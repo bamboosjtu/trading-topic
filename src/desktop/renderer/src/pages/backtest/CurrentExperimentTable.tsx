@@ -80,7 +80,7 @@ export function CurrentExperimentTable({
         loading={loading}
         dataSource={rankedResults}
         locale={{ emptyText: "设置参数并开始回测后，将在这里展示标的对比" }}
-        scroll={{ x: 1490 }}
+        scroll={{ x: 1488 }}
         onRow={(record) => ({
           onDoubleClick: () => onDetail(record),
           className: "data-row",
@@ -99,7 +99,7 @@ export function CurrentExperimentTable({
           },
           {
             title: "标的",
-            width: 144,
+            width: 160,
             render: (_, row) => (
               <div className="symbol-cell">
                 <strong>{row.name}</strong>
@@ -182,7 +182,7 @@ export function CurrentExperimentTable({
           },
           {
             title: "期末现金",
-            width: 98,
+            width: 80,
             className: "tabular-nums",
             render: (_, row) => money(row.metrics.endingCash),
           },

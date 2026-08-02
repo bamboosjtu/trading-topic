@@ -115,9 +115,10 @@ function assertDates(
     if (previous && row.date <= previous) {
       throw new Error(`${label}交易日期必须严格升序且不重复`);
     }
-    if (previous && daysBetween(previous, row.date) > 120) {
-      throw new Error(`${label}请求区间存在超过 120 天的异常行情缺口`);
-    }
+    // 不再对行间间隔做 120 天硬检查：15 年回测中合法的长停牌、
+    // 数据源分页限制等都会产生 >120 天的间隔。完整性检查
+    // detectDateCompletenessIssues 会按正式交易日历逐日核对，
+    // 生成精确的 error/warning，并由两源共同缺口降级逻辑处理。
     previous = row.date;
   }
 }
