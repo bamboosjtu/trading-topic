@@ -112,6 +112,8 @@ describe("AppService 冷启动恢复", () => {
           adjustment: "none",
           caliberVersion: BACKTEST_CALIBER_VERSION,
         },
+        officialCalendarYears: [],
+        uncoveredCalendarYears: [],
       };
     });
     vi.mocked(fetchAdjustedBars).mockImplementation(async (symbol) => {
@@ -159,6 +161,8 @@ describe("AppService 冷启动恢复", () => {
           adjustment: "qfq",
           caliberVersion: BACKTEST_CALIBER_VERSION,
         },
+        officialCalendarYears: [],
+        uncoveredCalendarYears: [],
       };
     });
     vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => ({

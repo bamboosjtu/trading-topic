@@ -972,6 +972,76 @@ describe("LocalDatabase", () => {
       .toBe(160000);
   });
 
+  /**
+   * P0 回归：dataQuality.reasons 仅含 calendar_coverage_missing 的实验
+   * 必须在历史列表与详情中保持一致，不应被误判为包含 cross_provider_common_gap。
+   * 新数据写 dataQualityStatus = "degraded"（不是 "degraded_common_gap"）。
+   */
+  it("P0 回归：仅 calendar_coverage_missing 降级的历史列表与详情一致", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-calendar-missing-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const experimentId = "exp-calendar-missing";
+    const resultId = "exp-calendar-missing-result";
+    // 构造一个仅含 calendar_coverage_missing 的降级结果。
+    // 关键：dataQualityStatus 使用 "degraded"（新数据），不使用 "degraded_common_gap"。
+    // dataQuality.reasons 只包含 "calendar_coverage_missing"，不含 "cross_provider_common_gap"。
+    const degradedResult: BacktestResult = {
+      ...result(experimentId, resultId, 150000),
+      dataQualityStatus: "degraded",
+      dataQuality: {
+        level: "degraded",
+        reasons: ["calendar_coverage_missing"],
+        officialCalendarYears: [2024, 2025, 2026],
+        uncoveredCalendarYears: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+      },
+    };
+    database.saveBacktestExperimentWithMarketData(
+      {
+        experimentId,
+        createdAt: "2026-07-24T09:30:00Z",
+        request: request(),
+        dataCutoff: "2026-07-24",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+        status: "completed",
+        dataQualityStatus: "degraded",
+        dataQuality: {
+          level: "degraded",
+          reasons: ["calendar_coverage_missing"],
+          officialCalendarYears: [2024, 2025, 2026],
+          uncoveredCalendarYears: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        },
+        results: [degradedResult],
+      },
+      [],
+    );
+
+    // 历史列表 summary：dataQuality.reasons 只有 calendar_coverage_missing
+    const summaries = database.listBacktestExperiments();
+    expect(summaries).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.dataQualityStatus).toBe("degraded");
+    expect(summary?.dataQuality?.level).toBe("degraded");
+    expect(summary?.dataQuality?.reasons).toEqual(["calendar_coverage_missing"]);
+    // 关键：summary 不应包含 cross_provider_common_gap
+    expect(summary?.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+
+    // 详情：dataQuality.reasons 也只有 calendar_coverage_missing
+    const detail = database.getBacktestExperiment(experimentId);
+    expect(detail).not.toBeNull();
+    expect(detail?.dataQualityStatus).toBe("degraded");
+    expect(detail?.dataQuality?.level).toBe("degraded");
+    expect(detail?.dataQuality?.reasons).toEqual(["calendar_coverage_missing"]);
+    // 关键：详情也不应包含 cross_provider_common_gap
+    expect(detail?.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+    // 结果级别的 dataQuality 也应保持一致
+    expect(detail?.results[0]?.dataQuality?.reasons).toEqual(["calendar_coverage_missing"]);
+    expect(detail?.results[0]?.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+    expect(detail?.results[0]?.dataQualityStatus).toBe("degraded");
+  });
+
   it("行情缓存与实验保存使用同一事务，实验失败时缓存回滚", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-atomic-"));
     temporaryDirectories.push(directory);

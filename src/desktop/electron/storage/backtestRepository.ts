@@ -13,13 +13,12 @@ import { insertMarketData } from "./marketRepository";
 /**
  * 为旧版本持久化的 BacktestResult 补充新增字段默认值。
  *
- * dataQualityStatus 是 P1-2 新增字段，旧实验 JSON 中不存在。
- * dataQuality 是后续新增的结构化模型。
- *
- * 兼容规则：
+ * 兼容规则（按优先级）：
  * 1. 有 dataQuality → 直接使用
- * 2. 无 dataQuality 但有 dataQualityStatus → 推断
- * 3. 无 dataQualityStatus → 检查旧 warnings 文案推断
+ * 2. 无 dataQuality，dataQualityStatus === "degraded_common_gap" → 旧两源缺口
+ * 3. 无 dataQuality，dataQualityStatus === "degraded" → 降级但原因不明
+ * 4. 无 dataQuality，dataQualityStatus === "strict" → strict
+ * 5. 无 dataQualityStatus → 检查旧 warnings 文案推断
  * 不得把旧降级实验默认转换为 strict。
  */
 function normalizeBacktestResult(raw: unknown): BacktestResult {
@@ -35,13 +34,30 @@ function normalizeBacktestResult(raw: unknown): BacktestResult {
       : "strict";
   }
   if (!result.dataQuality) {
-    const isDegraded = result.dataQualityStatus !== "strict";
-    result.dataQuality = {
-      level: isDegraded ? "degraded" : "strict",
-      reasons: isDegraded ? ["cross_provider_common_gap"] : [],
-      officialCalendarYears: [],
-      uncoveredCalendarYears: [],
-    };
+    if (result.dataQualityStatus === "strict") {
+      result.dataQuality = {
+        level: "strict",
+        reasons: [],
+        officialCalendarYears: [],
+        uncoveredCalendarYears: [],
+      };
+    } else if (result.dataQualityStatus === "degraded_common_gap") {
+      // 旧值：明确是两源共同缺口
+      result.dataQuality = {
+        level: "degraded",
+        reasons: ["cross_provider_common_gap"],
+        officialCalendarYears: [],
+        uncoveredCalendarYears: [],
+      };
+    } else {
+      // "degraded" 或其他：降级但原因不明，不附加特定原因
+      result.dataQuality = {
+        level: "degraded",
+        reasons: [],
+        officialCalendarYears: [],
+        uncoveredCalendarYears: [],
+      };
+    }
   }
   return result;
 }
@@ -124,7 +140,8 @@ export function listBacktestExperiments(
     result_count: number;
     best_xirr: number | null;
     max_drawdown: number | null;
-    has_degraded: number | null;
+    is_degraded: number | null;
+    has_cross_provider_gap: number | null;
     has_calendar_missing: number | null;
   }>(
     database,
@@ -140,11 +157,23 @@ export function listBacktestExperiments(
          AS best_xirr,
        MIN(CAST(json_extract(r.result_json, '$.metrics.maxDrawdown') AS REAL))
          AS max_drawdown,
-       MAX(CASE WHEN json_extract(r.result_json, '$.dataQualityStatus')
-            = 'degraded_common_gap' THEN 1 ELSE 0 END)
-         AS has_degraded,
-       MAX(CASE WHEN json_extract(r.result_json, '$.dataQuality.reasons')
-            LIKE '%calendar_coverage_missing%' THEN 1 ELSE 0 END)
+       MAX(CASE WHEN
+            json_extract(r.result_json, '$.dataQuality.level') = 'degraded' OR
+            json_extract(r.result_json, '$.dataQualityStatus')
+              IN ('degraded', 'degraded_common_gap')
+            THEN 1 ELSE 0 END)
+         AS is_degraded,
+       MAX(CASE WHEN
+            json_extract(r.result_json, '$.dataQuality.reasons')
+              LIKE '%cross_provider_common_gap%' OR
+            json_extract(r.result_json, '$.dataQualityStatus')
+              = 'degraded_common_gap'
+            THEN 1 ELSE 0 END)
+         AS has_cross_provider_gap,
+       MAX(CASE WHEN
+            json_extract(r.result_json, '$.dataQuality.reasons')
+              LIKE '%calendar_coverage_missing%'
+            THEN 1 ELSE 0 END)
          AS has_calendar_missing
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
@@ -153,11 +182,12 @@ export function listBacktestExperiments(
      LIMIT ?`,
     [boundedLimit],
   ).map((row) => {
-      const isDegraded = row.has_degraded === 1 || row.has_calendar_missing === 1;
+      const isDegraded = row.is_degraded === 1;
       const reasons: Array<
         "cross_provider_common_gap" | "calendar_coverage_missing"
       > = [];
-      if (row.has_degraded === 1) reasons.push("cross_provider_common_gap");
+      if (row.has_cross_provider_gap === 1)
+        reasons.push("cross_provider_common_gap");
       if (row.has_calendar_missing === 1)
         reasons.push("calendar_coverage_missing");
       return {
@@ -170,7 +200,7 @@ export function listBacktestExperiments(
         resultCount: row.result_count,
         bestXirr: row.best_xirr,
         maxDrawdown: row.max_drawdown ?? 0,
-        dataQualityStatus: isDegraded ? "degraded_common_gap" : "strict",
+        dataQualityStatus: isDegraded ? "degraded" : "strict",
         dataQuality: {
           level: isDegraded ? "degraded" : "strict",
           reasons,
@@ -209,9 +239,9 @@ export function getBacktestExperiment(
     status: row.status,
     results,
     dataQualityStatus: results.some(
-      (r) => r.dataQualityStatus === "degraded_common_gap",
+      (r) => r.dataQuality?.level === "degraded",
     )
-      ? "degraded_common_gap"
+      ? "degraded"
       : "strict",
     dataQuality: {
       level: results.some((r) => r.dataQuality?.level === "degraded")

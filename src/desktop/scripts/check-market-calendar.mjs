@@ -49,7 +49,7 @@ console.log(`${currentYear} 年官方交易日历发布门禁通过`);
 // 产品支持范围覆盖诊断
 const maxBacktestYears = 15;
 const currentYearNum = Number(currentYear);
-const minBacktestYear = currentYearNum - maxBacktestYears + 1;
+const minBacktestYear = currentYearNum - maxBacktestYears;
 const uncoveredYears = [];
 for (let y = minBacktestYear; y <= currentYearNum; y++) {
   if (!officialYears.includes(y)) {

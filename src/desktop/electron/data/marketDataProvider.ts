@@ -800,8 +800,8 @@ export async function fetchMarketPrices(
   tailStatus: MarketTailStatus;
   issues: MarketDataIssue[];
   provenance: MarketDataProvenance & { caliberVersion: string };
-  officialCalendarYears?: number[];
-  uncoveredCalendarYears?: number[];
+  officialCalendarYears: number[];
+  uncoveredCalendarYears: number[];
 }> {
   const result = await fetchWithProviderFallback<PricePoint>(
     "prices",
@@ -824,6 +824,8 @@ export async function fetchMarketPrices(
       ...result.provenance,
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
+    officialCalendarYears: result.officialCalendarYears,
+    uncoveredCalendarYears: result.uncoveredCalendarYears,
   };
 }
 
@@ -840,6 +842,8 @@ export async function fetchMarketAdjustedBars(
   tailStatus: MarketTailStatus;
   issues: MarketDataIssue[];
   provenance: MarketDataProvenance & { caliberVersion: string };
+  officialCalendarYears: number[];
+  uncoveredCalendarYears: number[];
 }> {
   const result = await fetchWithProviderFallback<AdjustedBar>(
     "bars",
@@ -862,5 +866,7 @@ export async function fetchMarketAdjustedBars(
       ...result.provenance,
       caliberVersion: BACKTEST_CALIBER_VERSION,
     },
+    officialCalendarYears: result.officialCalendarYears,
+    uncoveredCalendarYears: result.uncoveredCalendarYears,
   };
 }

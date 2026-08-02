@@ -1,6 +1,7 @@
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import type {
   AdjustedBar,
+  BacktestDataQuality,
   BacktestExperiment,
   BacktestResult,
   BacktestWorkspaceState,
@@ -408,6 +409,60 @@ function assertBacktestResult(
   if (lastEquity.date !== result.actualEndDate) {
     throw new Error(
       `备份回测权益曲线末日(${lastEquity.date})与 actualEndDate(${result.actualEndDate})不一致`,
+    );
+  }
+  // 数据质量结构校验（旧备份无 dataQuality 时跳过）
+  if (result.dataQuality !== undefined) {
+    assertBacktestDataQuality(result.dataQuality);
+  }
+}
+
+function assertBacktestDataQuality(
+  dq: BacktestDataQuality,
+): void {
+  if (!isObject(dq)) {
+    throw new Error("备份回测数据质量结构非法");
+  }
+  if (!["strict", "degraded"].includes(dq.level)) {
+    throw new Error("备份回测数据质量等级非法");
+  }
+  const allowedReasons = [
+    "cross_provider_common_gap",
+    "calendar_coverage_missing",
+  ];
+  if (
+    !Array.isArray(dq.reasons) ||
+    dq.reasons.some((r) => !allowedReasons.includes(r))
+  ) {
+    throw new Error("备份回测数据质量降级原因非法");
+  }
+  if (
+    !Array.isArray(dq.officialCalendarYears) ||
+    !Array.isArray(dq.uncoveredCalendarYears)
+  ) {
+    throw new Error("备份回测数据质量年份字段非法");
+  }
+  for (const y of [...dq.officialCalendarYears, ...dq.uncoveredCalendarYears]) {
+    if (!Number.isInteger(y)) {
+      throw new Error("备份回测数据质量年份必须为整数");
+    }
+  }
+  // official 和 uncovered 不得相交
+  const officialSet = new Set(dq.officialCalendarYears);
+  if (dq.uncoveredCalendarYears.some((y) => officialSet.has(y))) {
+    throw new Error("备份回测数据质量年份不能同时属于已覆盖和未覆盖");
+  }
+  // strict 不应携带降级原因
+  if (dq.level === "strict" && dq.reasons.length > 0) {
+    throw new Error("备份回测数据质量 strict 等级不应有降级原因");
+  }
+  // calendar_coverage_missing 必须对应非空 uncovered 年份
+  if (
+    dq.reasons.includes("calendar_coverage_missing") &&
+    dq.uncoveredCalendarYears.length === 0
+  ) {
+    throw new Error(
+      "备份回测数据质量 calendar_coverage_missing 需要有未覆盖年份",
     );
   }
 }

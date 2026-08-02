@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BACKTEST_RANGE_YEARS } from "../../shared/constants";
 import {
   expectedTradingDatesWithCoverage,
   isConfirmedMarketClosureDate,
@@ -122,6 +123,33 @@ describe("expectedTradingDatesWithCoverage", () => {
     expect(coverage.uncoveredYears).toEqual([
       2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
     ]);
+  });
+
+  /**
+   * P0 回归：发布覆盖范围诊断。
+   * 产品支持最大 15 年回测（BACKTEST_RANGE_YEARS 含 15）。
+   * 当前年度 2026 时，严格日历要求起始年为 2026 - 15 = 2011（不是 2012）。
+   * scripts/check-market-calendar.mjs 使用 `currentYearNum - maxBacktestYears`
+   * 计算最小回测年度，本测试同时验证该算术结果与日历覆盖函数一致。
+   */
+  it("P0 回归：2026 年最大 15 年回测起始年为 2011（不是 2012）", () => {
+    // 1. 直接验证脚本算术逻辑：currentYearNum - maxBacktestYears === 2011
+    const currentYearNum = 2026;
+    const maxBacktestYears = Math.max(...BACKTEST_RANGE_YEARS);
+    expect(maxBacktestYears).toBe(15);
+    const minBacktestYear = currentYearNum - maxBacktestYears;
+    expect(minBacktestYear).toBe(2011);
+
+    // 2. 验证日历覆盖函数：2011-01-01 至 2026-12-31 的请求中
+    //    uncoveredYears 必须包含 2011（证明起始年是 2011 而非 2012）。
+    const coverage = expectedTradingDatesWithCoverage("2011-01-01", "2026-12-31");
+    expect(coverage.uncoveredYears).toContain(2011);
+    // 完整未覆盖年份范围应为 2011-2023（正式日历仅 2024/2025/2026）
+    expect(coverage.uncoveredYears).toEqual([
+      2011, 2012, 2013, 2014, 2015,
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    expect(coverage.officialYears).toEqual([2024, 2025, 2026]);
   });
 
   it("只覆盖正式日历年份时 uncoveredYears 为空", () => {

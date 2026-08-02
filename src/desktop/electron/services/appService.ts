@@ -711,14 +711,10 @@ export class AppService {
         officialCalendarYears,
         uncoveredCalendarYears,
       };
-      // 兼容字段
-      result.dataQualityStatus = reasons.includes(
-        "cross_provider_common_gap",
-      )
-        ? "degraded_common_gap"
-        : reasons.includes("calendar_coverage_missing")
-          ? "degraded_common_gap"
-          : "strict";
+      // 兼容字段：新数据统一使用 strict/degraded，
+      // degraded_common_gap 仅用于旧数据兼容。
+      result.dataQualityStatus =
+        result.dataQuality.level === "degraded" ? "degraded" : "strict";
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -755,9 +751,9 @@ export class AppService {
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
       dataQualityStatus: results.some(
-        (r) => r.dataQualityStatus === "degraded_common_gap",
+        (r) => r.dataQuality?.level === "degraded",
       )
-        ? "degraded_common_gap"
+        ? "degraded"
         : "strict",
       dataQuality: {
         level: results.some((r) => r.dataQuality?.level === "degraded")

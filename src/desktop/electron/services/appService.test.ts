@@ -115,6 +115,8 @@ function completeMarketResponse<
     dataCutoff: response.provenance.dataCutoff,
     tailStatus: "complete" as const,
     issues: [],
+    officialCalendarYears: [],
+    uncoveredCalendarYears: [],
   };
 }
 
@@ -639,6 +641,8 @@ describe("AppService 回测试验", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
     });
     vi.mocked(fetchAdjustedBars).mockResolvedValue(
       completeMarketResponse({
@@ -679,6 +683,215 @@ describe("AppService 回测试验", () => {
     expect(fetchCorporateActions).not.toHaveBeenCalled();
     expect(database.listBacktestExperiments()).toEqual([]);
     expect(database.listLiveMarketPrices()).toHaveLength(0);
+  });
+
+  /**
+   * P0 回归：fetchMarketPrices 包装层曾遗漏 officialCalendarYears 与
+   * uncoveredCalendarYears 字段转发，导致服务层永远读到空数组，最终错误
+   * 标记为 strict。本测试验证全链路：mock 返回未覆盖年份 2016-2023 时，
+   * 回测结果必须为 degraded 且 reasons 包含 calendar_coverage_missing。
+   */
+  it("P0 回归：未覆盖正式日历的年份触发 calendar_coverage_missing 降级（2016-2026 请求）", async () => {
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    // 关键：mock 返回的对象必须包含 officialCalendarYears 与
+    // uncoveredCalendarYears 字段（现在是必填）。
+    // 2016-2023 没有正式日历，必须触发 calendar_coverage_missing 降级。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      ...completeMarketResponse({
+        rows: [
+          { date: "2024-01-02", close: 5 },
+          { date: "2026-07-31", close: 5.2 },
+        ],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T00:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+      officialCalendarYears: [2024, 2025, 2026],
+      uncoveredCalendarYears: [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+    });
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(completeMarketResponse({
+      rows: [
+        {
+          date: "2024-01-02",
+          open: 4.9,
+          high: 5.1,
+          low: 4.8,
+          close: 5,
+          volume: 1000,
+          adjustment: "qfq",
+        },
+        {
+          date: "2026-07-31",
+          open: 5,
+          high: 5.3,
+          low: 4.9,
+          close: 5.2,
+          volume: 1200,
+          adjustment: "qfq",
+        },
+      ],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-31T00:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "qfq",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    }));
+    vi.mocked(fetchCorporateActions).mockResolvedValue({
+      rows: [],
+      reportedActions: [],
+      provenance: {
+        source: "test-action",
+        fetchedAt: "2026-07-31T00:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const experiment = await service.runBacktest({
+      symbols: ["601398"],
+      startDate: "2016-08-02",
+      endDate: "2026-07-31",
+      monthlyAmount: 3000,
+      buyDay: 1,
+    });
+
+    // 实验级别：dataQuality.level 必须为 degraded（不能因为字段转发丢失而误判 strict）
+    expect(experiment.dataQuality?.level).toBe("degraded");
+    expect(experiment.dataQualityStatus).toBe("degraded");
+    // reasons 必须包含 calendar_coverage_missing
+    expect(experiment.dataQuality?.reasons).toContain("calendar_coverage_missing");
+    // reasons 不应包含 cross_provider_common_gap（mock 数据没有共同缺口）
+    expect(experiment.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+    // uncoveredCalendarYears 必须包含 2016-2023
+    expect(experiment.dataQuality?.uncoveredCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    expect(experiment.dataQuality?.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    // 结果级别也应为 degraded
+    expect(experiment.results[0].dataQuality?.level).toBe("degraded");
+    expect(experiment.results[0].dataQuality?.reasons).toContain("calendar_coverage_missing");
+    expect(experiment.results[0].dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+    expect(experiment.results[0].dataQualityStatus).toBe("degraded");
+    // 实验已持久化
+    expect(database.listBacktestExperiments()).toHaveLength(1);
+  });
+
+  /**
+   * P0 回归对照：当请求区间只覆盖正式日历年份（2024-2026）且无任何 issues 时，
+   * 回测结果必须为 strict，reasons 为空数组。
+   */
+  it("P0 回归对照：只覆盖正式日历年份且无 issues 时结果为 strict", async () => {
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(database,
+      completeStockUniverse([
+        { symbol: "601398", name: "工商银行", securityType: "stock" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    // 关键：officialCalendarYears 包含 2024-2026，uncoveredCalendarYears 为空。
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue({
+      ...completeMarketResponse({
+        rows: [
+          { date: "2024-01-02", close: 5 },
+          { date: "2026-07-31", close: 5.2 },
+        ],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-31T00:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+      officialCalendarYears: [2024, 2025, 2026],
+      uncoveredCalendarYears: [],
+    });
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(completeMarketResponse({
+      rows: [
+        {
+          date: "2024-01-02",
+          open: 4.9,
+          high: 5.1,
+          low: 4.8,
+          close: 5,
+          volume: 1000,
+          adjustment: "qfq",
+        },
+        {
+          date: "2026-07-31",
+          open: 5,
+          high: 5.3,
+          low: 4.9,
+          close: 5.2,
+          volume: 1200,
+          adjustment: "qfq",
+        },
+      ],
+      provenance: {
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-31T00:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "qfq",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    }));
+    vi.mocked(fetchCorporateActions).mockResolvedValue({
+      rows: [],
+      reportedActions: [],
+      provenance: {
+        source: "test-action",
+        fetchedAt: "2026-07-31T00:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const experiment = await service.runBacktest({
+      symbols: ["601398"],
+      startDate: "2024-01-01",
+      endDate: "2026-07-31",
+      monthlyAmount: 3000,
+      buyDay: 1,
+    });
+
+    // 实验级别：dataQuality.level 必须为 strict
+    expect(experiment.dataQuality?.level).toBe("strict");
+    expect(experiment.dataQualityStatus).toBe("strict");
+    // reasons 必须为空数组
+    expect(experiment.dataQuality?.reasons).toEqual([]);
+    // uncoveredCalendarYears 必须为空
+    expect(experiment.dataQuality?.uncoveredCalendarYears).toEqual([]);
+    expect(experiment.dataQuality?.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    // 结果级别也应为 strict
+    expect(experiment.results[0].dataQuality?.level).toBe("strict");
+    expect(experiment.results[0].dataQuality?.reasons).toEqual([]);
+    expect(experiment.results[0].dataQualityStatus).toBe("strict");
+    // 实验已持久化
+    expect(database.listBacktestExperiments()).toHaveLength(1);
   });
 });
 
@@ -1005,6 +1218,8 @@ describe("AppService 实盘流水", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
     });
 
     const result = await service.refreshPositionsMarket();
@@ -1255,6 +1470,8 @@ describe("AppService P1-1/P1-2/P1-3 修复", () => {
         adjustment: "none",
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
     });
 
     const result = await service.refreshPositionsMarket();
@@ -1569,6 +1786,8 @@ describe("AppService P0 partial 覆盖完整区间替换", () => {
         { date: "2026-07-15", type: "gap", severity: "error", message: "缺失 2026-07-15 行情" },
       ],
       provenance: tencentProvenance("2026-07-31", "2026-07-31T10:00:00Z"),
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
     });
 
     // 第一次请求：partial → 重新请求完整区间 → 仍为 partial

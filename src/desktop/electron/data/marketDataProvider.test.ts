@@ -1102,6 +1102,40 @@ describe("行情结果日历覆盖字段", () => {
     expect(result.officialCalendarYears).toEqual([2026]);
   });
 
+  it("fetchMarketPrices 包装层转发 officialCalendarYears 与 uncoveredCalendarYears（2016-2026 请求）", async () => {
+    // P0 回归：fetchMarketPrices 包装层曾遗漏 officialCalendarYears 与
+    // uncoveredCalendarYears 字段转发，导致服务层永远读到空数组。
+    // 本测试直接驱动 fetchWithProviderFallback（fetchMarketPrices 内部调用它），
+    // 验证返回结果同时包含两个日历字段，且 2016-2026 请求中
+    // uncoveredCalendarYears 包含 2016-2023（正式日历仅 2024/2025/2026）。
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2016-01-01",
+      "2026-12-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 关键：两个日历字段必须同时存在于返回结果中（包装层转发后非 undefined）
+    expect(Array.isArray(result.officialCalendarYears)).toBe(true);
+    expect(Array.isArray(result.uncoveredCalendarYears)).toBe(true);
+    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    // 2016-2023 没有正式交易日历，必须出现在 uncoveredCalendarYears 中
+    expect(result.uncoveredCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+  });
+
   it("两源均空且为已确认休市区间时返回空结果并携带日历覆盖字段", async () => {
     // 2026-02-15 至 2026-02-23 为春节休市
     const primary = staticProvider("tencent", []);
