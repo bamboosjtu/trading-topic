@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SecurityTradingInterruption } from "../../shared/contracts";
 import type { MarketDataProvider } from "./marketDataProvider";
 import {
   assertCrossProviderConsistency,
+  expandInterruptionDates,
   fetchWithProviderFallback,
   validateAdjustedBars,
 } from "./marketDataProvider";
@@ -667,5 +669,84 @@ describe("P1-1 严格回测行情完整性检查", () => {
     expect(result.tailStatus).toBe("complete");
     // 返回完整 7 月数据
     expect(result.rows).toHaveLength(JULY_2026_WEEKDAYS.length);
+  });
+});
+
+describe("P1 证券级停复牌证据", () => {
+  it("expandInterruptionDates 展开停牌区间为日期集合", () => {
+    const interruptions: SecurityTradingInterruption[] = [
+      {
+        symbol: "601088",
+        startDate: "2025-08-04",
+        endDate: "2025-08-15",
+        reason: "suspension",
+        source: "eastmoney_announcement",
+        fetchedAt: "2025-08-04T00:00:00Z",
+      },
+    ];
+    const dates = expandInterruptionDates(interruptions);
+    expect(dates.has("2025-08-04")).toBe(true);
+    expect(dates.has("2025-08-15")).toBe(true);
+    expect(dates.has("2025-08-18")).toBe(false);
+    expect(dates.size).toBe(12);
+  });
+
+  it("已确认停牌日不产生行情缺失 error", async () => {
+    // 模拟中国神华 2026-07-06 至 2026-07-10 连续停牌
+    // 数据源不返回这些日期的行情（正确行为），不应误判为行情缺失
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const interruptions: SecurityTradingInterruption[] = [
+      {
+        symbol: "601088",
+        startDate: "2026-07-06",
+        endDate: "2026-07-10",
+        reason: "suspension",
+        source: "eastmoney_announcement",
+        fetchedAt: "2026-07-06T00:00:00Z",
+      },
+    ];
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+      interruptions,
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("无停牌证据时同一缺口仍产生 error", async () => {
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.date === "2026-07-06")).toBe(true);
   });
 });

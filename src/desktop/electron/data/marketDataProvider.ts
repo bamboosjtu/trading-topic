@@ -5,6 +5,7 @@ import type {
   MarketDataProvenance,
   MarketTailStatus,
   PricePoint,
+  SecurityTradingInterruption,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import {
@@ -29,6 +30,32 @@ import {
   daysBetween,
   validDate,
 } from "../domain/dateUtils";
+
+/**
+ * 把证券级停复牌证据展开为具体日期集合（含 startDate，不含 endDate 之后的复牌日）。
+ *
+ * 区间约定：[startDate, endDate] 均为停牌日；endDate 之后第一个交易日为复牌日，
+ * 不在停牌区间内。这与 `SecurityTradingInterruption` 字段语义一致。
+ *
+ * 注意：endDate 可以等于 startDate（单日停牌）。
+ */
+export function expandInterruptionDates(
+  interruptions: readonly SecurityTradingInterruption[],
+): Set<string> {
+  const dates = new Set<string>();
+  for (const item of interruptions) {
+    if (!validDate(item.startDate) || !validDate(item.endDate)) continue;
+    if (item.startDate > item.endDate) continue;
+    for (
+      let date = item.startDate;
+      date <= item.endDate;
+      date = addDays(date, 1)
+    ) {
+      dates.add(date);
+    }
+  }
+  return dates;
+}
 
 /** 适配器返回的行级解析结果：有效行 + 解析期间发现的问题。 */
 export interface ProviderFetchResult<T> {
@@ -114,6 +141,11 @@ function assertDates(
  *   若首条行情晚于 listingDate，说明接口截断了已上市期间的数据，生成 error。
  * - 未提供 listingDate：不能排除"接口未返回上市前的预期间隔"，故
  *   不生成头部截断 error；仅检查 [firstRowDate, lastRowDate] 内部缺口。
+ *
+ * P1 修订（停复牌证据）：增加 interruptions 参数。已确认停牌/退市/未上市的
+ * 日期属于"交易所开市但该证券不交易"，应从"预期行情日"中排除，不应升级为
+ * error。这是证券级证据，与交易所级休市日历（isConfirmedMarketClosureDate）
+ * 互补，但不互相替代。
  */
 function detectDateCompletenessIssues(
   rows: readonly { date: string }[],
@@ -121,12 +153,16 @@ function detectDateCompletenessIssues(
   startDate: string,
   endDate: string,
   listingDate?: string,
+  interruptions: readonly SecurityTradingInterruption[] = [],
 ): MarketDataIssue[] {
   const issues: MarketDataIssue[] = [];
   // 有效起点：上市日晚于请求起点时，上市前的交易日不参与完整性校验
   const effectiveStartDate =
     listingDate && listingDate > startDate ? listingDate : startDate;
   const expected = expectedTradingDatesInRange(effectiveStartDate, endDate);
+  // P1：把证券级停复牌证据展开为日期集合，从"预期行情日"中排除。
+  // 这样"交易所开市 + 证券停牌"的合法缺口不会误判为行情问题。
+  const interruptionDates = expandInterruptionDates(interruptions);
   if (!expected.length) {
     // 没有正式日历的区间仍检查极端截断
     if (rows.length < 2) {
@@ -142,7 +178,10 @@ function detectDateCompletenessIssues(
     return issues;
   }
   const present = new Set(rows.map((row) => row.date));
-  const missing = expected.filter((date) => !present.has(date));
+  // 无法解释的缺口 = 预期交易日 - 已返回 - 已确认停牌日
+  const missing = expected.filter(
+    (date) => !present.has(date) && !interruptionDates.has(date),
+  );
   if (!missing.length) return issues;
 
   const firstRowDate = rows[0]?.date;
@@ -312,6 +351,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   fallback: MarketDataProvider,
   listingDate?: string,
   now = new Date(),
+  interruptions: readonly SecurityTradingInterruption[] = [],
 ): Promise<MarketFetchResult<T>> {
   assertValidMarketDateRange(startDate, endDate);
   interface Candidate {
@@ -363,6 +403,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       startDate,
       endDate,
       listingDate,
+      interruptions,
     );
     return {
       rows: completed,
@@ -556,6 +597,7 @@ export async function fetchMarketPrices(
   startDate: string,
   endDate: string,
   listingDate?: string,
+  interruptions: readonly SecurityTradingInterruption[] = [],
 ): Promise<{
   rows: PricePoint[];
   requestedThrough: string;
@@ -572,6 +614,8 @@ export async function fetchMarketPrices(
     tencentProvider,
     sinaProvider,
     listingDate,
+    undefined,
+    interruptions,
   );
   return {
     rows: result.rows,
@@ -591,6 +635,7 @@ export async function fetchMarketAdjustedBars(
   startDate: string,
   endDate: string,
   listingDate?: string,
+  interruptions: readonly SecurityTradingInterruption[] = [],
 ): Promise<{
   rows: AdjustedBar[];
   requestedThrough: string;
@@ -607,6 +652,8 @@ export async function fetchMarketAdjustedBars(
     tencentProvider,
     sinaProvider,
     listingDate,
+    undefined,
+    interruptions,
   );
   return {
     rows: result.rows,

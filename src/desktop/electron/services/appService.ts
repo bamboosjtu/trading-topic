@@ -11,7 +11,9 @@ import type {
   LedgerImpactPreview,
   MarketDataIssue,
   PendingDividend,
+  PendingDividendDiscoveryIssue,
   PendingDividendDiscoveryResult,
+  SecurityTradingInterruption,
   SimpleBacktestResult,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
@@ -152,6 +154,8 @@ interface BacktestMarketDataBundle {
     | undefined;
   /** 前复权 K 线的问题列表；errors 不阻断回测但写入 warnings。 */
   chartIssues: MarketDataIssue[];
+  /** 本次行情完整性检查使用的证券级停复牌证据；用于结果 provenance。 */
+  interruptions: SecurityTradingInterruption[];
 }
 
 function isCompleteEtfUniverse(stocks: readonly StockInfo[]): boolean {
@@ -450,6 +454,13 @@ export class AppService {
       // P1-1 修订：传入上市日期，让完整性检查区分新上市股票的预期前置缺口
       // 与接口截断。listingDate 缺省时按"无上市日证据"处理（不阻断）。
       const listingDate = instrumentMap.get(symbol)?.listingDate;
+      // P1：加载证券级停复牌证据，让完整性检查排除"交易所开市但该证券停牌"
+      // 的合法缺口，避免把停牌误判为行情缺失。
+      const interruptions = this.database.listTradingInterruptionsInRange(
+        symbol,
+        canonicalRequest.startDate,
+        canonicalRequest.endDate,
+      );
       // P1-1：不复权价格与前复权 K 线使用不同失败策略。
       // - 不复权价格失败或不完整 → 阻断回测
       // - 前复权 K 线失败或不完整 → 回测继续，chartData 降级
@@ -459,12 +470,14 @@ export class AppService {
           canonicalRequest.startDate,
           canonicalRequest.endDate,
           listingDate,
+          interruptions,
         ),
         fetchMarketAdjustedBars(
           symbol,
           canonicalRequest.startDate,
           canonicalRequest.endDate,
           listingDate,
+          interruptions,
         ),
       ]);
       if (pricesSettled.status === "rejected") {
@@ -558,6 +571,7 @@ export class AppService {
         chartData,
         chartProvenance,
         chartIssues,
+        interruptions,
       });
     }
     return marketData;
@@ -592,7 +606,7 @@ export class AppService {
           : canonicalRequest.endDate,
     };
     const results: BacktestResult[] = [];
-    for (const { symbol, prices, dividends, chartData, chartProvenance, chartIssues } of marketData) {
+    for (const { symbol, prices, dividends, chartData, chartProvenance, chartIssues, interruptions } of marketData) {
       // 在每个标的的同步回测计算之前让出事件循环，避免多标的串行计算
       // 长时间阻塞主进程 IPC 队列。
       await new Promise((resolve) => setImmediate(resolve));
@@ -668,6 +682,9 @@ export class AppService {
       )) {
         result.warnings.push(`回测行情完整性问题：${issue.message}`);
       }
+      // P1：保存本次回测使用过的证券级停复牌证据，便于以后复现为什么
+      // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
+      result.interruptionsUsed = interruptions;
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -846,11 +863,18 @@ export class AppService {
     );
     for (const range of this.missingLivePriceRanges(normalized)) {
       try {
+        // P1：加载该区间内的证券级停复牌证据，让完整性检查排除合法停牌缺口。
+        const interruptions = this.database.listTradingInterruptionsInRange(
+          range.symbol,
+          range.startDate,
+          range.endDate,
+        );
         const response = await fetchMarketPrices(
           range.symbol,
           range.startDate,
           range.endDate,
           stockLookup.get(range.symbol),
+          interruptions,
         );
         // P1-3：检测请求区间内的 error 级别行情问题。
         // 即使尾部完整，只要请求范围内存在 error（如被丢弃的非法 OHLCV 行），
@@ -954,11 +978,18 @@ export class AppService {
       this.localStockUniverse().map((stock) => [stock.symbol, stock.listingDate]),
     );
     for (const range of missing) {
+      // P1：加载该区间内的证券级停复牌证据，让完整性检查排除合法停牌缺口。
+      const interruptions = this.database.listTradingInterruptionsInRange(
+        range.symbol,
+        range.startDate,
+        range.endDate,
+      );
       const response = await fetchMarketPrices(
         range.symbol,
         range.startDate,
         range.endDate,
         stockLookup.get(range.symbol),
+        interruptions,
       );
       // P1-3：检测请求区间内的 error 级别行情问题，标记覆盖为 partial。
       const errorIssuesInRange = response.issues.filter(
@@ -1350,7 +1381,26 @@ export class AppService {
       entries.filter((e) => e.symbol).map((e) => e.symbol!),
     );
     if (!symbols.size) {
-      return { discovered: 0, skipped: 0, total: 0, candidates: [] };
+      return {
+        discovered: 0,
+        checked: 0,
+        skipped: 0,
+        failed: 0,
+        issues: [],
+        total: 0,
+        candidates: [],
+      };
+    }
+
+    // P2：按标的分别计算最早持仓日，避免为 2026 年才建仓的标的拉取 2020 年起的公司行动。
+    // 取该标的首笔 ledger 业务日期作为下界。
+    const earliestHoldingDateBySymbol = new Map<string, string>();
+    for (const entry of entries) {
+      if (!entry.symbol) continue;
+      const prev = earliestHoldingDateBySymbol.get(entry.symbol);
+      if (!prev || entry.businessDate < prev) {
+        earliestHoldingDateBySymbol.set(entry.symbol, entry.businessDate);
+      }
     }
 
     // Fetch corporate actions for each symbol
@@ -1358,24 +1408,33 @@ export class AppService {
       string,
       { dividends: Awaited<ReturnType<typeof fetchCorporateActions>>["rows"]; fetchedAt: string }
     >();
-    // Use a reasonable date range: from earliest ledger entry to current market date
-    const earliestDate = entries.reduce(
-      (min, e) => (e.businessDate < min ? e.businessDate : min),
-      "2020-01-01",
-    );
     const endDate = currentMarketDate();
+    const issues: PendingDividendDiscoveryIssue[] = [];
+    let failed = 0;
+    let checked = 0;
 
     for (const symbol of symbols) {
+      const earliest = earliestHoldingDateBySymbol.get(symbol);
+      if (!earliest) {
+        // 无持仓的标的不参与检查
+        continue;
+      }
+      checked += 1;
       try {
-        const result = await fetchCorporateActions(symbol, earliestDate, endDate);
+        const result = await fetchCorporateActions(symbol, earliest, endDate);
         if (result.rows.length) {
           corporateActions.set(symbol, {
             dividends: result.rows,
             fetchedAt: result.provenance.fetchedAt,
           });
         }
-      } catch {
-        // Skip failed fetches
+      } catch (error) {
+        // P2：不再静默吞掉错误，记录失败原因返回给 UI。
+        failed += 1;
+        issues.push({
+          symbol,
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -1404,7 +1463,10 @@ export class AppService {
 
     return {
       discovered: candidates.length,
-      skipped: 0,
+      checked,
+      skipped: symbols.size - checked,
+      failed,
+      issues,
       total: existingPending.length + candidates.length,
       candidates,
     };
@@ -1426,15 +1488,25 @@ export class AppService {
       throw new Error(`待确认分红状态为 ${pending.status}，无法确认`);
     }
 
+    // P1：业务日期必须是实际到账日。不能默认用 exDate 代替。
+    // 没有任何到账日证据时拒绝确认，要求用户填写。
+    const dividendDate = pending.paymentDate ?? input.actualPaymentDate;
+    if (!dividendDate) {
+      throw new Error(
+        "缺少分红到账日：候选未公告到账日且用户未填写实际到账日，不能默认用除权日代替",
+      );
+    }
+
     const amount = input.actualAmount ?? pending.expectedAmount;
 
     if (input.reinvest) {
-      // Use dividend reinvestment flow (creates both dividend + buy entries)
-      const result = this.addDividendReinvestment({
+      // P1：用 preview 构建事实对象（不持久化），再用原子事务写入。
+      // 这样 dividend + buy + pending_dividends.status 更新在同一 SQLite 事务中。
+      const preview = this.previewDividendReinvestment({
         symbol: pending.symbol,
         instrumentName: pending.instrumentName,
         securityType: pending.securityType,
-        dividendDate: pending.exDate,
+        dividendDate,
         dividendAmount: amount,
         perShare: pending.perShare,
         recordDate: pending.recordDate,
@@ -1442,34 +1514,66 @@ export class AppService {
         buyPrice: input.reinvest.buyPrice,
         buyQuantity: input.reinvest.buyQuantity,
         fee: input.reinvest.fee,
+        note: "来源：公司行动数据推算（确认到账并再投入）",
       });
-      this.database.updatePendingDividendStatus(
-        id,
-        "confirmed",
-        amount,
-        result.dividend.id,
+      const linkedGroupId = randomUUID();
+      const recordedAt = new Date().toISOString();
+      const dividend: LedgerEntry = {
+        ...preview.dividend.normalizedInput,
+        linkedGroupId,
+        id: randomUUID(),
+        recordedAt,
+        currency: "CNY",
+        source: "user",
+      };
+      const buy: LedgerEntry = {
+        ...preview.buy.normalizedInput,
+        linkedGroupId,
+        id: randomUUID(),
+        recordedAt: new Date(Date.parse(recordedAt) + 1).toISOString(),
+        currency: "CNY",
+        source: "user",
+      };
+      this.database.confirmPendingDividendAtomically({
+        pendingId: id,
+        dividendEntry: dividend,
+        buyEntry: buy,
+        actualAmount: amount,
+      });
+      this.database.log(
+        "info",
+        `确认分红并再投入：${pending.symbol} ${dividendDate}`,
       );
-      return result;
+      return { dividend, buy };
     }
 
-    // Standalone dividend entry (no reinvestment)
-    const dividendEntry = this.addLedger({
+    // 仅确认到账，不再投入
+    const preview = this.previewLedger({
       type: "dividend",
-      businessDate: pending.exDate,
+      businessDate: dividendDate,
       symbol: pending.symbol,
       securityType: pending.securityType,
       instrumentName: pending.instrumentName,
       amount,
       perShare: pending.perShare,
       recordDate: pending.recordDate,
-      note: `来源：公司行动数据推算（确认到账）`,
+      note: "来源：公司行动数据推算（确认到账）",
     });
-
-    this.database.updatePendingDividendStatus(
-      id,
-      "confirmed",
-      amount,
-      dividendEntry.id,
+    const dividendEntry: LedgerEntry = {
+      ...preview.normalizedInput,
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      currency: "CNY",
+      source: "user",
+    };
+    this.database.confirmPendingDividendAtomically({
+      pendingId: id,
+      dividendEntry,
+      actualAmount: amount,
+    });
+    this.database.log(
+      "info",
+      `确认分红到账：${pending.symbol} ${dividendDate}`,
     );
     return { dividend: dividendEntry };
   }
@@ -1482,5 +1586,56 @@ export class AppService {
       throw new Error(`待确认分红状态为 ${pending.status}，无法忽略`);
     }
     this.database.updatePendingDividendStatus(id, "ignored");
+  }
+
+  /** P1：列出全部证券级停复牌证据，可选按 symbol 过滤。 */
+  listTradingInterruptions(symbol?: string): SecurityTradingInterruption[] {
+    return symbol
+      ? this.database.listTradingInterruptionsBySymbol(symbol)
+      : this.database.listTradingInterruptions();
+  }
+
+  /** P1：手工录入停复牌证据。 */
+  addTradingInterruption(
+    input: Omit<SecurityTradingInterruption, "fetchedAt"> & {
+      fetchedAt?: string;
+    },
+  ): SecurityTradingInterruption {
+    if (!input.symbol) throw new Error("停复牌证据必须填写证券代码");
+    if (!input.startDate || !input.endDate) {
+      throw new Error("停复牌证据必须填写起止日期");
+    }
+    if (input.startDate > input.endDate) {
+      throw new Error("停复牌起始日不能晚于结束日");
+    }
+    const interruption: SecurityTradingInterruption = {
+      symbol: input.symbol,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      reason: input.reason,
+      source: input.source,
+      fetchedAt: input.fetchedAt ?? new Date().toISOString(),
+      ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+    };
+    this.database.insertTradingInterruption(interruption);
+    this.database.log(
+      "info",
+      `录入停复牌证据：${input.symbol} ${input.startDate}..${input.endDate} (${input.reason})`,
+    );
+    return interruption;
+  }
+
+  /** P1：删除停复牌证据。 */
+  deleteTradingInterruption(input: {
+    symbol: string;
+    startDate: string;
+    endDate: string;
+    reason: SecurityTradingInterruption["reason"];
+  }): void {
+    this.database.deleteTradingInterruption(input);
+    this.database.log(
+      "info",
+      `删除停复牌证据：${input.symbol} ${input.startDate}..${input.endDate} (${input.reason})`,
+    );
   }
 }

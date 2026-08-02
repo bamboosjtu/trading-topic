@@ -71,6 +71,7 @@ function result(
     chartData: { status: "unavailable", reason: "test" },
     warnings: [],
     provenance: [],
+    interruptionsUsed: [],
     createdAt: "2026-07-24T00:00:00Z",
   };
 }

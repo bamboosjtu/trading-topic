@@ -64,6 +64,14 @@ export const api = {
   confirmPendingDividend: (id: string, input: ConfirmPendingDividendInput) =>
     bridge().confirmPendingDividend(id, input),
   ignorePendingDividend: (id: string) => bridge().ignorePendingDividend(id),
+  listTradingInterruptions: (symbol?: string) =>
+    bridge().listTradingInterruptions(symbol),
+  addTradingInterruption: (
+    input: Parameters<DesktopApi["addTradingInterruption"]>[0],
+  ) => bridge().addTradingInterruption(input),
+  deleteTradingInterruption: (
+    input: Parameters<DesktopApi["deleteTradingInterruption"]>[0],
+  ) => bridge().deleteTradingInterruption(input),
 };
 
 export type {

@@ -6,7 +6,7 @@ import { rows } from "./dbUtil";
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA_FINGERPRINT =
-  "stock-income-r1-schema-1-2026-08-02-pending-dividends-listing-date";
+  "stock-income-r1-schema-1-2026-08-02-pending-dividends-listing-date-trading-interruptions";
 export const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -74,6 +74,7 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         "backtest_workspace",
         "schema_metadata",
         "pending_dividends",
+        "security_trading_interruptions",
       ];
       const missingTables = requiredTables.filter(
         (table) => !existingTables.includes(table),
@@ -236,6 +237,17 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         source TEXT NOT NULL CHECK (source = 'corporate_action'),
         note TEXT,
         UNIQUE(symbol, record_date)
+      );
+      CREATE TABLE security_trading_interruptions (
+        symbol TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        reason TEXT NOT NULL
+          CHECK (reason IN ('suspension', 'delisted', 'not_yet_listed')),
+        source TEXT NOT NULL,
+        source_id TEXT,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY(symbol, start_date, end_date, reason)
       );
       CREATE INDEX idx_backtest_experiments_created_at
         ON backtest_experiments(created_at DESC);

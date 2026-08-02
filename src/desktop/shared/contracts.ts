@@ -220,6 +220,13 @@ export interface BacktestResult {
   chartData: Exclude<ChartDataState, { status: "loading" }>;
   warnings: string[];
   provenance: DataProvenance[];
+  /**
+   * 本次回测行情完整性检查使用过的证券级停复牌证据。
+   *
+   * 保存证据是为了让以后能复现为什么某些交易日没有价格——这些日期属于
+   * "交易所开市但该证券停牌"，不应被误判为行情缺失。
+   */
+  interruptionsUsed: SecurityTradingInterruption[];
   createdAt: string;
 }
 
@@ -629,16 +636,37 @@ export interface PendingDividend {
   note?: string;
 }
 
+export interface PendingDividendDiscoveryIssue {
+  symbol: string;
+  message: string;
+}
+
 export interface PendingDividendDiscoveryResult {
+  /** 本次新写入的候选数量 */
   discovered: number;
+  /** 已检查的标的数量（含成功与失败） */
+  checked: number;
+  /** 跳过的标的数量（如无持仓或已存在候选项） */
   skipped: number;
+  /** 查询失败的标的数量 */
+  failed: number;
+  /** 失败标的的具体错误信息 */
+  issues: PendingDividendDiscoveryIssue[];
+  /** 全部待确认候选（含历史遗留 + 本次新增）的数量 */
   total: number;
+  /** 本次新写入的候选项 */
   candidates: PendingDividend[];
 }
 
 export interface ConfirmPendingDividendInput {
   /** 用户确认的实际到账金额；不填时使用 expectedAmount */
   actualAmount?: number;
+  /**
+   * 用户确认的实际到账日期。
+   * - 当 pending.paymentDate 已存在时，可省略，使用 paymentDate；
+   * - 当 pending.paymentDate 为空时，必须由用户填写，不能默认用 exDate 代替。
+   */
+  actualPaymentDate?: string;
   /** 是否同时进行分红再投入 */
   reinvest?: {
     reinvestmentDate: string;
@@ -646,6 +674,28 @@ export interface ConfirmPendingDividendInput {
     buyQuantity: number;
     fee?: number;
   };
+}
+
+/**
+ * 证券级停复牌证据。
+ *
+ * 与交易所级休市日历不同，这是单只证券的停牌/退市/未上市证据，
+ * 用于完整性检查排除"交易所开市但该证券不交易"的合法缺口。
+ *
+ * 不要把停牌伪装成行情问题；这是独立维度的事实证据。
+ */
+export interface SecurityTradingInterruption {
+  symbol: string;
+  /** 停牌/不交易起始日（含） */
+  startDate: string;
+  /** 停牌/不交易结束日（含）；复牌日不在区间内 */
+  endDate: string;
+  reason: "suspension" | "delisted" | "not_yet_listed";
+  /** 证据来源（如 "eastmoney_announcement"） */
+  source: string;
+  /** 来源公告或记录 ID */
+  sourceId?: string;
+  fetchedAt: string;
 }
 
 interface HealthResponse {
@@ -803,6 +853,8 @@ export interface BackupPayload {
   stockUniverse: StoredStockInfo[];
   backtestWorkspace: BacktestWorkspaceState | null;
   pendingDividends: PendingDividend[];
+  /** P1：证券级停复牌证据（手工录入或外部数据源导入）。 */
+  tradingInterruptions: SecurityTradingInterruption[];
 }
 
 /**
@@ -910,6 +962,21 @@ export interface DesktopApi {
     input: ConfirmPendingDividendInput,
   ): Promise<{ dividend: LedgerEntry; buy?: LedgerEntry }>;
   ignorePendingDividend(id: string): Promise<void>;
+  /** P1：列出全部证券级停复牌证据，可选按 symbol 过滤。 */
+  listTradingInterruptions(symbol?: string): Promise<SecurityTradingInterruption[]>;
+  /** P1：手工录入停复牌证据（如公告披露的临时停牌）。 */
+  addTradingInterruption(
+    input: Omit<SecurityTradingInterruption, "fetchedAt"> & {
+      fetchedAt?: string;
+    },
+  ): Promise<SecurityTradingInterruption>;
+  /** P1：删除停复牌证据（用于纠正错误录入）。 */
+  deleteTradingInterruption(input: {
+    symbol: string;
+    startDate: string;
+    endDate: string;
+    reason: SecurityTradingInterruption["reason"];
+  }): Promise<void>;
 }
 
 declare global {

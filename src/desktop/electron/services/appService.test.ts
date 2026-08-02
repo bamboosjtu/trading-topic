@@ -6,6 +6,7 @@ import type {
   BacktestRequest,
   MarketDataProvenance,
   MarketFetchResult,
+  PendingDividend,
   StockInfo,
 } from "../../shared/contracts";
 import {
@@ -968,18 +969,21 @@ describe("AppService 实盘流水", () => {
       "2025-01-02",
       "2025-02-05",
       undefined,
+      [],
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601939",
       "2026-07-01",
       expectedCurrentCutoff,
       undefined,
+      [],
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601398",
       "2026-05-06",
       "2026-06-08",
       undefined,
+      [],
     );
     expect(fetchUnadjustedPrices).not.toHaveBeenCalledWith(
       "601398",
@@ -1034,6 +1038,7 @@ describe("AppService 实盘流水", () => {
       "2026-05-06",
       "2026-05-31",
       undefined,
+      [],
     );
     expect(view.quality.dataCutoff).toBe("2026-05-29");
     expect(view.quality.status).toBe("ready");
@@ -1097,6 +1102,7 @@ describe("AppService 实盘流水", () => {
       "2026-06-30",
       "2026-06-30",
       undefined,
+      [],
     );
     expect(view.quality.dataCutoff).toBe("2026-06-30");
     expect(view.quality.status).toBe("ready");
@@ -1759,5 +1765,139 @@ describe("AppService P0 partial 覆盖完整区间替换", () => {
 
     // 修复后全月收益与原始完整数据一致。
     expect(fixedRate).toBe(baselineRate);
+  });
+});
+
+describe("AppService 分红候选确认与发现", () => {
+  function makePendingDividend(overrides: Partial<PendingDividend> = {}): PendingDividend {
+    return {
+      id: "pending-1",
+      symbol: "601398",
+      instrumentName: "工商银行",
+      securityType: "stock",
+      exDate: "2026-07-15",
+      recordDate: "2026-07-14",
+      paymentDate: null,
+      perShare: 0.2,
+      holdingQuantity: 100,
+      expectedAmount: 20,
+      status: "pending",
+      discoveredAt: "2026-07-15T00:00:00Z",
+      source: "corporate_action",
+      ...overrides,
+    };
+  }
+
+  it("确认分红时缺少到账日且未填写实际到账日则拒绝", async () => {
+    const { service, database } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-01",
+      symbol: "601398",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      instrumentName: "工商银行",
+    });
+    database.insertPendingDividend(makePendingDividend({ paymentDate: null }));
+
+    expect(() =>
+      service.confirmPendingDividend("pending-1", { actualAmount: 20 }),
+    ).toThrow("缺少分红到账日");
+  });
+
+  it("确认分红时填写实际到账日则成功写入且候选状态更新", async () => {
+    const { service, database } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-01",
+      symbol: "601398",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      instrumentName: "工商银行",
+    });
+    database.insertPendingDividend(makePendingDividend({ paymentDate: null }));
+
+    const result = service.confirmPendingDividend("pending-1", {
+      actualAmount: 20,
+      actualPaymentDate: "2026-07-20",
+    });
+
+    // P1：业务日期应为实际到账日，而非除权日
+    expect(result.dividend.businessDate).toBe("2026-07-20");
+    expect(result.dividend.type).toBe("dividend");
+    // P1：候选状态在同一事务中更新为 confirmed
+    const pending = database.getPendingDividend("pending-1");
+    expect(pending?.status).toBe("confirmed");
+    expect(pending?.linkedEntryId).toBe(result.dividend.id);
+  });
+
+  it("确认分红时候选已公告到账日则直接使用 paymentDate", async () => {
+    const { service, database } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-01",
+      symbol: "601398",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      instrumentName: "工商银行",
+    });
+    database.insertPendingDividend(
+      makePendingDividend({ paymentDate: "2026-07-18" }),
+    );
+
+    const result = service.confirmPendingDividend("pending-1", {
+      actualAmount: 20,
+    });
+
+    expect(result.dividend.businessDate).toBe("2026-07-18");
+  });
+
+  it("发现分红时报告失败的标的并继续检查其他标的", async () => {
+    const { service } = await serviceWithDatabase();
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-02",
+      symbol: "601398",
+      securityType: "stock",
+      price: 5,
+      quantity: 100,
+      instrumentName: "工商银行",
+    });
+    service.addLedger({
+      type: "buy",
+      businessDate: "2026-06-02",
+      symbol: "601939",
+      securityType: "stock",
+      price: 7,
+      quantity: 100,
+      instrumentName: "建设银行",
+    });
+
+    vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => {
+      if (symbol === "601939") throw new Error("数据源访问失败");
+      return {
+        rows: [],
+        reportedActions: [],
+        provenance: {
+          source: "eastmoney",
+          fetchedAt: "2026-07-31T00:00:00Z",
+          dataCutoff: "2026-07-31",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      };
+    });
+
+    const result = await service.discoverPendingDividends();
+
+    expect(result.checked).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.discovered).toBe(0);
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]!.symbol).toBe("601939");
+    expect(result.issues[0]!.message).toContain("数据源访问失败");
   });
 });

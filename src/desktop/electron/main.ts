@@ -312,6 +312,17 @@ function registerIpc(): void {
     service.ignorePendingDividend(id),
   );
 
+  // P1：证券级停复牌证据管理（手工录入/列出/删除）。
+  secureHandle("interruptions:list", (_event, symbol?: string) =>
+    service.listTradingInterruptions(symbol),
+  );
+  secureHandle("interruptions:add", (_event, input) =>
+    service.addTradingInterruption(input),
+  );
+  secureHandle("interruptions:delete", (_event, input) =>
+    service.deleteTradingInterruption(input),
+  );
+
   secureHandle("backup:export", async () => {
     const result = await dialog.showSaveDialog({
       title: "导出 JSON 备份",

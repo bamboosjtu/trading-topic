@@ -65,6 +65,12 @@ const api: DesktopApi = {
     ipcRenderer.invoke("dividends:confirm", id, input),
   ignorePendingDividend: (id: string) =>
     ipcRenderer.invoke("dividends:ignore", id),
+  listTradingInterruptions: (symbol?: string) =>
+    ipcRenderer.invoke("interruptions:list", symbol),
+  addTradingInterruption: (input) =>
+    ipcRenderer.invoke("interruptions:add", input),
+  deleteTradingInterruption: (input) =>
+    ipcRenderer.invoke("interruptions:delete", input),
 };
 
 contextBridge.exposeInMainWorld("desktop", api);

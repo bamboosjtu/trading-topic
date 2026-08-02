@@ -12,6 +12,7 @@ import type {
   MarketDataCacheEntry,
   PendingDividend,
   PendingDividendStatus,
+  SecurityTradingInterruption,
   StoredMarketCoverage,
   StoredMarketPrice,
   StoredStockInfo,
@@ -46,6 +47,7 @@ import {
   saveLiveMarketPriceSnapshots as saveLiveMarketPriceSnapshotsFrom,
 } from "./marketRepository";
 import {
+  confirmPendingDividendAtomically as confirmPendingDividendAtomicallyFrom,
   deleteAllPendingDividends as deleteAllPendingDividendsFrom,
   findPendingDividend as findPendingDividendFrom,
   getPendingDividend as getPendingDividendFrom,
@@ -55,6 +57,15 @@ import {
   listPendingDividendsByStatus as listPendingDividendsByStatusFrom,
   updatePendingDividendStatus as updatePendingDividendStatusFrom,
 } from "./pendingDividendRepository";
+import {
+  deleteAllTradingInterruptions as deleteAllTradingInterruptionsFrom,
+  deleteTradingInterruption as deleteTradingInterruptionFrom,
+  insertTradingInterruption as insertTradingInterruptionFrom,
+  insertTradingInterruptions as insertTradingInterruptionsFrom,
+  listTradingInterruptions as listTradingInterruptionsFrom,
+  listTradingInterruptionsBySymbol as listTradingInterruptionsBySymbolFrom,
+  listTradingInterruptionsInRange as listTradingInterruptionsInRangeFrom,
+} from "./tradingInterruptionRepository";
 import {
   exportBackup as exportBackupFrom,
   restoreBackup as restoreBackupFrom,
@@ -345,6 +356,20 @@ export class LocalDatabase {
     );
   }
 
+  /**
+   * P1：原子地确认待确认分红。
+   * 把插入 dividend/buy 流水和更新 pending_dividends 状态放进同一事务，
+   * 任一步失败时整体回滚。
+   */
+  confirmPendingDividendAtomically(params: {
+    pendingId: string;
+    dividendEntry: LedgerEntry;
+    buyEntry?: LedgerEntry;
+    actualAmount: number;
+  }): void {
+    confirmPendingDividendAtomicallyFrom(this.database, params);
+  }
+
   findPendingDividend(
     symbol: string,
     recordDate: string,
@@ -360,11 +385,70 @@ export class LocalDatabase {
     insertPendingDividendsFrom(this.database, candidates);
   }
 
+  /** P1：列出全部证券级停复牌证据。 */
+  listTradingInterruptions(): SecurityTradingInterruption[] {
+    return listTradingInterruptionsFrom(this.database);
+  }
+
+  /** P1：列出指定 symbol 的全部停复牌证据。 */
+  listTradingInterruptionsBySymbol(
+    symbol: string,
+  ): SecurityTradingInterruption[] {
+    return listTradingInterruptionsBySymbolFrom(this.database, symbol);
+  }
+
+  /**
+   * P1：列出与 [startDate, endDate] 区间有交集的停复牌证据。
+   *
+   * 行情完整性检查在按请求区间裁剪证据时使用，避免把无关历史停牌
+   * 也展开成日期集合。
+   */
+  listTradingInterruptionsInRange(
+    symbol: string,
+    startDate: string,
+    endDate: string,
+  ): SecurityTradingInterruption[] {
+    return listTradingInterruptionsInRangeFrom(
+      this.database,
+      symbol,
+      startDate,
+      endDate,
+    );
+  }
+
+  /** P1：写入停复牌证据。 */
+  insertTradingInterruption(interruption: SecurityTradingInterruption): void {
+    insertTradingInterruptionFrom(this.database, interruption);
+  }
+
+  /** P1：批量写入停复牌证据。 */
+  insertTradingInterruptions(
+    interruptions: readonly SecurityTradingInterruption[],
+  ): void {
+    insertTradingInterruptionsFrom(this.database, interruptions);
+  }
+
+  /** 备份恢复时清空表。 */
+  deleteAllTradingInterruptions(): void {
+    deleteAllTradingInterruptionsFrom(this.database);
+  }
+
+  /** P1：按主键删除单条停复牌证据。 */
+  deleteTradingInterruption(params: {
+    symbol: string;
+    startDate: string;
+    endDate: string;
+    reason: SecurityTradingInterruption["reason"];
+  }): void {
+    deleteTradingInterruptionFrom(this.database, params);
+  }
+
   exportBackup(): BackupPayload {
     return exportBackupFrom(this.database, {
       getSettings: () => this.getSettings(),
       listStockUniverse: () => this.listStockUniverse(),
       listPendingDividends: () => this.listPendingDividends(),
+      listTradingInterruptions: () => this.listTradingInterruptions(),
     });
   }
 

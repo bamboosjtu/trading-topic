@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BackupPayload,
   PendingDividend,
+  SecurityTradingInterruption,
   StoredStockInfo,
   ValidatedBackupPayload,
 } from "../../shared/contracts";
@@ -17,12 +18,16 @@ import {
 import {
   insertPendingDividends as insertPendingDividendsFrom,
 } from "./pendingDividendRepository";
+import {
+  insertTradingInterruptions as insertTradingInterruptionsFrom,
+} from "./tradingInterruptionRepository";
 import { SCHEMA_FINGERPRINT, SCHEMA_VERSION } from "./schema";
 
 export interface BackupContext {
   getSettings: () => AppSettings;
   listStockUniverse: () => StoredStockInfo[];
   listPendingDividends: () => PendingDividend[];
+  listTradingInterruptions: () => SecurityTradingInterruption[];
 }
 
 export function exportBackup(
@@ -68,6 +73,7 @@ export function exportBackup(
     stockUniverse: ctx.listStockUniverse(),
     backtestWorkspace: getBacktestWorkspace(database),
     pendingDividends: ctx.listPendingDividends(),
+    tradingInterruptions: ctx.listTradingInterruptions(),
   };
 }
 
@@ -105,6 +111,7 @@ export function restoreBackup(
       DELETE FROM stock_universe;
       DELETE FROM backtest_workspace;
       DELETE FROM pending_dividends;
+      DELETE FROM security_trading_interruptions;
     `);
     const insertLedger = database.prepare(
       "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
@@ -217,5 +224,6 @@ export function restoreBackup(
         .run(JSON.stringify(backup.backtestWorkspace));
     }
     insertPendingDividendsFrom(database, backup.pendingDividends);
+    insertTradingInterruptionsFrom(database, backup.tradingInterruptions);
   })();
 }

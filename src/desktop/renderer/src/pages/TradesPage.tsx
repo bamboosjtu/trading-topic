@@ -84,6 +84,8 @@ function perShareLabel(value: number): string {
 interface ConfirmState {
   candidate: PendingDividend;
   actualAmount: number;
+  // 当候选未公告到账日时，由用户填写实际到账日；否则使用 candidate.paymentDate
+  actualPaymentDate: Dayjs | null;
   reinvest: boolean;
   reinvestmentDate: Dayjs | null;
   buyPrice: number | null;
@@ -181,7 +183,20 @@ export function TradesPage() {
   const discoverMutation = useMutation({
     mutationFn: () => api.discoverPendingDividends(),
     onSuccess: (result) => {
-      message.success(`发现 ${result.discovered} 个待确认分红候选`);
+      // P2：完整披露已检查/失败/新增，避免"全部静默失败 → 发现 0 个"的误导。
+      const parts: string[] = [
+        `已检查 ${result.checked} 个标的`,
+        `新增 ${result.discovered} 条分红候选`,
+      ];
+      if (result.failed > 0) {
+        parts.push(`${result.failed} 个标的查询失败`);
+      }
+      const summary = parts.join("，");
+      if (result.failed > 0) {
+        message.warning(summary);
+      } else {
+        message.success(summary);
+      }
       void queryClient.invalidateQueries({ queryKey: ["pending-dividends"] });
     },
     onError: (error) => message.error(error.message),
@@ -215,9 +230,12 @@ export function TradesPage() {
     setConfirmState({
       candidate,
       actualAmount: candidate.expectedAmount,
+      // 候选已公告到账日时直接使用；否则置 null 强制用户填写，不默认用 exDate 代替。
+      actualPaymentDate: candidate.paymentDate ? dayjs(candidate.paymentDate) : null,
       reinvest: false,
-      // 默认以除权日作为再投入日期，用户可在弹窗中调整。
-      reinvestmentDate: dayjs(candidate.exDate),
+      // 默认以到账日（或除权日作 fallback 仅用于再投入日期默认值显示）作为再投入日期，
+      // 用户可在弹窗中调整。
+      reinvestmentDate: dayjs(candidate.paymentDate ?? candidate.exDate),
       buyPrice: null,
       buyQuantity: null,
       fee: 0,
@@ -238,8 +256,14 @@ export function TradesPage() {
   };
   const submitConfirm = () => {
     if (!confirmState) return;
+    // P1：候选未公告到账日时必须由用户填写 actualPaymentDate，否则后端会拒绝。
+    if (!confirmState.actualPaymentDate) {
+      message.error("请填写实际到账日；候选未公告到账日，不能默认用除权日代替");
+      return;
+    }
     const input: ConfirmPendingDividendInput = {
       actualAmount: confirmState.actualAmount,
+      actualPaymentDate: confirmState.actualPaymentDate.format("YYYY-MM-DD"),
     };
     if (
       confirmState.reinvest &&
@@ -850,6 +874,14 @@ export function TradesPage() {
                 <dt>除权日</dt>
                 <dd className="tabular-nums">{confirmState.candidate.exDate}</dd>
               </div>
+              {confirmState.candidate.paymentDate ? (
+                <div>
+                  <dt>公告到账日</dt>
+                  <dd className="tabular-nums">
+                    {confirmState.candidate.paymentDate}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt>每股分红</dt>
                 <dd className="tabular-nums">
@@ -869,6 +901,31 @@ export function TradesPage() {
                 </dd>
               </div>
             </dl>
+            <div className="pending-confirm-field">
+              <label>
+                {confirmState.candidate.paymentDate
+                  ? "实际到账日"
+                  : "实际到账日（必填）"}
+              </label>
+              <DatePicker
+                allowClear={false}
+                value={confirmState.actualPaymentDate}
+                onChange={(value) =>
+                  setConfirmState((state) =>
+                    state ? { ...state, actualPaymentDate: value } : state,
+                  )
+                }
+                disabledDate={(current) => {
+                  // 到账日不得早于除权日
+                  return !!current && current.isBefore(dayjs(confirmState.candidate.exDate), "day");
+                }}
+              />
+              {!confirmState.candidate.paymentDate ? (
+                <span className="pending-confirm-hint">
+                  候选未公告到账日，请按券商实际到账日填写，不能默认用除权日代替
+                </span>
+              ) : null}
+            </div>
             <div className="pending-confirm-field">
               <label>实际到账金额</label>
               <InputNumber

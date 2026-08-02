@@ -96,6 +96,7 @@ function result(
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     ],
+    interruptionsUsed: [],
     createdAt: "2026-07-24T00:00:00Z",
   };
 }
@@ -314,6 +315,7 @@ describe("LocalDatabase", () => {
           caliberVersion: BACKTEST_CALIBER_VERSION,
         },
       ],
+      interruptionsUsed: [],
       createdAt: "2024-04-01T00:00:00Z",
     });
 
