@@ -749,20 +749,22 @@ export class AppService {
     dataCutoff: string,
     marketData: BacktestMarketDataBundle[],
   ): BacktestExperiment {
-    // 实验级数据质量聚合：任一标的存在 cross_provider_common_gap → degraded；
-    // 否则任一标的存在 calendar_coverage_partial → research；
-    // 否则 strict。
+    // 实验级数据质量聚合：按优先级 degraded > research > strict 判断。
+    // 直接读取每个结果的实际 dataQuality.level，避免旧版通用 degraded
+    // （level=degraded, reasons=[]）被错误聚合成 strict。
+    // reasons 单独合并：仅展示数据中实际出现的降级原因。
     const experimentReasons = [
       ...new Set(
         results.flatMap((r) => r.dataQuality?.reasons ?? []),
       ),
-    ];
-    const experimentLevel: "strict" | "research" | "degraded" =
-      experimentReasons.includes("cross_provider_common_gap")
-        ? "degraded"
-        : experimentReasons.includes("calendar_coverage_partial")
-          ? "research"
-          : "strict";
+    ] as Array<"cross_provider_common_gap" | "calendar_coverage_partial">;
+    const experimentLevel: "strict" | "research" | "degraded" = results.some(
+      (r) => r.dataQuality?.level === "degraded",
+    )
+      ? "degraded"
+      : results.some((r) => r.dataQuality?.level === "research")
+        ? "research"
+        : "strict";
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,
