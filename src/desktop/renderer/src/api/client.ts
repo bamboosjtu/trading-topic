@@ -1,6 +1,7 @@
 import type {
   BacktestRequest,
   BacktestWorkspaceState,
+  ConfirmPendingDividendInput,
   DesktopApi,
   IncomeCalendarQuery,
   DividendReinvestmentInput,
@@ -58,6 +59,11 @@ export const api = {
   exportBackup: () => bridge().exportBackup(),
   restoreBackup: () => bridge().restoreBackup(),
   exportLogs: () => bridge().exportLogs(),
+  discoverPendingDividends: () => bridge().discoverPendingDividends(),
+  listPendingDividends: () => bridge().listPendingDividends(),
+  confirmPendingDividend: (id: string, input: ConfirmPendingDividendInput) =>
+    bridge().confirmPendingDividend(id, input),
+  ignorePendingDividend: (id: string) => bridge().ignorePendingDividend(id),
 };
 
 export type {
@@ -74,6 +80,7 @@ export type {
   DirectoryProvenance,
   DividendReinvestmentInput,
   DividendReinvestmentPreview,
+  ConfirmPendingDividendInput,
   IncomeCalendarQuery,
   IncomeCalendarScope,
   IncomeContribution,
@@ -83,6 +90,8 @@ export type {
   LedgerRecordView,
   LiveDataQuality,
   MarketCalendarDiagnostic,
+  PendingDividend,
+  PendingDividendDiscoveryResult,
   PerformancePeriod,
   PositionView,
   SecurityType,

@@ -2826,3 +2826,119 @@ a:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 待确认分红卡片：琥珀色描边与主流水表区分，提示用户仍有未决事实等待入账。 */
+.pending-dividends-panel {
+  margin-bottom: 14px;
+  border-color: #f59e0b !important;
+  border-left-width: 3px !important;
+  border-left-color: #d97706 !important;
+}
+
+.pending-dividends-panel > .ant-card-head {
+  min-height: 44px;
+  padding: 8px 16px;
+  background: #fffbeb;
+  border-bottom-color: #fde68a;
+}
+
+.pending-dividends-panel > .ant-card-head .ant-card-head-title {
+  padding: 4px 0;
+  color: #92400e;
+  font-weight: 600;
+}
+
+.pending-dividends-hint {
+  color: #b45309;
+  font-size: 11px;
+}
+
+.pending-dividends-table .ant-table-thead > tr > th {
+  background: #fffbeb;
+}
+
+.pending-dividends-table .ant-table-tbody > tr > td {
+  height: 44px;
+}
+
+/* 确认分红弹窗：摘要网格 + 表单字段统一上下文。 */
+.pending-confirm-modal {
+  display: grid;
+  gap: 14px;
+}
+
+.pending-confirm-modal > .ant-alert {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.pending-confirm-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: #edf1f6;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0;
+}
+
+.pending-confirm-summary > div {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  align-items: center;
+  background: #ffffff;
+  padding: 8px 12px;
+  gap: 10px;
+}
+
+.pending-confirm-summary dt {
+  margin: 0;
+  color: #718299;
+  font-size: 11px;
+}
+
+.pending-confirm-summary dd {
+  margin: 0;
+  color: #1e3554;
+  font-size: 12px;
+  text-align: right;
+}
+
+.pending-confirm-field {
+  display: grid;
+  gap: 6px;
+}
+
+.pending-confirm-field > label {
+  color: #203957;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pending-confirm-field .ant-input-number,
+.pending-confirm-field .ant-picker {
+  width: 100%;
+}
+
+.pending-confirm-reinvest-toggle {
+  margin-top: 4px;
+}
+
+.pending-confirm-reinvest-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+@media (max-width: 720px) {
+  .pending-confirm-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pending-confirm-reinvest-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

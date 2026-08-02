@@ -106,15 +106,27 @@ function assertDates(
  * 尾部缺失由 tailStatus 处理，不在此生成 error。
  *
  * 没有正式日历的区间仍检查极端截断，仅生成 warning。
+ *
+ * P1-1 修订：上市日期 listingDate 用于区分"新上市股票的预期前置缺口"与
+ * "接口截断"。
+ * - 提供 listingDate 且晚于 startDate：仅检查 [listingDate, endDate] 完整性。
+ *   若首条行情等于或早于 listingDate，前置缺口属于未上市期，不生成 error。
+ *   若首条行情晚于 listingDate，说明接口截断了已上市期间的数据，生成 error。
+ * - 未提供 listingDate：不能排除"接口未返回上市前的预期间隔"，故
+ *   不生成头部截断 error；仅检查 [firstRowDate, lastRowDate] 内部缺口。
  */
 function detectDateCompletenessIssues(
   rows: readonly { date: string }[],
   label: string,
   startDate: string,
   endDate: string,
+  listingDate?: string,
 ): MarketDataIssue[] {
   const issues: MarketDataIssue[] = [];
-  const expected = expectedTradingDatesInRange(startDate, endDate);
+  // 有效起点：上市日晚于请求起点时，上市前的交易日不参与完整性校验
+  const effectiveStartDate =
+    listingDate && listingDate > startDate ? listingDate : startDate;
+  const expected = expectedTradingDatesInRange(effectiveStartDate, endDate);
   if (!expected.length) {
     // 没有正式日历的区间仍检查极端截断
     if (rows.length < 2) {
@@ -144,13 +156,18 @@ function detectDateCompletenessIssues(
     ? missing.filter((date) => date > firstRowDate && date < lastRowDate)
     : [];
 
-  if (headMissing.length) {
-    // 头部截断生成单条无日期 error，表示整个前置区间不可信
-    issues.push({
-      type: "gap",
-      severity: "error",
-      message: `${label}请求区间 ${startDate}～${endDate} 内存在头部截断，缺少 ${headMissing.length} 个预期交易日（首个预期交易日 ${headMissing[0]}，首条返回行情 ${firstRowDate ?? "无"}）`,
-    });
+  // P1-1 修订：只有在拥有 listingDate 这一独立证据时才能判定头部截断。
+  // 没有 listingDate 时，头部缺口可能是新上市股票的预期前置缺口，
+  // 不能贸然升级为 error。
+  if (listingDate && headMissing.length) {
+    // 仅当首条行情晚于 listingDate 时才能确认接口截断了已上市期间的数据
+    if (firstRowDate && firstRowDate > listingDate) {
+      issues.push({
+        type: "gap",
+        severity: "error",
+        message: `${label}请求区间 ${startDate}～${endDate} 内存在头部截断，缺少 ${headMissing.length} 个预期交易日（首个预期交易日 ${headMissing[0]}，首条返回行情 ${firstRowDate ?? "无"}）`,
+      });
+    }
   }
   for (const date of internalMissing) {
     issues.push({
@@ -293,6 +310,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   endDate: string,
   primary: MarketDataProvider,
   fallback: MarketDataProvider,
+  listingDate?: string,
   now = new Date(),
 ): Promise<MarketFetchResult<T>> {
   assertValidMarketDateRange(startDate, endDate);
@@ -339,7 +357,13 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       }
     }
     // P2-1：在正式日历年度内逐交易日核对完整性，产出 warning 级别问题。
-    const dateIssues = detectDateCompletenessIssues(completed, label, startDate, endDate);
+    const dateIssues = detectDateCompletenessIssues(
+      completed,
+      label,
+      startDate,
+      endDate,
+      listingDate,
+    );
     return {
       rows: completed,
       consistencyRows:
@@ -531,6 +555,7 @@ export async function fetchMarketPrices(
   symbol: string,
   startDate: string,
   endDate: string,
+  listingDate?: string,
 ): Promise<{
   rows: PricePoint[];
   requestedThrough: string;
@@ -546,6 +571,7 @@ export async function fetchMarketPrices(
     endDate,
     tencentProvider,
     sinaProvider,
+    listingDate,
   );
   return {
     rows: result.rows,
@@ -564,6 +590,7 @@ export async function fetchMarketAdjustedBars(
   symbol: string,
   startDate: string,
   endDate: string,
+  listingDate?: string,
 ): Promise<{
   rows: AdjustedBar[];
   requestedThrough: string;
@@ -579,6 +606,7 @@ export async function fetchMarketAdjustedBars(
     endDate,
     tencentProvider,
     sinaProvider,
+    listingDate,
   );
   return {
     rows: result.rows,

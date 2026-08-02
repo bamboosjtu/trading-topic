@@ -11,6 +11,7 @@ import { Worker } from "node:worker_threads";
 import type {
   BacktestRequest,
   BacktestWorkspaceState,
+  ConfirmPendingDividendInput,
   IncomeCalendarQuery,
   DividendReinvestmentInput,
   LedgerEntryInput,
@@ -102,23 +103,44 @@ function createWindow(): void {
   else void win.loadFile(join(__dirname, "..", "renderer", "index.html"));
 }
 
-/** P1-2：判断 URL 是否为可信的应用页面（开发服务器或本地文件）。 */
+/**
+ * P1-2 / P2：判断 URL 是否为可信的应用页面。
+ *
+ * 开发模式：严格校验 origin + pathname 前缀，不允许 startsWith 绕过。
+ * 打包模式：只允许 file: 协议下精确匹配 renderer/index.html，
+ * 不接受任意 file: 页面。
+ */
 function isTrustedAppUrl(url: string): boolean {
   try {
-    const parsed = new URL(url);
+    const target = new URL(url);
     const devUrl = process.env["ELECTRON_RENDERER_URL"];
-    if (devUrl && url.startsWith(devUrl)) return true;
-    if (parsed.protocol === "file:") return true;
-    return false;
+    if (devUrl) {
+      const trusted = new URL(devUrl);
+      return (
+        target.origin === trusted.origin &&
+        target.pathname.startsWith(trusted.pathname)
+      );
+    }
+    const trustedFile = new URL(
+      `file://${join(__dirname, "..", "renderer", "index.html")}`,
+    );
+    return (
+      target.protocol === "file:" &&
+      target.pathname === trustedFile.pathname
+    );
   } catch {
     return false;
   }
 }
 
-/** P1-2：校验 IPC 消息来源，拒绝不可信页面调用特权接口。 */
+/**
+ * P1-2 / P2：校验 IPC 消息来源，拒绝不可信页面或子 Frame 调用特权接口。
+ */
 function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
-  const url = event.senderFrame?.url;
-  if (!url || !isTrustedAppUrl(url)) {
+  if (
+    event.senderFrame !== event.sender.mainFrame ||
+    !isTrustedAppUrl(event.senderFrame?.url ?? "")
+  ) {
     throw new Error("拒绝不可信页面调用");
   }
 }
@@ -278,6 +300,17 @@ function registerIpc(): void {
       service.reverseLedger(entryId, reason),
   );
   secureHandle("settings:get", () => database.getSettings());
+
+  secureHandle("dividends:discover", () => service.discoverPendingDividends());
+  secureHandle("dividends:list", () => service.listPendingDividends());
+  secureHandle(
+    "dividends:confirm",
+    (_event, id: string, input: ConfirmPendingDividendInput) =>
+      service.confirmPendingDividend(id, input),
+  );
+  secureHandle("dividends:ignore", (_event, id: string) =>
+    service.ignorePendingDividend(id),
+  );
 
   secureHandle("backup:export", async () => {
     const result = await dialog.showSaveDialog({

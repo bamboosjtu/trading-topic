@@ -10,6 +10,8 @@ import type {
   DirectoryProvenance,
   LedgerEntry,
   MarketDataCacheEntry,
+  PendingDividend,
+  PendingDividendStatus,
   StoredMarketCoverage,
   StoredMarketPrice,
   StoredStockInfo,
@@ -43,6 +45,16 @@ import {
   listLiveMarketPrices as listLiveMarketPricesFrom,
   saveLiveMarketPriceSnapshots as saveLiveMarketPriceSnapshotsFrom,
 } from "./marketRepository";
+import {
+  deleteAllPendingDividends as deleteAllPendingDividendsFrom,
+  findPendingDividend as findPendingDividendFrom,
+  getPendingDividend as getPendingDividendFrom,
+  insertPendingDividend as insertPendingDividendFrom,
+  insertPendingDividends as insertPendingDividendsFrom,
+  listPendingDividends as listPendingDividendsFrom,
+  listPendingDividendsByStatus as listPendingDividendsByStatusFrom,
+  updatePendingDividendStatus as updatePendingDividendStatusFrom,
+} from "./pendingDividendRepository";
 import {
   exportBackup as exportBackupFrom,
   restoreBackup as restoreBackupFrom,
@@ -187,8 +199,8 @@ export class LocalDatabase {
     const insert = this.database.prepare(
       `INSERT INTO stock_universe(
          symbol, name, security_type, source, primary_source, fallback_used,
-         fallback_reason, fetched_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         fallback_reason, fetched_at, listing_date
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.database.transaction(() => {
       this.database
@@ -204,6 +216,7 @@ export class LocalDatabase {
           provenance.fallbackUsed ? 1 : 0,
           provenance.fallbackReason ?? null,
           provenance.fetchedAt,
+          stock.listingDate ?? null,
         );
       }
     })();
@@ -219,10 +232,11 @@ export class LocalDatabase {
       fallback_used: number;
       fallback_reason: string | null;
       fetched_at: string;
+      listing_date: string | null;
     }>(
       this.database,
       `SELECT symbol, name, security_type, source, primary_source,
-              fallback_used, fallback_reason, fetched_at
+              fallback_used, fallback_reason, fetched_at, listing_date
        FROM stock_universe ORDER BY symbol`,
     ).map((row) => ({
       symbol: row.symbol,
@@ -235,6 +249,7 @@ export class LocalDatabase {
         ? { fallbackReason: row.fallback_reason }
         : {}),
       fetchedAt: row.fetched_at,
+      ...(row.listing_date ? { listingDate: row.listing_date } : {}),
     }));
   }
 
@@ -297,10 +312,59 @@ export class LocalDatabase {
     return listLiveMarketDatesFrom(this.database);
   }
 
+  listPendingDividends(): PendingDividend[] {
+    return listPendingDividendsFrom(this.database);
+  }
+
+  listPendingDividendsByStatus(
+    status: PendingDividendStatus,
+  ): PendingDividend[] {
+    return listPendingDividendsByStatusFrom(this.database, status);
+  }
+
+  getPendingDividend(id: string): PendingDividend | null {
+    return getPendingDividendFrom(this.database, id);
+  }
+
+  insertPendingDividend(candidate: PendingDividend): void {
+    insertPendingDividendFrom(this.database, candidate);
+  }
+
+  updatePendingDividendStatus(
+    id: string,
+    status: PendingDividendStatus,
+    confirmedAmount?: number,
+    linkedEntryId?: string,
+  ): void {
+    updatePendingDividendStatusFrom(
+      this.database,
+      id,
+      status,
+      confirmedAmount,
+      linkedEntryId,
+    );
+  }
+
+  findPendingDividend(
+    symbol: string,
+    recordDate: string,
+  ): PendingDividend | null {
+    return findPendingDividendFrom(this.database, symbol, recordDate);
+  }
+
+  deleteAllPendingDividends(): void {
+    deleteAllPendingDividendsFrom(this.database);
+  }
+
+  insertPendingDividends(candidates: readonly PendingDividend[]): void {
+    insertPendingDividendsFrom(this.database, candidates);
+  }
+
   exportBackup(): BackupPayload {
     return exportBackupFrom(this.database, {
       getSettings: () => this.getSettings(),
       listStockUniverse: () => this.listStockUniverse(),
+      listPendingDividends: () => this.listPendingDividends(),
     });
   }
 

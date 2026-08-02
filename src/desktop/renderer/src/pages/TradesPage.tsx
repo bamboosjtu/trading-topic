@@ -2,11 +2,17 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   App,
+  Badge,
   Button,
+  Card,
+  Checkbox,
   DatePicker,
   Drawer,
   Input,
+  InputNumber,
+  Modal,
   Select,
+  Space,
   Table,
   Tag,
 } from "antd";
@@ -26,9 +32,11 @@ import dayjs, { type Dayjs } from "dayjs";
 import { useSearchParams } from "react-router-dom";
 import {
   api,
+  type ConfirmPendingDividendInput,
   type EntryType,
   type LedgerQuery,
   type LedgerRecordView,
+  type PendingDividend,
   type SecurityType,
 } from "../api/client";
 import { LIVE_LEDGER_PAGE_SIZES } from "../../../shared/constants";
@@ -64,6 +72,25 @@ function signedAmount(row: LedgerRecordView): string {
   return money(value);
 }
 
+// 待确认分红每股面值展示：保持 3 位小数，避免 0.18 元/股被截断为 0.2。
+function perShareLabel(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return `¥${value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  })}`;
+}
+
+interface ConfirmState {
+  candidate: PendingDividend;
+  actualAmount: number;
+  reinvest: boolean;
+  reinvestmentDate: Dayjs | null;
+  buyPrice: number | null;
+  buyQuantity: number | null;
+  fee: number;
+}
+
 export function TradesPage() {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
@@ -83,6 +110,7 @@ export function TradesPage() {
   const [reinvestmentOpen, setReinvestmentOpen] = useState(false);
   const [correctionTarget, setCorrectionTarget] =
     useState<LedgerRecordView | null>(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const query: LedgerQuery = useMemo(
     () => ({
       startDate: dateRange?.[0].format("YYYY-MM-DD"),
@@ -124,6 +152,18 @@ export function TradesPage() {
       error: etfCatalog.error?.message,
     },
   };
+  // 待确认分红：后端 listPendingDividends 返回全部状态记录，前端按 status=pending 过滤。
+  const pendingDividendsQuery = useQuery({
+    queryKey: ["pending-dividends"],
+    queryFn: () => api.listPendingDividends(),
+  });
+  const pendingCandidates = useMemo(
+    () =>
+      (pendingDividendsQuery.data ?? []).filter(
+        (item) => item.status === "pending",
+      ),
+    [pendingDividendsQuery.data],
+  );
   const exportData = useMutation({
     mutationFn: () => api.exportLedger(query),
     onSuccess: (result) => {
@@ -137,6 +177,84 @@ export function TradesPage() {
     void queryClient.invalidateQueries({ queryKey: ["positions:overview"] });
     void queryClient.invalidateQueries({ queryKey: ["income-calendar"] });
     void queryClient.invalidateQueries({ queryKey: ["health"] });
+  };
+  const discoverMutation = useMutation({
+    mutationFn: () => api.discoverPendingDividends(),
+    onSuccess: (result) => {
+      message.success(`发现 ${result.discovered} 个待确认分红候选`);
+      void queryClient.invalidateQueries({ queryKey: ["pending-dividends"] });
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const confirmMutation = useMutation({
+    mutationFn: ({
+      id,
+      input,
+    }: {
+      id: string;
+      input: ConfirmPendingDividendInput;
+    }) => api.confirmPendingDividend(id, input),
+    onSuccess: () => {
+      message.success("分红已确认");
+      void queryClient.invalidateQueries({ queryKey: ["pending-dividends"] });
+      void queryClient.invalidateQueries({ queryKey: ["ledger:query"] });
+      refreshLivePages();
+      setConfirmState(null);
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const ignoreMutation = useMutation({
+    mutationFn: (id: string) => api.ignorePendingDividend(id),
+    onSuccess: () => {
+      message.success("已忽略该分红候选");
+      void queryClient.invalidateQueries({ queryKey: ["pending-dividends"] });
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const openConfirm = (candidate: PendingDividend) => {
+    setConfirmState({
+      candidate,
+      actualAmount: candidate.expectedAmount,
+      reinvest: false,
+      // 默认以除权日作为再投入日期，用户可在弹窗中调整。
+      reinvestmentDate: dayjs(candidate.exDate),
+      buyPrice: null,
+      buyQuantity: null,
+      fee: 0,
+    });
+  };
+  const handleIgnore = (candidate: PendingDividend) => {
+    modal.confirm({
+      title: "忽略该分红候选？",
+      content:
+        "忽略后该候选不再出现在待确认列表；如需记账请用确认或手工录入。",
+      okText: "忽略",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        await ignoreMutation.mutateAsync(candidate.id);
+      },
+    });
+  };
+  const submitConfirm = () => {
+    if (!confirmState) return;
+    const input: ConfirmPendingDividendInput = {
+      actualAmount: confirmState.actualAmount,
+    };
+    if (
+      confirmState.reinvest &&
+      confirmState.reinvestmentDate &&
+      confirmState.buyPrice !== null &&
+      confirmState.buyQuantity !== null
+    ) {
+      input.reinvest = {
+        reinvestmentDate: confirmState.reinvestmentDate.format("YYYY-MM-DD"),
+        buyPrice: confirmState.buyPrice,
+        buyQuantity: confirmState.buyQuantity,
+        fee: confirmState.fee,
+      };
+    }
+    confirmMutation.mutate({ id: confirmState.candidate.id, input });
   };
   const reverseEntry = useMutation({
     mutationFn: (row: LedgerRecordView) =>
@@ -227,6 +345,84 @@ export function TradesPage() {
       ),
     },
   ];
+  const pendingColumns: ColumnsType<PendingDividend> = [
+    {
+      title: "登记日",
+      dataIndex: "recordDate",
+      width: 110,
+      render: (value: string) => <span className="tabular-nums">{value}</span>,
+    },
+    {
+      title: "除权日",
+      dataIndex: "exDate",
+      width: 110,
+      render: (value: string) => <span className="tabular-nums">{value}</span>,
+    },
+    {
+      title: "标的",
+      key: "symbol",
+      width: 180,
+      render: (_, row) => (
+        <div className="ledger-symbol">
+          <strong>{row.instrumentName}</strong>
+          <span>{row.symbol}</span>
+        </div>
+      ),
+    },
+    {
+      title: "每股分红",
+      dataIndex: "perShare",
+      width: 110,
+      align: "right",
+      render: (value: number) => (
+        <span className="tabular-nums">{perShareLabel(value)}</span>
+      ),
+    },
+    {
+      title: "登记日持股",
+      dataIndex: "holdingQuantity",
+      width: 120,
+      align: "right",
+      render: (value: number) => <span className="tabular-nums">{numberValue(value)}</span>,
+    },
+    {
+      title: "预计金额",
+      dataIndex: "expectedAmount",
+      width: 130,
+      align: "right",
+      render: (value: number) => (
+        <strong className="tabular-nums finance-flat">{money(value)}</strong>
+      ),
+    },
+    {
+      title: "到账日",
+      dataIndex: "paymentDate",
+      width: 110,
+      render: (value: string | null) =>
+        value ? <span className="tabular-nums">{value}</span> : <Tag>待公告</Tag>,
+    },
+    {
+      title: "操作",
+      key: "action",
+      width: 160,
+      align: "center",
+      render: (_, row) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openConfirm(row)}>
+            确认
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            danger
+            onClick={() => handleIgnore(row)}
+          >
+            忽略
+          </Button>
+        </Space>
+      ),
+    },
+  ];
   const handleTableChange = (pagination: TablePaginationConfig) => {
     setPage(pagination.current ?? 1);
     setPageSize((pagination.pageSize ?? 20) as LedgerPageSize);
@@ -251,6 +447,13 @@ export function TradesPage() {
               onClick={() => exportData.mutate()}
             >
               导出流水
+            </Button>
+            <Button
+              icon={<GiftOutlined />}
+              loading={discoverMutation.isPending}
+              onClick={() => discoverMutation.mutate()}
+            >
+              发现分红
             </Button>
             <Button
               icon={<GiftOutlined />}
@@ -368,6 +571,37 @@ export function TradesPage() {
           </Button>
         </div>
       </section>
+      {pendingCandidates.length > 0 ? (
+        <Card
+          className="pending-dividends-panel workspace-panel"
+          size="small"
+          title={
+            <Space align="center">
+              <span>待确认分红</span>
+              <Badge
+                count={pendingCandidates.length}
+                overflowCount={99}
+                color="#f59e0b"
+              />
+            </Space>
+          }
+          extra={
+            <span className="pending-dividends-hint">
+              已发现 {pendingCandidates.length} 个分红候选，请确认到账或忽略
+            </span>
+          }
+        >
+          <Table
+            className="pending-dividends-table"
+            rowKey="id"
+            columns={pendingColumns}
+            dataSource={pendingCandidates}
+            pagination={false}
+            size="small"
+            scroll={{ x: 980 }}
+          />
+        </Card>
+      ) : null}
       {ledger.isLoading ? (
         <section className="workspace-panel"><LiveLoading rows={12} /></section>
       ) : ledger.isError ? (
@@ -577,6 +811,157 @@ export function TradesPage() {
         onClose={() => setReinvestmentOpen(false)}
         onSaved={refreshLivePages}
       />
+      <Modal
+        className="pending-confirm-modal-wrapper"
+        width={560}
+        centered
+        destroyOnClose
+        maskClosable={false}
+        title="确认分红到账"
+        open={confirmState !== null}
+        confirmLoading={confirmMutation.isPending}
+        okText="确认到账"
+        cancelText="取消"
+        onCancel={confirmMutation.isPending ? undefined : () => setConfirmState(null)}
+        onOk={() => submitConfirm()}
+      >
+        {confirmState ? (
+          <div className="pending-confirm-modal">
+            <Alert
+              showIcon
+              type="info"
+              message="确认后系统将写入一条正式分红流水；如勾选再投入会同步追加买入事实。"
+            />
+            <dl className="pending-confirm-summary">
+              <div>
+                <dt>证券标的</dt>
+                <dd>
+                  {confirmState.candidate.instrumentName}{" "}
+                  {confirmState.candidate.symbol}
+                </dd>
+              </div>
+              <div>
+                <dt>登记日</dt>
+                <dd className="tabular-nums">
+                  {confirmState.candidate.recordDate}
+                </dd>
+              </div>
+              <div>
+                <dt>除权日</dt>
+                <dd className="tabular-nums">{confirmState.candidate.exDate}</dd>
+              </div>
+              <div>
+                <dt>每股分红</dt>
+                <dd className="tabular-nums">
+                  {perShareLabel(confirmState.candidate.perShare)}
+                </dd>
+              </div>
+              <div>
+                <dt>登记日持股</dt>
+                <dd className="tabular-nums">
+                  {numberValue(confirmState.candidate.holdingQuantity)}
+                </dd>
+              </div>
+              <div>
+                <dt>预计金额</dt>
+                <dd className="tabular-nums finance-flat">
+                  {money(confirmState.candidate.expectedAmount)}
+                </dd>
+              </div>
+            </dl>
+            <div className="pending-confirm-field">
+              <label>实际到账金额</label>
+              <InputNumber
+                value={confirmState.actualAmount}
+                min={0.01}
+                precision={2}
+                prefix="¥"
+                onChange={(value) =>
+                  setConfirmState((state) =>
+                    state
+                      ? { ...state, actualAmount: Number(value ?? 0) }
+                      : state,
+                  )
+                }
+              />
+            </div>
+            <Checkbox
+              className="pending-confirm-reinvest-toggle"
+              checked={confirmState.reinvest}
+              onChange={(event) =>
+                setConfirmState((state) =>
+                  state ? { ...state, reinvest: event.target.checked } : state,
+                )
+              }
+            >
+              同时进行分红再投入
+            </Checkbox>
+            {confirmState.reinvest ? (
+              <div className="pending-confirm-reinvest-fields">
+                <div className="pending-confirm-field">
+                  <label>再投入日期</label>
+                  <DatePicker
+                    allowClear={false}
+                    value={confirmState.reinvestmentDate}
+                    onChange={(value) =>
+                      setConfirmState((state) =>
+                        state ? { ...state, reinvestmentDate: value } : state,
+                      )
+                    }
+                  />
+                </div>
+                <div className="pending-confirm-field">
+                  <label>买入价格</label>
+                  <InputNumber
+                    value={confirmState.buyPrice}
+                    min={0.0001}
+                    precision={4}
+                    prefix="¥"
+                    onChange={(value) =>
+                      setConfirmState((state) =>
+                        state
+                          ? { ...state, buyPrice: value ?? null }
+                          : state,
+                      )
+                    }
+                  />
+                </div>
+                <div className="pending-confirm-field">
+                  <label>买入数量</label>
+                  <InputNumber
+                    value={confirmState.buyQuantity}
+                    min={1}
+                    precision={0}
+                    onChange={(value) =>
+                      setConfirmState((state) =>
+                        state
+                          ? { ...state, buyQuantity: value ?? null }
+                          : state,
+                      )
+                    }
+                  />
+                </div>
+                <div className="pending-confirm-field">
+                  <label>买入费用</label>
+                  <InputNumber
+                    value={confirmState.fee}
+                    min={0}
+                    precision={2}
+                    prefix="¥"
+                    onChange={(value) =>
+                      setConfirmState((state) =>
+                        state
+                          ? { ...state, fee: Number(value ?? 0) }
+                          : state,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

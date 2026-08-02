@@ -266,3 +266,26 @@ export function currentHoldingStart(
   const last = intervals.at(-1)!;
   return last.endDate >= asOfDate ? last.startDate : null;
 }
+
+/**
+ * 计算指定证券在指定日期的有效持股数量。
+ * 重放 ledger entries 直到 asOfDate，返回该日期的持仓数量。
+ */
+export function holdingQuantityOnDate(
+  entries: readonly LedgerEntry[],
+  symbol: string,
+  asOfDate: string,
+): number {
+  const { effective } = activeLedgerEntries(entries, asOfDate);
+  let quantity = 0;
+  for (const entry of [...effective].sort(canonicalLedgerOrder)) {
+    if (entry.businessDate > asOfDate) break;
+    if (entry.symbol !== symbol) continue;
+    if (entry.type === "buy") {
+      quantity += entry.quantity ?? 0;
+    } else if (entry.type === "sell") {
+      quantity -= entry.quantity ?? 0;
+    }
+  }
+  return Math.max(0, quantity);
+}

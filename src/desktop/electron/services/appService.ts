@@ -5,10 +5,13 @@ import type {
   BacktestExperimentSummary,
   BacktestRequest,
   BacktestResult,
+  ConfirmPendingDividendInput,
   LedgerEntry,
   LedgerEntryInput,
   LedgerImpactPreview,
   MarketDataIssue,
+  PendingDividend,
+  PendingDividendDiscoveryResult,
   SimpleBacktestResult,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
@@ -48,6 +51,7 @@ import {
   backtestResultToSimpleResult,
   simulateBacktest,
 } from "../domain/analysis";
+import { discoverPendingDividends } from "../domain/dividendDiscovery";
 import {
   assertLedgerReversal,
   normalizeLedgerInput,
@@ -443,6 +447,9 @@ export class AppService {
     }
     const marketData: BacktestMarketDataBundle[] = [];
     for (const [index, symbol] of canonicalRequest.symbols.entries()) {
+      // P1-1 修订：传入上市日期，让完整性检查区分新上市股票的预期前置缺口
+      // 与接口截断。listingDate 缺省时按"无上市日证据"处理（不阻断）。
+      const listingDate = instrumentMap.get(symbol)?.listingDate;
       // P1-1：不复权价格与前复权 K 线使用不同失败策略。
       // - 不复权价格失败或不完整 → 阻断回测
       // - 前复权 K 线失败或不完整 → 回测继续，chartData 降级
@@ -451,11 +458,13 @@ export class AppService {
           symbol,
           canonicalRequest.startDate,
           canonicalRequest.endDate,
+          listingDate,
         ),
         fetchMarketAdjustedBars(
           symbol,
           canonicalRequest.startDate,
           canonicalRequest.endDate,
+          listingDate,
         ),
       ]);
       if (pricesSettled.status === "rejected") {
@@ -831,12 +840,17 @@ export class AppService {
     const normalized = normalizeRanges(ranges);
     const snapshots: MarketDataCacheEntry[] = [];
     const issues: string[] = [];
+    // P1-1 修订：用上市日期区分新上市股票的预期前置缺口与接口截断。
+    const stockLookup = new Map(
+      this.localStockUniverse().map((stock) => [stock.symbol, stock.listingDate]),
+    );
     for (const range of this.missingLivePriceRanges(normalized)) {
       try {
         const response = await fetchMarketPrices(
           range.symbol,
           range.startDate,
           range.endDate,
+          stockLookup.get(range.symbol),
         );
         // P1-3：检测请求区间内的 error 级别行情问题。
         // 即使尾部完整，只要请求范围内存在 error（如被丢弃的非法 OHLCV 行），
@@ -935,11 +949,16 @@ export class AppService {
     const snapshots: MarketDataCacheEntry[] = [];
     const fetchIssues: string[] = [];
     let hasDataQualityError = false;
+    // P1-1 修订：用上市日期区分新上市股票的预期前置缺口与接口截断。
+    const stockLookup = new Map(
+      this.localStockUniverse().map((stock) => [stock.symbol, stock.listingDate]),
+    );
     for (const range of missing) {
       const response = await fetchMarketPrices(
         range.symbol,
         range.startDate,
         range.endDate,
+        stockLookup.get(range.symbol),
       );
       // P1-3：检测请求区间内的 error 级别行情问题，标记覆盖为 partial。
       const errorIssuesInRange = response.issues.filter(
@@ -1318,5 +1337,150 @@ export class AppService {
     this.database.addLedger(entry);
     this.database.log("info", `已冲正流水：${entryId}`);
     return entry;
+  }
+
+  /** P1：自动发现待确认分红候选项 */
+  async discoverPendingDividends(): Promise<PendingDividendDiscoveryResult> {
+    const entries = this.database.listLedger();
+    const stocks = this.database.listStockUniverse();
+    const stockLookup = new Map(stocks.map((s) => [s.symbol, s]));
+
+    // Get unique symbols from ledger entries
+    const symbols = new Set(
+      entries.filter((e) => e.symbol).map((e) => e.symbol!),
+    );
+    if (!symbols.size) {
+      return { discovered: 0, skipped: 0, total: 0, candidates: [] };
+    }
+
+    // Fetch corporate actions for each symbol
+    const corporateActions = new Map<
+      string,
+      { dividends: Awaited<ReturnType<typeof fetchCorporateActions>>["rows"]; fetchedAt: string }
+    >();
+    // Use a reasonable date range: from earliest ledger entry to current market date
+    const earliestDate = entries.reduce(
+      (min, e) => (e.businessDate < min ? e.businessDate : min),
+      "2020-01-01",
+    );
+    const endDate = currentMarketDate();
+
+    for (const symbol of symbols) {
+      try {
+        const result = await fetchCorporateActions(symbol, earliestDate, endDate);
+        if (result.rows.length) {
+          corporateActions.set(symbol, {
+            dividends: result.rows,
+            fetchedAt: result.provenance.fetchedAt,
+          });
+        }
+      } catch {
+        // Skip failed fetches
+      }
+    }
+
+    // Build existing keys
+    const existingPending = this.database.listPendingDividends();
+    const existingPendingKeys = new Set(
+      existingPending.map((p) => `${p.symbol}:${p.recordDate}`),
+    );
+    const existingDividendKeys = new Set(
+      entries
+        .filter((e) => e.type === "dividend" && e.symbol && e.recordDate)
+        .map((e) => `${e.symbol}:${e.recordDate}`),
+    );
+
+    const candidates = discoverPendingDividends({
+      entries,
+      stockLookup,
+      corporateActions,
+      existingPendingKeys,
+      existingDividendKeys,
+    });
+
+    for (const candidate of candidates) {
+      this.database.insertPendingDividend(candidate);
+    }
+
+    return {
+      discovered: candidates.length,
+      skipped: 0,
+      total: existingPending.length + candidates.length,
+      candidates,
+    };
+  }
+
+  /** 列出所有待确认分红 */
+  listPendingDividends(): PendingDividend[] {
+    return this.database.listPendingDividends();
+  }
+
+  /** 确认待确认分红，创建正式 dividend 流水 */
+  confirmPendingDividend(
+    id: string,
+    input: ConfirmPendingDividendInput,
+  ): { dividend: LedgerEntry; buy?: LedgerEntry } {
+    const pending = this.database.getPendingDividend(id);
+    if (!pending) throw new Error("待确认分红不存在");
+    if (pending.status !== "pending") {
+      throw new Error(`待确认分红状态为 ${pending.status}，无法确认`);
+    }
+
+    const amount = input.actualAmount ?? pending.expectedAmount;
+
+    if (input.reinvest) {
+      // Use dividend reinvestment flow (creates both dividend + buy entries)
+      const result = this.addDividendReinvestment({
+        symbol: pending.symbol,
+        instrumentName: pending.instrumentName,
+        securityType: pending.securityType,
+        dividendDate: pending.exDate,
+        dividendAmount: amount,
+        perShare: pending.perShare,
+        recordDate: pending.recordDate,
+        reinvestmentDate: input.reinvest.reinvestmentDate,
+        buyPrice: input.reinvest.buyPrice,
+        buyQuantity: input.reinvest.buyQuantity,
+        fee: input.reinvest.fee,
+      });
+      this.database.updatePendingDividendStatus(
+        id,
+        "confirmed",
+        amount,
+        result.dividend.id,
+      );
+      return result;
+    }
+
+    // Standalone dividend entry (no reinvestment)
+    const dividendEntry = this.addLedger({
+      type: "dividend",
+      businessDate: pending.exDate,
+      symbol: pending.symbol,
+      securityType: pending.securityType,
+      instrumentName: pending.instrumentName,
+      amount,
+      perShare: pending.perShare,
+      recordDate: pending.recordDate,
+      note: `来源：公司行动数据推算（确认到账）`,
+    });
+
+    this.database.updatePendingDividendStatus(
+      id,
+      "confirmed",
+      amount,
+      dividendEntry.id,
+    );
+    return { dividend: dividendEntry };
+  }
+
+  /** 忽略待确认分红 */
+  ignorePendingDividend(id: string): void {
+    const pending = this.database.getPendingDividend(id);
+    if (!pending) throw new Error("待确认分红不存在");
+    if (pending.status !== "pending") {
+      throw new Error(`待确认分红状态为 ${pending.status}，无法忽略`);
+    }
+    this.database.updatePendingDividendStatus(id, "ignored");
   }
 }

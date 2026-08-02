@@ -599,6 +599,55 @@ export interface DividendReinvestmentPreview {
   warnings: string[];
 }
 
+export type PendingDividendStatus = "pending" | "confirmed" | "ignored";
+
+export interface PendingDividend {
+  id: string;
+  symbol: string;
+  instrumentName: string;
+  securityType: SecurityType;
+  /** 除权除息日（公司行动事件日） */
+  exDate: string;
+  /** 股权登记日 */
+  recordDate: string;
+  /** 实际到账日（可为空，部分分红尚未公告到账日） */
+  paymentDate: string | null;
+  /** 每股税前现金分红（元/股） */
+  perShare: number;
+  /** 登记日有效持股数量 */
+  holdingQuantity: number;
+  /** 预计分红金额 = holdingQuantity * perShare */
+  expectedAmount: number;
+  status: PendingDividendStatus;
+  discoveredAt: string;
+  /** 用户确认的实际到账金额（确认时填写） */
+  confirmedAmount?: number;
+  /** 确认后创建的 ledger entry ID */
+  linkedEntryId?: string;
+  /** 数据来源 */
+  source: "corporate_action";
+  note?: string;
+}
+
+export interface PendingDividendDiscoveryResult {
+  discovered: number;
+  skipped: number;
+  total: number;
+  candidates: PendingDividend[];
+}
+
+export interface ConfirmPendingDividendInput {
+  /** 用户确认的实际到账金额；不填时使用 expectedAmount */
+  actualAmount?: number;
+  /** 是否同时进行分红再投入 */
+  reinvest?: {
+    reinvestmentDate: string;
+    buyPrice: number;
+    buyQuantity: number;
+    fee?: number;
+  };
+}
+
 interface HealthResponse {
   status: "ok";
   version: string;
@@ -619,6 +668,12 @@ export interface StockInfo {
   symbol: string;
   name: string;
   securityType: SecurityType;
+  /**
+   * 上市日期（YYYY-MM-DD）。
+   * 仅在交易所目录接口返回该字段时填充；缺省时表示数据源未提供。
+   * 用于行情完整性检查区分"新上市股票的预期前置缺口"与"接口截断"。
+   */
+  listingDate?: string;
 }
 
 export interface DirectoryProvenance {
@@ -747,6 +802,7 @@ export interface BackupPayload {
   settings: AppSettings;
   stockUniverse: StoredStockInfo[];
   backtestWorkspace: BacktestWorkspaceState | null;
+  pendingDividends: PendingDividend[];
 }
 
 /**
@@ -847,6 +903,13 @@ export interface DesktopApi {
   exportBackup(): Promise<ExportResult>;
   restoreBackup(): Promise<RestoreResult>;
   exportLogs(): Promise<ExportResult>;
+  discoverPendingDividends(): Promise<PendingDividendDiscoveryResult>;
+  listPendingDividends(): Promise<PendingDividend[]>;
+  confirmPendingDividend(
+    id: string,
+    input: ConfirmPendingDividendInput,
+  ): Promise<{ dividend: LedgerEntry; buy?: LedgerEntry }>;
+  ignorePendingDividend(id: string): Promise<void>;
 }
 
 declare global {

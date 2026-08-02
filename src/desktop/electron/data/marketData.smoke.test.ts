@@ -135,6 +135,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
             END_DATE,
             tencentProvider,
             sinaProvider,
+            undefined,
             new Date("2026-07-25T08:00:00Z"),
           );
           expect(fallbackPrices.rows.length).toBeGreaterThan(0);
@@ -161,6 +162,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
             END_DATE,
             tencentProvider,
             sinaProvider,
+            undefined,
             new Date("2026-07-25T08:00:00Z"),
             );
           expect(fallbackBars.provenance).toMatchObject({
@@ -219,6 +221,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
         END_DATE,
         unavailableTencent,
         sinaProvider,
+        undefined,
         new Date("2026-07-25T08:00:00Z"),
       );
       expect(fallback.provenance).toMatchObject({

@@ -52,6 +52,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2023-10-07",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-30T08:00:00Z"),
       ),
     ).rejects.toThrow("请求区间之外");
@@ -77,6 +78,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-02-23",
       primary,
       fallback,
+      undefined,
       new Date("2026-02-24T08:00:00Z"),
     );
     expect(result.rows).toEqual([]);
@@ -106,6 +108,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2026-07-28",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-28T08:00:00Z"),
       ),
     ).rejects.toThrow(
@@ -132,6 +135,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2026-07-28",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-28T08:00:00Z"),
       ),
     ).rejects.toThrow(
@@ -158,6 +162,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2026-07-28",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-28T08:00:00Z"),
       ),
     ).rejects.toThrow("独立交易日历不能确认");
@@ -182,6 +187,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2026-07-28",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-28T08:00:00Z"),
       ),
     ).rejects.toThrow("腾讯行情不可用（腾讯行情包含非法收盘价）");
@@ -200,6 +206,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-07-28",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-28T08:00:00Z"),
     );
     expect(result.provenance).toMatchObject({
@@ -235,6 +242,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-07-29",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-29T08:00:00Z"),
     );
 
@@ -266,6 +274,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-07-29",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-29T08:00:00Z"),
     );
 
@@ -320,6 +329,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-07-30",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-30T08:00:00Z"),
     );
 
@@ -353,6 +363,7 @@ describe("腾讯主源与新浪整段兜底", () => {
       "2026-07-29",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-29T06:00:00Z"),
     );
 
@@ -419,6 +430,7 @@ describe("腾讯主源与新浪整段兜底", () => {
         "2026-07-29",
         primary,
         fallback,
+        undefined,
         new Date("2026-07-29T08:00:00Z"),
       ),
     ).rejects.toThrow("腾讯与新浪行情结果不一致");
@@ -467,6 +479,7 @@ const JULY_2026_WEEKDAYS = [
 
 describe("P1-1 严格回测行情完整性检查", () => {
   it("五年请求仅返回最后 2 行时主源产生头部截断 error 并请求备用源", async () => {
+    // 上市日早于请求起点，说明这是接口截断而非新股未上市
     const truncatedRows = [
       { date: "2026-07-30", close: 5 },
       { date: "2026-07-31", close: 5.1 },
@@ -481,6 +494,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
       "2026-07-31",
       primary,
       fallback,
+      "2019-01-01",
       new Date("2026-07-31T08:00:00Z"),
     );
 
@@ -494,6 +508,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
 
   it("五年请求仅返回最后 100 行仍产生头部截断 error", async () => {
     // 返回 2026-07 全部交易日（23 行），请求从 2024-01-01 开始
+    // 上市日早于请求起点，说明这是接口截断而非新股未上市
     const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
       date,
       close: 5 + i * 0.01,
@@ -508,6 +523,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
       "2026-07-31",
       primary,
       fallback,
+      "2019-01-01",
       new Date("2026-07-31T08:00:00Z"),
     );
 
@@ -533,6 +549,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
       "2026-07-31",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-31T08:00:00Z"),
     );
 
@@ -542,8 +559,9 @@ describe("P1-1 严格回测行情完整性检查", () => {
     expect(errors[0]!.message).toContain("2026-07-15");
   });
 
-  it("新股上市导致请求头部无数据时仍产生头部截断 error", async () => {
+  it("新股上市，无 listingDate 时不产生头部截断 error", async () => {
     // 假设 2026-07-15 上市，返回 07-15 到 07-31 的行情
+    // 没有 listingDate 时，头部缺口可能是新股未上市，不能冒然阻断
     const listingRows = JULY_2026_WEEKDAYS
       .filter((d) => d >= "2026-07-15")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
@@ -557,17 +575,66 @@ describe("P1-1 严格回测行情完整性检查", () => {
       "2026-07-31",
       primary,
       fallback,
+      undefined,
       new Date("2026-07-31T08:00:00Z"),
     );
 
-    // 没有上市日证据时，不能把首条行情日期解释成上市日
+    // 没有 listingDate 证据时，头部缺口不升级为 error
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("新股上市，有 listingDate 且首条行情等于 listingDate 时不产生 error", async () => {
+    // 2026-07-15 上市，返回 07-15 到 07-31 的行情
+    // listingDate 等于首条行情日期，前置缺口属于未上市期，不产生 error
+    const listingRows = JULY_2026_WEEKDAYS
+      .filter((d) => d >= "2026-07-15")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", listingRows);
+    const fallback = staticProvider("sina", listingRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2020-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      "2026-07-15",
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(0);
+  });
+
+  it("有 listingDate 但首条行情晚于 listingDate 时产生头部截断 error", async () => {
+    // 2025-06-01 上市，但接口仅返回 2026-01-01 之后的行情
+    // listingDate 之前的数据应存在，首条行情晚于 listingDate 说明接口截断
+    const listingRows = JULY_2026_WEEKDAYS
+      .filter((d) => d >= "2026-07-15")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", listingRows);
+    const fallback = staticProvider("sina", listingRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2020-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      "2025-06-01",
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
     const errors = result.issues.filter((i) => i.severity === "error");
     expect(errors.length).toBeGreaterThan(0);
     expect(errors[0]!.message).toContain("头部截断");
   });
 
   it("主源头部截断时使用备用源完整数据且不产生 error", async () => {
-    // 主源仅返回最后 2 行（头部截断）
+    // 上市日早于请求起点，主源仅返回最后 2 行（头部截断）
     const primary = staticProvider("tencent", [
       { date: "2026-07-30", close: 5 },
       { date: "2026-07-31", close: 5 },
@@ -585,6 +652,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
       "2026-07-31",
       primary,
       fallback,
+      "2019-01-01",
       new Date("2026-07-31T08:00:00Z"),
     );
 

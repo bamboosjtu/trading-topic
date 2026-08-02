@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   BacktestRequest,
   BacktestWorkspaceState,
+  ConfirmPendingDividendInput,
   DesktopApi,
   IncomeCalendarQuery,
   DividendReinvestmentInput,
@@ -58,6 +59,12 @@ const api: DesktopApi = {
   exportBackup: () => ipcRenderer.invoke("backup:export"),
   restoreBackup: () => ipcRenderer.invoke("backup:restore"),
   exportLogs: () => ipcRenderer.invoke("logs:export"),
+  discoverPendingDividends: () => ipcRenderer.invoke("dividends:discover"),
+  listPendingDividends: () => ipcRenderer.invoke("dividends:list"),
+  confirmPendingDividend: (id: string, input: ConfirmPendingDividendInput) =>
+    ipcRenderer.invoke("dividends:confirm", id, input),
+  ignorePendingDividend: (id: string) =>
+    ipcRenderer.invoke("dividends:ignore", id),
 };
 
 contextBridge.exposeInMainWorld("desktop", api);

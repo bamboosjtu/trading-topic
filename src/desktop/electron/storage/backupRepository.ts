@@ -2,6 +2,7 @@ import BetterSqlite3 from "better-sqlite3";
 import type {
   AppSettings,
   BackupPayload,
+  PendingDividend,
   StoredStockInfo,
   ValidatedBackupPayload,
 } from "../../shared/contracts";
@@ -13,11 +14,15 @@ import {
   LIVE_MARKET_PRICE_COLUMNS,
   MARKET_PRICE_COLUMNS,
 } from "./marketRepository";
+import {
+  insertPendingDividends as insertPendingDividendsFrom,
+} from "./pendingDividendRepository";
 import { SCHEMA_FINGERPRINT, SCHEMA_VERSION } from "./schema";
 
 export interface BackupContext {
   getSettings: () => AppSettings;
   listStockUniverse: () => StoredStockInfo[];
+  listPendingDividends: () => PendingDividend[];
 }
 
 export function exportBackup(
@@ -62,6 +67,7 @@ export function exportBackup(
     settings: ctx.getSettings(),
     stockUniverse: ctx.listStockUniverse(),
     backtestWorkspace: getBacktestWorkspace(database),
+    pendingDividends: ctx.listPendingDividends(),
   };
 }
 
@@ -98,6 +104,7 @@ export function restoreBackup(
       DELETE FROM settings;
       DELETE FROM stock_universe;
       DELETE FROM backtest_workspace;
+      DELETE FROM pending_dividends;
     `);
     const insertLedger = database.prepare(
       "INSERT INTO ledger_entries(id, business_date, recorded_at, type, payload_json) VALUES (?, ?, ?, ?, ?)",
@@ -186,8 +193,8 @@ export function restoreBackup(
     const insertStock = database.prepare(
       `INSERT INTO stock_universe(
          symbol, name, security_type, source, primary_source, fallback_used,
-         fallback_reason, fetched_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         fallback_reason, fetched_at, listing_date
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const stock of backup.stockUniverse) {
       insertStock.run(
@@ -199,6 +206,7 @@ export function restoreBackup(
         stock.fallbackUsed ? 1 : 0,
         stock.fallbackReason ?? null,
         stock.fetchedAt,
+        stock.listingDate ?? null,
       );
     }
     if (backup.backtestWorkspace) {
@@ -208,5 +216,6 @@ export function restoreBackup(
         )
         .run(JSON.stringify(backup.backtestWorkspace));
     }
+    insertPendingDividendsFrom(database, backup.pendingDividends);
   })();
 }

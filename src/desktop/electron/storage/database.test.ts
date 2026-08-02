@@ -214,7 +214,7 @@ describe("LocalDatabase", () => {
 
     const backup = database.exportBackup();
     expect(backup.schemaVersion).toBe(1);
-    expect(backup.schemaFingerprint).toContain("coverage-split-v1");
+    expect(backup.schemaFingerprint).toContain("pending-dividends-listing-date");
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);

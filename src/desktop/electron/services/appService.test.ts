@@ -967,21 +967,25 @@ describe("AppService 实盘流水", () => {
       "601398",
       "2025-01-02",
       "2025-02-05",
+      undefined,
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601939",
       "2026-07-01",
       expectedCurrentCutoff,
+      undefined,
     );
     expect(fetchUnadjustedPrices).toHaveBeenCalledWith(
       "601398",
       "2026-05-06",
       "2026-06-08",
+      undefined,
     );
     expect(fetchUnadjustedPrices).not.toHaveBeenCalledWith(
       "601398",
       "2025-02-03",
       "2026-05-06",
+      undefined,
     );
     expect(database.listLiveMarketPrices()).toHaveLength(6);
     expect(view.quality.dataCutoff).toBe(expectedCurrentCutoff);
@@ -1029,6 +1033,7 @@ describe("AppService 实盘流水", () => {
       "601398",
       "2026-05-06",
       "2026-05-31",
+      undefined,
     );
     expect(view.quality.dataCutoff).toBe("2026-05-29");
     expect(view.quality.status).toBe("ready");
@@ -1091,6 +1096,7 @@ describe("AppService 实盘流水", () => {
       "601398",
       "2026-06-30",
       "2026-06-30",
+      undefined,
     );
     expect(view.quality.dataCutoff).toBe("2026-06-30");
     expect(view.quality.status).toBe("ready");

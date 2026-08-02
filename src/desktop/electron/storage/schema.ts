@@ -6,7 +6,7 @@ import { rows } from "./dbUtil";
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA_FINGERPRINT =
-  "stock-income-r1-schema-1-2026-08-01-coverage-split-v1-partial-issues";
+  "stock-income-r1-schema-1-2026-08-02-pending-dividends-listing-date";
 export const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",
@@ -73,6 +73,7 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         "stock_universe",
         "backtest_workspace",
         "schema_metadata",
+        "pending_dividends",
       ];
       const missingTables = requiredTables.filter(
         (table) => !existingTables.includes(table),
@@ -205,7 +206,8 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         primary_source TEXT NOT NULL,
         fallback_used INTEGER NOT NULL CHECK (fallback_used IN (0, 1)),
         fallback_reason TEXT,
-        fetched_at TEXT NOT NULL
+        fetched_at TEXT NOT NULL,
+        listing_date TEXT
       );
       CREATE TABLE backtest_workspace (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -215,6 +217,25 @@ export function initializeSchema(database: BetterSqlite3.Database): void {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         fingerprint TEXT NOT NULL,
         shape_fingerprint TEXT NOT NULL
+      );
+      CREATE TABLE pending_dividends (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        instrument_name TEXT NOT NULL,
+        security_type TEXT NOT NULL CHECK (security_type IN ('stock', 'etf')),
+        ex_date TEXT NOT NULL,
+        record_date TEXT NOT NULL,
+        payment_date TEXT,
+        per_share REAL NOT NULL,
+        holding_quantity REAL NOT NULL,
+        expected_amount REAL NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'ignored')),
+        discovered_at TEXT NOT NULL,
+        confirmed_amount REAL,
+        linked_entry_id TEXT,
+        source TEXT NOT NULL CHECK (source = 'corporate_action'),
+        note TEXT,
+        UNIQUE(symbol, record_date)
       );
       CREATE INDEX idx_backtest_experiments_created_at
         ON backtest_experiments(created_at DESC);

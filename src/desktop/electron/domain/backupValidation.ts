@@ -7,6 +7,7 @@ import type {
   BackupPayload,
   DividendEvent,
   LedgerEntry,
+  PendingDividend,
   ValidatedBackupPayload,
 } from "../../shared/contracts";
 import { assertBacktestRequest } from "./analysis";
@@ -674,6 +675,59 @@ function assertWorkspace(
   }
 }
 
+function assertPendingDividends(
+  pendingDividends: readonly PendingDividend[],
+): void {
+  assertUnique(
+    pendingDividends.map((item) => item.id),
+    "待确认分红 ID",
+  );
+  const keys: string[] = [];
+  for (const item of pendingDividends) {
+    if (
+      !isObject(item) ||
+      !nonEmptyString(item.id) ||
+      !/^\d{6}$/.test(item.symbol) ||
+      !nonEmptyString(item.instrumentName) ||
+      !["stock", "etf"].includes(item.securityType) ||
+      !validDate(item.exDate) ||
+      !validDate(item.recordDate) ||
+      (item.paymentDate !== null && !validDate(item.paymentDate)) ||
+      !finite(item.perShare) ||
+      item.perShare < 0 ||
+      !finite(item.holdingQuantity) ||
+      item.holdingQuantity < 0 ||
+      !finite(item.expectedAmount) ||
+      item.expectedAmount < 0 ||
+      !["pending", "confirmed", "ignored"].includes(item.status) ||
+      !validTimestamp(item.discoveredAt) ||
+      item.source !== "corporate_action" ||
+      (item.confirmedAmount !== undefined &&
+        (!finite(item.confirmedAmount) || item.confirmedAmount < 0)) ||
+      (item.linkedEntryId !== undefined && !nonEmptyString(item.linkedEntryId)) ||
+      (item.note !== undefined && typeof item.note !== "string")
+    ) {
+      throw new Error("备份包含非法待确认分红候选");
+    }
+    if (
+      item.status === "confirmed" &&
+      item.confirmedAmount === undefined
+    ) {
+      throw new Error("备份包含已确认但缺少实际到账金额的待确认分红");
+    }
+    if (
+      Math.abs(
+        item.expectedAmount -
+          Math.round(item.holdingQuantity * item.perShare * 100) / 100,
+      ) > 0.01
+    ) {
+      throw new Error("备份待确认分红的预计金额与持股数量和每股分红不一致");
+    }
+    keys.push(`${item.symbol}|${item.recordDate}`);
+  }
+  assertUnique(keys, "待确认分红主键");
+}
+
 export function validateBackup(
   payload: unknown,
   schemaVersion: number,
@@ -693,7 +747,8 @@ export function validateBackup(
     !Array.isArray(payload.corporateActions) ||
     !Array.isArray(payload.stockUniverse) ||
     !isObject(payload.settings) ||
-    !Object.prototype.hasOwnProperty.call(payload, "backtestWorkspace")
+    !Object.prototype.hasOwnProperty.call(payload, "backtestWorkspace") ||
+    !Array.isArray(payload.pendingDividends)
   ) {
     throw new Error("备份结构或 schema 版本不兼容");
   }
@@ -712,5 +767,6 @@ export function validateBackup(
   assertMarketSnapshots(backup);
   assertDirectory(backup);
   assertWorkspace(backup.backtestWorkspace, backup.backtestExperiments);
+  assertPendingDividends(backup.pendingDividends);
   return backup as ValidatedBackupPayload;
 }
