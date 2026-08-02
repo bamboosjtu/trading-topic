@@ -4,7 +4,6 @@ import type {
   ConfirmPendingDividendInput,
   DesktopApi,
   IncomeCalendarQuery,
-  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
 } from "../../../shared/contracts";
@@ -44,11 +43,7 @@ export const api = {
     bridge().exportIncomeCalendar(query),
   previewLedger: (input: LedgerEntryInput, replacingEntryId?: string) =>
     bridge().previewLedger(input, replacingEntryId),
-  previewDividendReinvestment: (input: DividendReinvestmentInput) =>
-    bridge().previewDividendReinvestment(input),
   addLedger: (input: LedgerEntryInput) => bridge().addLedger(input),
-  addDividendReinvestment: (input: DividendReinvestmentInput) =>
-    bridge().addDividendReinvestment(input),
   getLedgerRecord: (entryId: string) => bridge().getLedgerRecord(entryId),
   correctLedger: (entryId: string, input: LedgerEntryInput) =>
     bridge().correctLedger(entryId, input),
@@ -86,8 +81,6 @@ export type {
   ChartDataState,
   EntryType,
   DirectoryProvenance,
-  DividendReinvestmentInput,
-  DividendReinvestmentPreview,
   ConfirmPendingDividendInput,
   IncomeCalendarQuery,
   IncomeCalendarScope,

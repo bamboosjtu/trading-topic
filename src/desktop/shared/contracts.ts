@@ -318,8 +318,8 @@ export interface LedgerEntryInput {
   note?: string;
   reversesEntryId?: string;
   correctsEntryId?: string;
-  /** 同一次“分红并再投入”写入的事实共享同一个分组编号。 */
-  linkedGroupId?: string;
+  /** 非财务关联，仅用于 UI 跳转和审计，不参与净投入/XIRR/收益归因 */
+  originDividendEntryId?: string;
 }
 
 export interface LedgerEntry extends LedgerEntryInput {
@@ -374,7 +374,6 @@ export interface PositionView {
   cumulativeBuySpend: number;
   cumulativeSellNetIncome: number;
   netInvestment: number;
-  pendingReinvestmentCash: number;
   unrealizedPnl: number | null;
   realizedPnl: number;
   cumulativeDividend: number;
@@ -393,7 +392,6 @@ export interface PositionsOverview {
     cumulativeBuySpend: number;
     cumulativeSellNetIncome: number;
     netInvestment: number;
-    pendingReinvestmentCash: number;
     unrealizedPnl: number | null;
     realizedPnl: number;
     cumulativeDividend: number;
@@ -442,7 +440,6 @@ export interface LedgerRecordView {
   recordDate: string | null;
   recordedAt: string;
   correctedAt: string | null;
-  linkedOperation: "dividend_reinvestment" | null;
   linkedRecords: Array<{
     id: string;
     type: "buy" | "dividend";
@@ -460,7 +457,6 @@ export interface LedgerImpactState {
   cumulativeSellNetIncome: number;
   cumulativeDividend: number;
   netInvestment: number;
-  pendingReinvestmentCash: number;
 }
 
 export interface LedgerImpactPreview {
@@ -577,35 +573,6 @@ export interface AppSettings {
   caliberVersion: string;
 }
 
-export interface DividendReinvestmentInput {
-  symbol: string;
-  instrumentName?: string;
-  securityType: SecurityType;
-  dividendDate: string;
-  dividendAmount: number;
-  perShare?: number;
-  recordDate?: string;
-  reinvestmentDate: string;
-  buyPrice: number;
-  buyQuantity: number;
-  fee?: number;
-  note?: string;
-}
-
-export interface DividendReinvestmentResult {
-  linkedGroupId: string;
-  dividend: LedgerEntry;
-  buy: LedgerEntry;
-}
-
-export interface DividendReinvestmentPreview {
-  dividend: LedgerImpactPreview;
-  buy: LedgerImpactPreview;
-  before: LedgerImpactState;
-  after: LedgerImpactState;
-  warnings: string[];
-}
-
 export type PendingDividendStatus = "pending" | "confirmed" | "ignored";
 
 export interface PendingDividend {
@@ -667,13 +634,6 @@ export interface ConfirmPendingDividendInput {
    * - 当 pending.paymentDate 为空时，必须由用户填写，不能默认用 exDate 代替。
    */
   actualPaymentDate?: string;
-  /** 是否同时进行分红再投入 */
-  reinvest?: {
-    reinvestmentDate: string;
-    buyPrice: number;
-    buyQuantity: number;
-    fee?: number;
-  };
 }
 
 /**
@@ -937,13 +897,7 @@ export interface DesktopApi {
     input: LedgerEntryInput,
     replacingEntryId?: string,
   ): Promise<LedgerImpactPreview>;
-  previewDividendReinvestment(
-    input: DividendReinvestmentInput,
-  ): Promise<DividendReinvestmentPreview>;
   addLedger(input: LedgerEntryInput): Promise<LedgerEntry>;
-  addDividendReinvestment(
-    input: DividendReinvestmentInput,
-  ): Promise<DividendReinvestmentResult>;
   getLedgerRecord(entryId: string): Promise<LedgerRecordView>;
   correctLedger(
     entryId: string,
@@ -960,7 +914,7 @@ export interface DesktopApi {
   confirmPendingDividend(
     id: string,
     input: ConfirmPendingDividendInput,
-  ): Promise<{ dividend: LedgerEntry; buy?: LedgerEntry }>;
+  ): Promise<LedgerEntry>;
   ignorePendingDividend(id: string): Promise<void>;
   /** P1：列出全部证券级停复牌证据，可选按 symbol 过滤。 */
   listTradingInterruptions(symbol?: string): Promise<SecurityTradingInterruption[]>;

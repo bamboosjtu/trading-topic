@@ -85,7 +85,6 @@ export function toLedgerRecord(
     recordDate: entry.recordDate ?? null,
     recordedAt: entry.recordedAt,
     correctedAt: entry.correctedAt ?? null,
-    linkedOperation: null,
     linkedRecords: [],
     isReversed: reversedIds.has(entry.id),
     reversesEntryId: entry.reversesEntryId ?? null,

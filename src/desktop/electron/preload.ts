@@ -5,7 +5,6 @@ import type {
   ConfirmPendingDividendInput,
   DesktopApi,
   IncomeCalendarQuery,
-  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
 } from "../shared/contracts";
@@ -42,12 +41,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("income-calendar:export", query),
   previewLedger: (input: LedgerEntryInput, replacingEntryId?: string) =>
     ipcRenderer.invoke("ledger:preview", input, replacingEntryId),
-  previewDividendReinvestment: (input: DividendReinvestmentInput) =>
-    ipcRenderer.invoke("ledger:dividend-reinvestment:preview", input),
   addLedger: (input: LedgerEntryInput) =>
     ipcRenderer.invoke("ledger:add", input),
-  addDividendReinvestment: (input: DividendReinvestmentInput) =>
-    ipcRenderer.invoke("ledger:dividend-reinvestment:add", input),
   getLedgerRecord: (entryId: string) =>
     ipcRenderer.invoke("ledger:record:get", entryId),
   correctLedger: (entryId: string, input: LedgerEntryInput) =>

@@ -191,9 +191,11 @@ function detectDateCompletenessIssues(
     ? missing.filter((date) => date < firstRowDate)
     : missing;
   // 内部缺口：首条和末条返回行情之间的缺失
-  const internalMissing = firstRowDate && lastRowDate
-    ? missing.filter((date) => date > firstRowDate && date < lastRowDate)
-    : [];
+  const internalMissingSet = new Set(
+    firstRowDate && lastRowDate
+      ? missing.filter((date) => date > firstRowDate && date < lastRowDate)
+      : [],
+  );
 
   // P1-1 修订：只有在拥有 listingDate 这一独立证据时才能判定头部截断。
   // 没有 listingDate 时，头部缺口可能是新上市股票的预期前置缺口，
@@ -208,13 +210,41 @@ function detectDateCompletenessIssues(
       });
     }
   }
-  for (const date of internalMissing) {
-    issues.push({
-      date,
-      type: "gap",
-      severity: "error",
-      message: `${label}在正式交易日历年度内缺少 ${date} 的行情`,
-    });
+  // P1-5：合并连续缺口日期为区间消息。
+  // 旧实现逐日生成 error，10 天停牌会产生 10 条同质 error，淹没真正需要
+  // 关注的独立缺口。现在按"在 expected 交易日序列中相邻"分组：相邻的
+  // 缺失日合并为一条带起止区间和数量的 error；孤立缺失日仍单独成条。
+  // date 字段设为区间起点，便于 hasErrorInRequestRange 按请求区间过滤。
+  const missingRuns: string[][] = [];
+  let currentRun: string[] = [];
+  for (const date of expected) {
+    if (internalMissingSet.has(date)) {
+      currentRun.push(date);
+    } else if (currentRun.length > 0) {
+      missingRuns.push(currentRun);
+      currentRun = [];
+    }
+  }
+  if (currentRun.length > 0) missingRuns.push(currentRun);
+
+  for (const run of missingRuns) {
+    if (run.length === 1) {
+      issues.push({
+        date: run[0],
+        type: "gap",
+        severity: "error",
+        message: `${label}在正式交易日历年度内缺少 ${run[0]} 的行情`,
+      });
+    } else {
+      const start = run[0];
+      const end = run.at(-1) ?? run[0];
+      issues.push({
+        date: start,
+        type: "gap",
+        severity: "error",
+        message: `${label}在正式交易日历年度内缺少 ${start} 至 ${end} 共 ${run.length} 个交易日的行情`,
+      });
+    }
   }
   // 尾部缺失由 tailStatus 处理，不生成 error
   return issues;

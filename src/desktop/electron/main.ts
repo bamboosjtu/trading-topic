@@ -13,7 +13,6 @@ import type {
   BacktestWorkspaceState,
   ConfirmPendingDividendInput,
   IncomeCalendarQuery,
-  DividendReinvestmentInput,
   LedgerEntryInput,
   LedgerQuery,
   ValidatedBackupPayload,
@@ -278,16 +277,6 @@ function registerIpc(): void {
   );
   secureHandle("ledger:add", (_event, input: LedgerEntryInput) =>
     service.addLedger(input),
-  );
-  secureHandle(
-    "ledger:dividend-reinvestment:preview",
-    (_event, input: DividendReinvestmentInput) =>
-      service.previewDividendReinvestment(input),
-  );
-  secureHandle(
-    "ledger:dividend-reinvestment:add",
-    (_event, input: DividendReinvestmentInput) =>
-      service.addDividendReinvestment(input),
   );
   secureHandle(
     "ledger:correct",

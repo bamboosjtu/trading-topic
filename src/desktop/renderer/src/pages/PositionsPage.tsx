@@ -280,7 +280,6 @@ export function PositionsPage() {
               { label: "累计买入", value: money(overview.data.metrics.cumulativeBuySpend), helper: "成交金额 + 买入费用", icon: <DollarCircleOutlined />, tone: "orange" },
               { label: "累计卖出", value: money(overview.data.metrics.cumulativeSellNetIncome), helper: "成交金额 − 卖出费用", icon: <TransactionOutlined />, tone: "green" },
               { label: "累计分红", value: money(overview.data.metrics.cumulativeDividend), helper: "现金分红到账", icon: <GiftOutlined />, tone: "orange" },
-              { label: "待再投入", value: money(overview.data.metrics.pendingReinvestmentCash), helper: "组合内分红现金", icon: <GiftOutlined />, tone: "orange" },
             ]}
           />
           <section className="workspace-panel live-performance-panel">
@@ -417,7 +416,6 @@ export function PositionsPage() {
               <div><span>累计买入支出</span><strong>{money(detail.cumulativeBuySpend)}</strong></div>
               <div><span>累计卖出净收入</span><strong>{money(detail.cumulativeSellNetIncome)}</strong></div>
               <div><span>累计净投入</span><strong>{money(detail.netInvestment)}</strong></div>
-              <div><span>待再投入分红</span><strong>{money(detail.pendingReinvestmentCash)}</strong></div>
               <div>
                 <span>XIRR</span>
                 <strong className={pnlClass(detail.xirr)}>

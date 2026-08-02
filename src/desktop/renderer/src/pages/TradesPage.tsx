@@ -55,8 +55,7 @@ import {
   money,
   numberValue,
 } from "./live/liveFormat";
-import { LedgerEntryModal } from "./live/LedgerEntryModal";
-import { DividendReinvestmentModal } from "./live/DividendReinvestmentModal";
+import { LedgerEntryModal, type LedgerFormValues } from "./live/LedgerEntryModal";
 import { beijingDate, beijingTimestamp } from "./_shared/format";
 
 const { RangePicker } = DatePicker;
@@ -86,11 +85,8 @@ interface ConfirmState {
   actualAmount: number;
   // 当候选未公告到账日时，由用户填写实际到账日；否则使用 candidate.paymentDate
   actualPaymentDate: Dayjs | null;
-  reinvest: boolean;
-  reinvestmentDate: Dayjs | null;
-  buyPrice: number | null;
-  buyQuantity: number | null;
-  fee: number;
+  // 确认后是否打开买入弹窗（退化为普通买入快捷入口）
+  buyAfter: boolean;
 }
 
 export function TradesPage() {
@@ -109,10 +105,12 @@ export function TradesPage() {
   const [pageSize, setPageSize] = useState<LedgerPageSize>(20);
   const [detail, setDetail] = useState<LedgerRecordView | null>(null);
   const [entryModalOpen, setEntryModalOpen] = useState(false);
-  const [reinvestmentOpen, setReinvestmentOpen] = useState(false);
   const [correctionTarget, setCorrectionTarget] =
     useState<LedgerRecordView | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  // 确认后买入：存放预填值和 originDividendEntryId
+  const [buyPrefill, setBuyPrefill] = useState<Partial<LedgerFormValues> | undefined>(undefined);
+  const [buyOriginDividendId, setBuyOriginDividendId] = useState<string | undefined>(undefined);
   const query: LedgerQuery = useMemo(
     () => ({
       startDate: dateRange?.[0].format("YYYY-MM-DD"),
@@ -208,13 +206,27 @@ export function TradesPage() {
     }: {
       id: string;
       input: ConfirmPendingDividendInput;
+      buyAfter: boolean;
+      candidate: PendingDividend;
     }) => api.confirmPendingDividend(id, input),
-    onSuccess: () => {
+    onSuccess: (ledgerEntry, { buyAfter, candidate }) => {
       message.success("分红已确认");
       void queryClient.invalidateQueries({ queryKey: ["pending-dividends"] });
       void queryClient.invalidateQueries({ queryKey: ["ledger:query"] });
       refreshLivePages();
       setConfirmState(null);
+      // 确认后买入：退化为普通买入快捷入口，仅预填标的信息并记录非财务关联。
+      if (buyAfter) {
+        setBuyPrefill({
+          type: "buy",
+          businessDate: dayjs(candidate.paymentDate ?? candidate.exDate),
+          securityType: candidate.securityType,
+          symbol: candidate.symbol,
+          instrumentName: candidate.instrumentName,
+        });
+        setBuyOriginDividendId(ledgerEntry.id);
+        setEntryModalOpen(true);
+      }
     },
     onError: (error) => message.error(error.message),
   });
@@ -232,13 +244,7 @@ export function TradesPage() {
       actualAmount: candidate.expectedAmount,
       // 候选已公告到账日时直接使用；否则置 null 强制用户填写，不默认用 exDate 代替。
       actualPaymentDate: candidate.paymentDate ? dayjs(candidate.paymentDate) : null,
-      reinvest: false,
-      // 默认以到账日（或除权日作 fallback 仅用于再投入日期默认值显示）作为再投入日期，
-      // 用户可在弹窗中调整。
-      reinvestmentDate: dayjs(candidate.paymentDate ?? candidate.exDate),
-      buyPrice: null,
-      buyQuantity: null,
-      fee: 0,
+      buyAfter: false,
     });
   };
   const handleIgnore = (candidate: PendingDividend) => {
@@ -265,20 +271,12 @@ export function TradesPage() {
       actualAmount: confirmState.actualAmount,
       actualPaymentDate: confirmState.actualPaymentDate.format("YYYY-MM-DD"),
     };
-    if (
-      confirmState.reinvest &&
-      confirmState.reinvestmentDate &&
-      confirmState.buyPrice !== null &&
-      confirmState.buyQuantity !== null
-    ) {
-      input.reinvest = {
-        reinvestmentDate: confirmState.reinvestmentDate.format("YYYY-MM-DD"),
-        buyPrice: confirmState.buyPrice,
-        buyQuantity: confirmState.buyQuantity,
-        fee: confirmState.fee,
-      };
-    }
-    confirmMutation.mutate({ id: confirmState.candidate.id, input });
+    confirmMutation.mutate({
+      id: confirmState.candidate.id,
+      input,
+      buyAfter: confirmState.buyAfter,
+      candidate: confirmState.candidate,
+    });
   };
   const reverseEntry = useMutation({
     mutationFn: (row: LedgerRecordView) =>
@@ -477,19 +475,15 @@ export function TradesPage() {
               loading={discoverMutation.isPending}
               onClick={() => discoverMutation.mutate()}
             >
-              发现分红
-            </Button>
-            <Button
-              icon={<GiftOutlined />}
-              onClick={() => setReinvestmentOpen(true)}
-            >
-              分红并再投入
+              刷新分红
             </Button>
             <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => {
                 setCorrectionTarget(null);
+                setBuyPrefill(undefined);
+                setBuyOriginDividendId(undefined);
                 setEntryModalOpen(true);
               }}
             >
@@ -693,6 +687,8 @@ export function TradesPage() {
                       icon={<PlusOutlined />}
                       onClick={() => {
                         setCorrectionTarget(null);
+                        setBuyPrefill(undefined);
+                        setBuyOriginDividendId(undefined);
                         setEntryModalOpen(true);
                       }}
                     >
@@ -766,14 +762,6 @@ export function TradesPage() {
               <div><dt>录入时间</dt><dd>{beijingTimestamp(detail.recordedAt)}</dd></div>
               <div><dt>修正时间</dt><dd>{detail.correctedAt ? beijingTimestamp(detail.correctedAt) : "—"}</dd></div>
               <div>
-                <dt>关联操作</dt>
-                <dd>
-                  {detail.linkedOperation === "dividend_reinvestment"
-                    ? "分红并再投入"
-                    : "—"}
-                </dd>
-              </div>
-              <div>
                 <dt>关联记录</dt>
                 <dd>
                   {detail.linkedRecords.length
@@ -819,21 +807,17 @@ export function TradesPage() {
         onClose={() => {
           setEntryModalOpen(false);
           setCorrectionTarget(null);
+          setBuyPrefill(undefined);
+          setBuyOriginDividendId(undefined);
         }}
         onSaved={() => {
           setDetail(null);
           refreshLivePages();
+          setBuyPrefill(undefined);
+          setBuyOriginDividendId(undefined);
         }}
-      />
-      <DividendReinvestmentModal
-        open={reinvestmentOpen}
-        stocks={instruments}
-        catalogStatus={catalogStatus}
-        onRetryCatalog={(type) =>
-          void (type === "stock" ? stockCatalog.refetch() : etfCatalog.refetch())
-        }
-        onClose={() => setReinvestmentOpen(false)}
-        onSaved={refreshLivePages}
+        prefill={buyPrefill}
+        originDividendEntryId={buyOriginDividendId}
       />
       <Modal
         className="pending-confirm-modal-wrapper"
@@ -854,7 +838,7 @@ export function TradesPage() {
             <Alert
               showIcon
               type="info"
-              message="确认后系统将写入一条正式分红流水；如勾选再投入会同步追加买入事实。"
+              message="确认后系统将写入一条正式分红流水；可勾选确认后买入以打开普通买入弹窗并预填标的。"
             />
             <dl className="pending-confirm-summary">
               <div>
@@ -943,79 +927,15 @@ export function TradesPage() {
               />
             </div>
             <Checkbox
-              className="pending-confirm-reinvest-toggle"
-              checked={confirmState.reinvest}
+              checked={confirmState.buyAfter}
               onChange={(event) =>
                 setConfirmState((state) =>
-                  state ? { ...state, reinvest: event.target.checked } : state,
+                  state ? { ...state, buyAfter: event.target.checked } : state,
                 )
               }
             >
-              同时进行分红再投入
+              确认后买入（打开买入弹窗并预填标的）
             </Checkbox>
-            {confirmState.reinvest ? (
-              <div className="pending-confirm-reinvest-fields">
-                <div className="pending-confirm-field">
-                  <label>再投入日期</label>
-                  <DatePicker
-                    allowClear={false}
-                    value={confirmState.reinvestmentDate}
-                    onChange={(value) =>
-                      setConfirmState((state) =>
-                        state ? { ...state, reinvestmentDate: value } : state,
-                      )
-                    }
-                  />
-                </div>
-                <div className="pending-confirm-field">
-                  <label>买入价格</label>
-                  <InputNumber
-                    value={confirmState.buyPrice}
-                    min={0.0001}
-                    precision={4}
-                    prefix="¥"
-                    onChange={(value) =>
-                      setConfirmState((state) =>
-                        state
-                          ? { ...state, buyPrice: value ?? null }
-                          : state,
-                      )
-                    }
-                  />
-                </div>
-                <div className="pending-confirm-field">
-                  <label>买入数量</label>
-                  <InputNumber
-                    value={confirmState.buyQuantity}
-                    min={1}
-                    precision={0}
-                    onChange={(value) =>
-                      setConfirmState((state) =>
-                        state
-                          ? { ...state, buyQuantity: value ?? null }
-                          : state,
-                      )
-                    }
-                  />
-                </div>
-                <div className="pending-confirm-field">
-                  <label>买入费用</label>
-                  <InputNumber
-                    value={confirmState.fee}
-                    min={0}
-                    precision={2}
-                    prefix="¥"
-                    onChange={(value) =>
-                      setConfirmState((state) =>
-                        state
-                          ? { ...state, fee: Number(value ?? 0) }
-                          : state,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </Modal>

@@ -18,7 +18,6 @@ import {
   securityTypesMap,
   toLedgerRecord,
 } from "./liveViewSupport";
-import { projectInvestmentCash } from "./investmentCashProjection";
 
 function toLedgerRecords(
   entries: readonly LedgerEntry[],
@@ -27,21 +26,30 @@ function toLedgerRecords(
   const names = namesMap(stocks, entries);
   const securityTypes = securityTypesMap(stocks, entries);
   const { effective, reversedIds } = activeLedgerEntries(entries);
-  const groups = new Map<string, LedgerEntry[]>();
-  // 关联展示只指向当前有效事实；被历史重述替换的旧版本仍在审计列表中，
-  // 但不会与修正后的事实同时作为可跳转的业务关联出现。
+  // 非财务关联：buy → originDividendEntryId → dividend
+  // 反向索引：dividend id → 指向它的 buy entries
+  const buysByOriginDividend = new Map<string, LedgerEntry[]>();
   for (const entry of effective) {
-    if (!entry.linkedGroupId) continue;
-    const group = groups.get(entry.linkedGroupId) ?? [];
-    group.push(entry);
-    groups.set(entry.linkedGroupId, group);
+    if (entry.type !== "buy" || !entry.originDividendEntryId) continue;
+    const current = buysByOriginDividend.get(entry.originDividendEntryId) ?? [];
+    current.push(entry);
+    buysByOriginDividend.set(entry.originDividendEntryId, current);
   }
   return [...entries].sort(canonicalLedgerOrderDescending).map((entry) => {
     const row = toLedgerRecord(entry, names, securityTypes, reversedIds);
-    const group = entry.linkedGroupId
-      ? (groups.get(entry.linkedGroupId) ?? [])
-      : [];
-    const linkedRecords = group
+    // 关联展示只指向当前有效事实；被历史重述替换的旧版本仍在审计列表中，
+    // 但不会与修正后的事实同时作为可跳转的业务关联出现。
+    const linked: LedgerEntry[] = [];
+    if (entry.type === "buy" && entry.originDividendEntryId) {
+      const origin = effective.find(
+        (candidate) => candidate.id === entry.originDividendEntryId,
+      );
+      if (origin) linked.push(origin);
+    }
+    if (entry.type === "dividend") {
+      linked.push(...(buysByOriginDividend.get(entry.id) ?? []));
+    }
+    const linkedRecords = linked
       .filter(
         (candidate): candidate is LedgerEntry & {
           type: "buy" | "dividend";
@@ -55,14 +63,8 @@ function toLedgerRecords(
         type: candidate.type,
         businessDate: candidate.businessDate,
       }));
-    const isDividendReinvestment =
-      group.some((candidate) => candidate.type === "dividend") &&
-      group.some((candidate) => candidate.type === "buy");
     return {
       ...row,
-      linkedOperation: isDividendReinvestment
-        ? "dividend_reinvestment"
-        : null,
       linkedRecords,
     };
   });
@@ -137,7 +139,6 @@ function computeLedgerQuery(
     (row) => effectiveIds.has(row.id) && row.type !== "adjustment",
   );
   const aggregateIds = new Set(aggregateRows.map((row) => row.id));
-  const cashProjection = projectInvestmentCash(effective);
   const selectedEffectiveEntries = effective.filter((entry) =>
     aggregateIds.has(entry.id),
   );
@@ -148,8 +149,7 @@ function computeLedgerQuery(
         (sum, entry) =>
           sum +
           (entry.amount ?? (entry.price ?? 0) * (entry.quantity ?? 0)) +
-          (entry.fee ?? 0) -
-          (cashProjection.internalFundingByBuy.get(entry.id) ?? 0),
+          (entry.fee ?? 0),
         0,
       ),
   );
@@ -166,10 +166,7 @@ function computeLedgerQuery(
   );
   const selectedExternalDividend = roundMoney(
     selectedEffectiveEntries
-      .filter(
-        (entry) =>
-          entry.type === "dividend" && !entry.linkedGroupId,
-      )
+      .filter((entry) => entry.type === "dividend")
       .reduce((sum, entry) => sum + (entry.amount ?? 0), 0),
   );
   const symbols = [...new Set(entries.flatMap((entry) => entry.symbol ?? []))];

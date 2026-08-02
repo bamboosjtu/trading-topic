@@ -581,44 +581,127 @@ export async function fetchCorporateActions(
 }
 
 /**
+ * 东方财富停复牌数据源标识。
+ *
+ * 停牌证据的 source 字段统一使用此常量，便于刷新流程按"同源"删除旧证据
+ * 以及与手工录入的异源证据区分。
+ */
+export const EASTMONEY_SUSPEND_SOURCE =
+  "eastmoney_datacenter_RPT_SUSPENDDATA";
+
+/**
+ * 解析单行东方财富停复牌响应，兼容多套字段命名。
+ *
+ * 东方财富 RPT_SUSPENDDATA 报表实际返回字段为 SUSPEND_START_DATE /
+ * SUSPEND_END_TIME / PREDICT_RESUME_DATE / SUSPEND_EXPIRE / SUSPEND_REASON；
+ * 历史版本或其他子接口可能使用 SUSPEND_DATE / RESUME_DATE / SUSPEND_END_DATE。
+ *
+ * 截止日优先级：
+ *   1. 明确停牌截止日（SUSPEND_END_TIME / SUSPEND_END_DATE）——证据等级最高；
+ *   2. 实际复牌日前一天（RESUME_DATE）——证据等级次之；
+ *   3. 预计复牌日前一天（PREDICT_RESUME_DATE）——证据等级最低，仅用于
+ *      尚未复牌的临时判断，provenance 中通过 source 标记其来源；
+ *   4. 上述均缺：若仍停牌，使用当前日期作为 endDate。
+ *
+ * 无法识别有效日期或 endDate < startDate 时返回 null，由调用方决定
+ * 是否升级为结构错误。
+ */
+export function parseSuspensionRow(
+  row: Record<string, unknown>,
+  symbol: string,
+  fetchedAt: string,
+): SecurityTradingInterruption | null {
+  const startDate = dateValue(
+    firstValue(row, ["SUSPEND_START_DATE", "SUSPEND_DATE"]),
+  );
+  if (!startDate) return null;
+
+  const explicitEndDate = dateValue(
+    firstValue(row, ["SUSPEND_END_TIME", "SUSPEND_END_DATE"]),
+  );
+  const resumeDate = dateValue(
+    firstValue(row, ["RESUME_DATE", "PREDICT_RESUME_DATE"]),
+  );
+  // 优先级：明确截止日 > 实际/预计复牌日前一天 > 当前日期
+  const endDate =
+    explicitEndDate ||
+    (resumeDate ? addDaysToDate(resumeDate, -1) : fetchedAt.slice(0, 10));
+
+  if (!endDate || endDate < startDate) return null;
+
+  const sourceId =
+    firstValue(row, ["NOTICE_DATE", "ANNOUNCE_DATE"]) || undefined;
+
+  return {
+    symbol,
+    startDate,
+    endDate,
+    reason: "suspension",
+    source: EASTMONEY_SUSPEND_SOURCE,
+    sourceId,
+    fetchedAt,
+  };
+}
+
+/**
+ * 把东方财富 RPT_SUSPENDDATA 原始行数组转换为 SecurityTradingInterruption 证据。
+ *
+ * 与 parseCorporateActions / parseReportedCorporateActions 一致，本函数只做
+ * 纯解析，不发网络请求，便于在适配器测试中使用真实字段 fixture 直接验证。
+ *
+ * 结构校验规则：
+ * - rawRows 为空：返回空数组（合法的"该证券无停牌记录"）；
+ * - rawRows 非空但全部行无法解析：抛结构错误，避免把"接口字段已变化"
+ *   误判为"该证券没有停牌"，从而在刷新流程中删除已有证据。
+ *
+ * 同一 symbol 的多条记录按 startDate 升序返回。
+ */
+export function parseTradingSuspensions(
+  rawRows: Array<Record<string, unknown>>,
+  symbol: string,
+  fetchedAt: string,
+): SecurityTradingInterruption[] {
+  const interruptions: SecurityTradingInterruption[] = [];
+  for (const row of rawRows) {
+    const interruption = parseSuspensionRow(row, symbol, fetchedAt);
+    if (interruption) interruptions.push(interruption);
+  }
+  if (rawRows.length > 0 && interruptions.length === 0) {
+    throw new Error(
+      `停复牌响应存在 ${rawRows.length} 行数据，但未识别到有效日期字段（可能字段命名已变化）`,
+    );
+  }
+  return interruptions.sort((a, b) =>
+    a.startDate.localeCompare(b.startDate),
+  );
+}
+
+/**
  * 从东方财富 datacenter API 获取证券停复牌历史。
  *
  * 使用 RPT_SUSPENDDATA 报表查询个股停复牌记录，自动生成
  * SecurityTradingInterruption 证据供行情完整性检查使用。
  *
- * 如果 API 返回空或失败，返回空数组——不影响主流程。
+ * 与 fetchCorporateActions 一致：
+ * - 接口明确返回空结果（success=false, code=9201, 数据为空）视为合法无记录，
+ *   返回空数组；
+ * - 接口请求失败（限流、HTTP 错误等）抛错，由调用方决定是否阻断；
+ * - 接口返回若干行但全部无法解析为有效日期，抛结构错误，避免把字段变化
+ *   误判为"该证券没有停牌"，从而在刷新流程中删除已有证据。
  */
 export async function fetchTradingSuspensions(
   symbol: string,
 ): Promise<SecurityTradingInterruption[]> {
-  const rows = await fetchEastmoneyReport(
+  const rawRows = await fetchEastmoneyReport(
     "RPT_SUSPENDDATA",
     symbol,
-    "SUSPEND_DATE",
+    "SUSPEND_START_DATE",
   );
-  const now = new Date().toISOString();
-  const interruptions: SecurityTradingInterruption[] = [];
-  for (const row of rows) {
-    const suspendDate = dateValue(row["SUSPEND_DATE"]);
-    if (!suspendDate) continue;
-    const resumeDate = dateValue(row["RESUME_DATE"]);
-    // 复牌日不在停牌区间内：endDate = 复牌日前一天
-    // 若仍停牌（无复牌日），使用当前日期作为 endDate
-    const endDate = resumeDate
-      ? addDaysToDate(resumeDate, -1)
-      : now.slice(0, 10);
-    if (endDate < suspendDate) continue;
-    interruptions.push({
-      symbol,
-      startDate: suspendDate,
-      endDate,
-      reason: "suspension",
-      source: "eastmoney_datacenter_RPT_SUSPENDDATA",
-      sourceId: textValue(row["ANNOUNCE_DATE"]) || undefined,
-      fetchedAt: now,
-    });
-  }
-  return interruptions;
+  return parseTradingSuspensions(
+    rawRows,
+    symbol,
+    new Date().toISOString(),
+  );
 }
 
 function addDaysToDate(date: string, delta: number): string {

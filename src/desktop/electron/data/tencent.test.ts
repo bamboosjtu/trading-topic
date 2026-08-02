@@ -4,12 +4,16 @@ import icbcFixture from "../../tests/fixtures/eastmoney-sharebonus-601398.json";
 import catlFixture from "../../tests/fixtures/eastmoney-sharebonus-300750.json";
 import allotmentFixture from "../../tests/fixtures/eastmoney-allotment-601916.json";
 import {
+  EASTMONEY_SUSPEND_SOURCE,
   fetchAdjustedBars,
   fetchCorporateActions,
+  fetchTradingSuspensions,
   fetchUnadjustedPrices,
   marketSymbol,
   parseCorporateActions,
   parseReportedCorporateActions,
+  parseSuspensionRow,
+  parseTradingSuspensions,
 } from "./tencent";
 
 afterEach(() => {
@@ -419,5 +423,215 @@ describe("fetchUnadjustedPrices", () => {
     await expect(
       fetchUnadjustedPrices("601398", "2022-01-01", "2024-12-31"),
     ).rejects.toThrow("2023 年存在异常缺口");
+  });
+});
+
+describe("parseSuspensionRow / parseTradingSuspensions", () => {
+  const FETCHED_AT = "2025-08-20T00:00:00Z";
+
+  it("解析东方财富真实字段 SUSPEND_START_DATE + SUSPEND_END_TIME", () => {
+    // 取自东方财富 datacenter RPT_SUSPENDDATA 报表的真实字段命名
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-04 00:00:00",
+      SUSPEND_END_TIME: "2025-08-15 15:00:00",
+      PREDICT_RESUME_DATE: "2025-08-18 00:00:00",
+      SUSPEND_EXPIRE: "2025-08-15",
+      SUSPEND_REASON: "重大事项",
+      NOTICE_DATE: "2025-08-01",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption).toEqual({
+      symbol: "601088",
+      startDate: "2025-08-04",
+      // 优先使用 SUSPEND_END_TIME，不依赖复牌日前一天推导
+      endDate: "2025-08-15",
+      reason: "suspension",
+      source: EASTMONEY_SUSPEND_SOURCE,
+      sourceId: "2025-08-01",
+      fetchedAt: FETCHED_AT,
+    });
+  });
+
+  it("仅有 SUSPEND_START_DATE + RESUME_DATE 时按复牌日前一天推导 endDate", () => {
+    // 历史字段命名或简化响应：复牌日 2025-08-18 → endDate 2025-08-17
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-04",
+      RESUME_DATE: "2025-08-18",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption?.startDate).toBe("2025-08-04");
+    expect(interruption?.endDate).toBe("2025-08-17");
+  });
+
+  it("仅有 PREDICT_RESUME_DATE 时按预计复牌日前一天推导 endDate", () => {
+    // 尚未实际复牌、仅有预计复牌日：证据等级较低但仍可用
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-04",
+      PREDICT_RESUME_DATE: "2025-08-18",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption?.endDate).toBe("2025-08-17");
+  });
+
+  it("兼容历史字段命名 SUSPEND_DATE + RESUME_DATE", () => {
+    // 旧字段命名兼容
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_DATE: "2025-08-04",
+      RESUME_DATE: "2025-08-18",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption?.startDate).toBe("2025-08-04");
+    expect(interruption?.endDate).toBe("2025-08-17");
+  });
+
+  it("仍停牌（无任何截止/复牌日）时使用当前日期作为 endDate", () => {
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-04",
+      SUSPEND_REASON: "重大事项",
+    };
+    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    expect(interruption?.startDate).toBe("2025-08-04");
+    expect(interruption?.endDate).toBe("2025-08-20");
+  });
+
+  it("缺少有效开始日时返回 null", () => {
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_END_TIME: "2025-08-15",
+    };
+    expect(parseSuspensionRow(row, "601088", FETCHED_AT)).toBeNull();
+  });
+
+  it("endDate 早于 startDate 时返回 null", () => {
+    const row = {
+      SECURITY_CODE: "601088",
+      SUSPEND_START_DATE: "2025-08-20",
+      SUSPEND_END_TIME: "2025-08-15",
+    };
+    expect(parseSuspensionRow(row, "601088", FETCHED_AT)).toBeNull();
+  });
+
+  it("parseTradingSuspensions 解析多行并按 startDate 升序返回", () => {
+    const rawRows = [
+      {
+        SECURITY_CODE: "601088",
+        SUSPEND_START_DATE: "2025-09-01",
+        SUSPEND_END_TIME: "2025-09-05",
+      },
+      {
+        SECURITY_CODE: "601088",
+        SUSPEND_START_DATE: "2025-08-04",
+        SUSPEND_END_TIME: "2025-08-15",
+      },
+    ];
+    const interruptions = parseTradingSuspensions(
+      rawRows,
+      "601088",
+      FETCHED_AT,
+    );
+    expect(interruptions).toHaveLength(2);
+    expect(interruptions[0].startDate).toBe("2025-08-04");
+    expect(interruptions[1].startDate).toBe("2025-09-01");
+  });
+
+  it("parseTradingSuspensions 原始行非空但全部无法解析时抛结构错误", () => {
+    // 字段命名已变化：接口返回了若干行，但没有一行能识别有效日期
+    const rawRows = [
+      {
+        SECURITY_CODE: "601088",
+        NEW_SUSPEND_FIELD: "2025-08-04",
+        NEW_RESUME_FIELD: "2025-08-18",
+      },
+    ];
+    expect(() =>
+      parseTradingSuspensions(rawRows, "601088", FETCHED_AT),
+    ).toThrow("未识别到有效日期字段");
+  });
+
+  it("parseTradingSuspensions 空行数组返回空数组（合法无停牌记录）", () => {
+    expect(parseTradingSuspensions([], "601088", FETCHED_AT)).toEqual([]);
+  });
+
+  it("fetchTradingSuspensions 接口明确空结果返回空数组", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: false,
+          code: 9201,
+          message: "返回数据为空",
+          result: null,
+        }),
+      }),
+    );
+    const result = await fetchTradingSuspensions("601088");
+    expect(result).toEqual([]);
+  });
+
+  it("fetchTradingSuspensions 接口返回行但字段无法解析时抛错", async () => {
+    // 接口字段已变化但响应非空，应抛错而不是返回空数组
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          message: "ok",
+          result: {
+            data: [
+              {
+                SECURITY_CODE: "601088",
+                UNKNOWN_NEW_FIELD: "2025-08-04",
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    await expect(fetchTradingSuspensions("601088")).rejects.toThrow(
+      "未识别到有效日期字段",
+    );
+  });
+
+  it("fetchTradingSuspensions 成功解析真实字段并写入 EASTMONEY_SUSPEND_SOURCE", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          code: 0,
+          message: "ok",
+          result: {
+            data: [
+              {
+                SECURITY_CODE: "601088",
+                SUSPEND_START_DATE: "2025-08-04 00:00:00",
+                SUSPEND_END_TIME: "2025-08-15 15:00:00",
+                PREDICT_RESUME_DATE: "2025-08-18 00:00:00",
+                SUSPEND_REASON: "重大事项",
+                NOTICE_DATE: "2025-08-01",
+              },
+            ],
+          },
+        }),
+      }),
+    );
+    const result = await fetchTradingSuspensions("601088");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      symbol: "601088",
+      startDate: "2025-08-04",
+      endDate: "2025-08-15",
+      reason: "suspension",
+      source: EASTMONEY_SUSPEND_SOURCE,
+    });
   });
 });

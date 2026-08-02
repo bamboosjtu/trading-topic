@@ -139,7 +139,7 @@ function assertLedgerGraph(entries: readonly LedgerEntry[]): void {
       }
       correctedTargets.add(entry.correctsEntryId);
       const target = entriesById.get(entry.correctsEntryId)!;
-      if (entry.linkedGroupId !== target.linkedGroupId) {
+      if (entry.originDividendEntryId !== target.originDividendEntryId) {
         throw new Error("备份修正流水的关联关系与原事实不一致");
       }
     }

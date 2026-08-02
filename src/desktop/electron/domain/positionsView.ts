@@ -323,9 +323,7 @@ function investmentXirr(
   }
   const projection = projectInvestmentCash(entries);
   const cashflows = [...projection.externalCashflows];
-  const endingValue = roundMoney(
-    endingStockValue + projection.pendingReinvestmentCash,
-  );
+  const endingValue = endingStockValue;
   if (endingValue > 0) {
     if (!endingDate) {
       return { value: null, status: "missing_valuation" };
@@ -374,7 +372,6 @@ export function buildPositionsOverview(
     boundary,
   );
   const state = reduceLedger(entries, model.factAsOfDate);
-  const portfolioCash = projectInvestmentCash(model.effectiveEntries);
   const names = namesMap(stocks, entries);
   const securityTypes = securityTypesMap(stocks, entries);
   const currentPositions = [...state.positions.entries()].filter(
@@ -419,17 +416,10 @@ export function buildPositionsOverview(
     const symbolEntries = model.effectiveEntries.filter(
       (entry) => entry.symbol === symbol,
     );
-    const symbolCash = projectInvestmentCash(symbolEntries);
-    const pendingReinvestmentCash =
-      symbolCash.pendingReinvestmentCashBySymbol.get(symbol) ?? 0;
-    const externalBuySpend =
-      symbolCash.externalBuySpendBySymbol.get(symbol) ?? 0;
-    const externalDividendIncome =
-      symbolCash.externalDividendIncomeBySymbol.get(symbol) ?? 0;
     const netInvestment = roundMoney(
-      externalBuySpend -
+      position.cumulativeBuySpend -
         position.cumulativeSellNetIncome -
-        externalDividendIncome,
+        position.cumulativeDividend,
     );
     const symbolXirr = investmentXirr(
       symbolEntries,
@@ -466,7 +456,6 @@ export function buildPositionsOverview(
       cumulativeBuySpend: position.cumulativeBuySpend,
       cumulativeSellNetIncome: position.cumulativeSellNetIncome,
       netInvestment,
-      pendingReinvestmentCash,
       unrealizedPnl,
       realizedPnl: position.realizedPnl,
       cumulativeDividend: position.cumulativeDividend,
@@ -534,7 +523,6 @@ export function buildPositionsOverview(
       cumulativeBuySpend: state.cumulativeBuySpend,
       cumulativeSellNetIncome: state.cumulativeSellNetIncome,
       netInvestment: state.netInvestment,
-      pendingReinvestmentCash: portfolioCash.pendingReinvestmentCash,
       unrealizedPnl,
       realizedPnl: state.realizedPnl,
       cumulativeDividend: state.cumulativeDividend,

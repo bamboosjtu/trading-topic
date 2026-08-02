@@ -25,9 +25,8 @@ interface UseInstrumentPickerArgs {
   /**
    * 是否在 AutoComplete `onChange` 时也尝试同步 `instrumentName`/`securityType`。
    *
-   * 默认 `false`，与 `DividendReinvestmentModal` 既有行为一致：只在
-   * `onSelect` 命中完整代码时才回填名称与类型，避免用户输入到一半时
-   * 触发不必要的字段覆盖。
+   * 默认 `false`：只在 `onSelect` 命中完整代码时才回填名称与类型，
+   * 避免用户输入到一半时触发不必要的字段覆盖。
    *
    * `LedgerEntryModal` 历史上同时绑定 `onSelect` 与 `onChange`，行为完全
    * 相同，因此传入 `true` 以保留原行为。
@@ -55,14 +54,12 @@ interface UseInstrumentPickerResult {
 }
 
 /**
- * 抽出 `LedgerEntryModal` 与 `DividendReinvestmentModal` 共享的"证券选择"
- * 逻辑：维护 `stockBySymbol` 索引、按 `securityType` 过滤选项、构造加载/
- * 错误/空占位、以及 `AutoComplete` 所需的 `onSelect`/`onChange`/
- * `onDropdownVisibleChange` 回调。
+ * 抽出 `LedgerEntryModal` 的"证券选择"逻辑：维护 `stockBySymbol` 索引、
+ * 按 `securityType` 过滤选项、构造加载/错误/空占位、以及 `AutoComplete`
+ * 所需的 `onSelect`/`onChange`/`onDropdownVisibleChange` 回调。
  *
  * Hook 内部调用 `Form.useWatch("securityType", form)`，因此调用方无需
- * 自行 watch；表单字段名固定为 `securityType`、`symbol`、`instrumentName`，
- * 两个 Modal 已统一使用这三个名称。
+ * 自行 watch；表单字段名固定为 `securityType`、`symbol`、`instrumentName`。
  */
 export function useInstrumentPicker({
   form,

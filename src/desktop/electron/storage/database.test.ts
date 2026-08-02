@@ -13,6 +13,7 @@ import type {
   BacktestRequest,
   BacktestResult,
   BacktestWorkspaceState,
+  SecurityTradingInterruption,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import { validateBackup } from "../domain/backupValidation";
@@ -155,7 +156,6 @@ describe("LocalDatabase", () => {
           source: "user",
           symbol: "601398",
           amount: 300,
-          linkedGroupId: "group-1",
         },
         {
           id: duplicateId,
@@ -167,7 +167,6 @@ describe("LocalDatabase", () => {
           symbol: "601398",
           price: 6,
           quantity: 60,
-          linkedGroupId: "group-1",
         },
       ]),
     ).toThrow();
@@ -1270,7 +1269,7 @@ describe("LocalDatabase", () => {
         recordedAt: "2026-07-02T01:00:01Z",
         correctedAt: "2026-07-02T01:00:00Z",
         correctsEntryId: linkedTarget.id,
-        linkedGroupId: "unexpected-group",
+        originDividendEntryId: "unexpected-group",
       },
     );
     invalidPayloads.push({
@@ -1448,5 +1447,108 @@ describe("LocalDatabase", () => {
     expect(coverage[0]?.issues?.length).toBe(1);
     expect(coverage[0]?.issues?.[0]?.severity).toBe("error");
     expect(coverage[0]?.issues?.[0]?.message).toContain("损坏");
+  });
+});
+
+describe("P1-2 停牌证据原子替换", () => {
+  const AUTO_SOURCE = "eastmoney_datacenter_RPT_SUSPENDDATA";
+  const MANUAL_SOURCE = "manual/company-announcement";
+
+  function makeInterruption(
+    symbol: string,
+    startDate: string,
+    endDate: string,
+    source: string,
+  ): SecurityTradingInterruption {
+    return {
+      symbol,
+      startDate,
+      endDate,
+      reason: "suspension",
+      source,
+      fetchedAt: "2025-08-20T00:00:00Z",
+    };
+  }
+
+  it("原子替换同源证据，异源证据保留", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "trading-interruption-replace-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "test.sqlite"));
+
+    // 初始：自动源一条（8月）+ 手工源一条（6月，不同区间避免主键冲突）
+    // 表主键为 (symbol, start_date, end_date, reason)，不含 source；
+    // 同区间同原因的记录只能存在一条，由 INSERT OR IGNORE 保留首次记录。
+    database.insertTradingInterruptions([
+      makeInterruption("601088", "2025-08-04", "2025-08-15", AUTO_SOURCE),
+      makeInterruption("601088", "2025-06-01", "2025-06-10", MANUAL_SOURCE),
+    ]);
+    expect(
+      database.listTradingInterruptionsBySymbol("601088"),
+    ).toHaveLength(2);
+
+    // 原子替换自动源为两条新记录（9月、10月，与手工6月不冲突）
+    database.replaceTradingInterruptionsBySourceAtomically("601088", AUTO_SOURCE, [
+      makeInterruption("601088", "2025-09-01", "2025-09-05", AUTO_SOURCE),
+      makeInterruption("601088", "2025-10-01", "2025-10-08", AUTO_SOURCE),
+    ]);
+
+    const result = database.listTradingInterruptionsBySymbol("601088");
+    expect(result).toHaveLength(3);
+    // 旧的自动源记录（8月）已删除，新的两条自动源记录（9月、10月）已写入
+    const autoRecords = result.filter((r) => r.source === AUTO_SOURCE);
+    expect(autoRecords.map((r) => r.startDate).sort()).toEqual([
+      "2025-09-01",
+      "2025-10-01",
+    ]);
+    // 手工源记录（6月）保留
+    const manualRecords = result.filter((r) => r.source === MANUAL_SOURCE);
+    expect(manualRecords).toHaveLength(1);
+    expect(manualRecords[0].startDate).toBe("2025-06-01");
+  });
+
+  it("空数组原子替换等价于清空同源证据", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "trading-interruption-empty-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "test.sqlite"));
+
+    database.insertTradingInterruptions([
+      makeInterruption("601088", "2025-08-04", "2025-08-15", AUTO_SOURCE),
+    ]);
+    expect(database.listTradingInterruptionsBySymbol("601088")).toHaveLength(1);
+
+    // 自动获取确认该证券无停牌记录：原子清空同源旧证据
+    database.replaceTradingInterruptionsBySourceAtomically(
+      "601088",
+      AUTO_SOURCE,
+      [],
+    );
+    expect(database.listTradingInterruptionsBySymbol("601088")).toHaveLength(0);
+  });
+
+  it("listTradingInterruptionsInRange 按请求区间裁剪证据", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "trading-interruption-range-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "test.sqlite"));
+
+    database.insertTradingInterruptions([
+      makeInterruption("601088", "2025-06-01", "2025-06-10", AUTO_SOURCE),
+      makeInterruption("601088", "2025-08-04", "2025-08-15", AUTO_SOURCE),
+      makeInterruption("601088", "2025-12-01", "2025-12-05", AUTO_SOURCE),
+    ]);
+
+    // 请求区间 [2025-08-01, 2025-08-31] 只应匹配 8 月那一条
+    const inRange = database.listTradingInterruptionsInRange(
+      "601088",
+      "2025-08-01",
+      "2025-08-31",
+    );
+    expect(inRange).toHaveLength(1);
+    expect(inRange[0].startDate).toBe("2025-08-04");
   });
 });

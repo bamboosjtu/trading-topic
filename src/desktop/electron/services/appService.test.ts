@@ -683,145 +683,6 @@ describe("AppService 回测试验", () => {
 });
 
 describe("AppService 实盘流水", () => {
-  it("分红并再投入在一个事务中写入两条可独立审计且有关联的事实", async () => {
-    const { service, database } = await serviceWithDatabase();
-
-    const result = service.addDividendReinvestment({
-      symbol: "601398",
-      securityType: "stock",
-      instrumentName: "工商银行",
-      dividendDate: "2026-07-10",
-      dividendAmount: 300,
-      reinvestmentDate: "2026-07-13",
-      buyPrice: 6,
-      buyQuantity: 60,
-      fee: 1,
-    });
-
-    expect(database.listLedger()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: result.dividend.id,
-          type: "dividend",
-          amount: 300,
-          linkedGroupId: result.linkedGroupId,
-        }),
-        expect.objectContaining({
-          id: result.buy.id,
-          type: "buy",
-          quantity: 60,
-          linkedGroupId: result.linkedGroupId,
-        }),
-      ]),
-    );
-    expect(service.getPositionsOverview().metrics).toMatchObject({
-      cumulativeDividend: 300,
-      cumulativeBuySpend: 361,
-      netInvestment: 61,
-    });
-    expect(service.getLedgerRecord(result.dividend.id)).toMatchObject({
-      linkedOperation: "dividend_reinvestment",
-      linkedRecords: [
-        {
-          id: result.buy.id,
-          type: "buy",
-          businessDate: "2026-07-13",
-        },
-      ],
-    });
-
-    const replacement = service.correctLedger(result.buy.id, {
-      type: "buy",
-      businessDate: "2026-07-13",
-      symbol: "601398",
-      instrumentName: "工商银行",
-      securityType: "stock",
-      price: 5.9,
-      quantity: 60,
-      fee: 1,
-    });
-    expect(replacement.linkedGroupId).toBe(result.linkedGroupId);
-
-    expect(() =>
-      service.correctLedger(replacement.id, {
-        type: "buy",
-        businessDate: "2026-07-13",
-        symbol: "601398",
-        securityType: "stock",
-        price: 5.9,
-        quantity: 60,
-        fee: 1,
-        linkedGroupId: "another-group",
-      }),
-    ).toThrow("不能改入其他分红再投入组");
-    expect(() =>
-      service.correctLedger(replacement.id, {
-        type: "buy",
-        businessDate: "2026-07-09",
-        symbol: "601398",
-        securityType: "stock",
-        price: 5.9,
-        quantity: 60,
-        fee: 1,
-      }),
-    ).toThrow("买入日期不得早于分红到账日期");
-    expect(() =>
-      service.correctLedger(result.dividend.id, {
-        type: "dividend",
-        businessDate: "2026-07-10",
-        symbol: "510300",
-        securityType: "etf",
-        amount: 300,
-      }),
-    ).toThrow("必须使用同一标的和资产类型");
-    expect(() =>
-      service.correctLedger(replacement.id, {
-        type: "dividend",
-        businessDate: "2026-07-13",
-        symbol: "601398",
-        securityType: "stock",
-        amount: 300,
-      }),
-    ).toThrow("最多只能有一个有效分红事实");
-  });
-
-  it("分红并再投入在领域层拒绝倒序日期，并返回两条事实的合并影响预览", async () => {
-    const { service, database } = await serviceWithDatabase();
-    expect(() =>
-      service.previewDividendReinvestment({
-        symbol: "601398",
-        securityType: "stock",
-        dividendDate: "2026-07-14",
-        dividendAmount: 300,
-        reinvestmentDate: "2026-07-13",
-        buyPrice: 5,
-        buyQuantity: 60,
-      }),
-    ).toThrow("再投入日期不得早于分红到账日期");
-    const preview = service.previewDividendReinvestment({
-      symbol: "601398",
-      securityType: "stock",
-      dividendDate: "2026-07-10",
-      dividendAmount: 300,
-      reinvestmentDate: "2026-07-13",
-      buyPrice: 5,
-      buyQuantity: 60,
-      fee: 1,
-    });
-    expect(preview.before).toMatchObject({
-      holdingQuantity: 0,
-      cumulativeDividend: 0,
-      cumulativeBuySpend: 0,
-    });
-    expect(preview.after).toMatchObject({
-      holdingQuantity: 60,
-      cumulativeDividend: 300,
-      cumulativeBuySpend: 301,
-      netInvestment: 1,
-    });
-    expect(database.listLedger()).toEqual([]);
-  });
-
   it("追加修正原子保留原记录、冲正记录与修正后记录", async () => {
     const { service, database } = await serviceWithDatabase();
     const original = service.addLedger({
@@ -1825,12 +1686,12 @@ describe("AppService 分红候选确认与发现", () => {
     });
 
     // P1：业务日期应为实际到账日，而非除权日
-    expect(result.dividend.businessDate).toBe("2026-07-20");
-    expect(result.dividend.type).toBe("dividend");
+    expect(result.businessDate).toBe("2026-07-20");
+    expect(result.type).toBe("dividend");
     // P1：候选状态在同一事务中更新为 confirmed
     const pending = database.getPendingDividend("pending-1");
     expect(pending?.status).toBe("confirmed");
-    expect(pending?.linkedEntryId).toBe(result.dividend.id);
+    expect(pending?.linkedEntryId).toBe(result.id);
   });
 
   it("确认分红时候选已公告到账日则直接使用 paymentDate", async () => {
@@ -1852,7 +1713,7 @@ describe("AppService 分红候选确认与发现", () => {
       actualAmount: 20,
     });
 
-    expect(result.dividend.businessDate).toBe("2026-07-18");
+    expect(result.businessDate).toBe("2026-07-18");
   });
 
   it("发现分红时报告失败的标的并继续检查其他标的", async () => {

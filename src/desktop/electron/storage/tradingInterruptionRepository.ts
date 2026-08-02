@@ -201,3 +201,52 @@ export function deleteTradingInterruptionsBySymbolAndSource(
     )
     .run(symbol, source);
 }
+
+/**
+ * 原子替换指定 symbol + source 的全部停复牌证据。
+ *
+ * P1-2：自动获取流程必须使用本函数，而不是先 delete 再 insert 的两步操作。
+ * 旧实现"先删除再写入"会在解析失败、网络抖动等情况下删除已有证据却不写入
+ * 新数据，让一个原本可运行的历史回测在刷新后突然失败。
+ *
+ * 本函数把 delete + insert 包在同一事务里：
+ * - 任一步失败时整体回滚，已有证据保留；
+ * - 调用方应先完成 fetch + parse + 结构校验，确认拿到的是有效新证据
+ *   后再调用本函数。
+ *
+ * 注意：rows 为空数组时仍会执行 delete + 0 行 insert，等价于"清空该源
+ * 证据"。调用方在 rows 为空时应根据业务语义决定是否调用本函数——
+ * 自动获取流程中，rows 为空通常意味着"该证券确实没有停牌记录"，
+ * 此时清空旧同源证据是合法的；但若 rows 为空来自解析失败，
+ * 调用方应已抛错，不会进入本函数。
+ */
+export function replaceTradingInterruptionsBySourceAtomically(
+  database: BetterSqlite3.Database,
+  symbol: string,
+  source: string,
+  rows: readonly SecurityTradingInterruption[],
+): void {
+  const deleteStmt = database.prepare(
+    `DELETE FROM security_trading_interruptions
+      WHERE symbol = ? AND source = ?`,
+  );
+  const insertStmt = database.prepare(
+    `INSERT OR IGNORE INTO security_trading_interruptions(
+         symbol, start_date, end_date, reason, source, source_id, fetched_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  database.transaction(() => {
+    deleteStmt.run(symbol, source);
+    for (const item of rows) {
+      insertStmt.run(
+        item.symbol,
+        item.startDate,
+        item.endDate,
+        item.reason,
+        item.source,
+        item.sourceId ?? null,
+        item.fetchedAt,
+      );
+    }
+  })();
+}

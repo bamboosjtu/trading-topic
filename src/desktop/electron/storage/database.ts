@@ -66,6 +66,7 @@ import {
   listTradingInterruptions as listTradingInterruptionsFrom,
   listTradingInterruptionsBySymbol as listTradingInterruptionsBySymbolFrom,
   listTradingInterruptionsInRange as listTradingInterruptionsInRangeFrom,
+  replaceTradingInterruptionsBySourceAtomically as replaceTradingInterruptionsBySourceAtomicallyFrom,
 } from "./tradingInterruptionRepository";
 import {
   exportBackup as exportBackupFrom,
@@ -359,13 +360,12 @@ export class LocalDatabase {
 
   /**
    * P1：原子地确认待确认分红。
-   * 把插入 dividend/buy 流水和更新 pending_dividends 状态放进同一事务，
+   * 把插入 dividend 流水和更新 pending_dividends 状态放进同一事务，
    * 任一步失败时整体回滚。
    */
   confirmPendingDividendAtomically(params: {
     pendingId: string;
     dividendEntry: LedgerEntry;
-    buyEntry?: LedgerEntry;
     actualAmount: number;
   }): void {
     confirmPendingDividendAtomicallyFrom(this.database, params);
@@ -453,6 +453,26 @@ export class LocalDatabase {
       this.database,
       symbol,
       source,
+    );
+  }
+
+  /**
+   * P1-2：原子替换指定 symbol + source 的全部停复牌证据。
+   *
+   * 自动获取流程必须使用本方法，而不是先 delete 再 insert 的两步操作，
+   * 避免在解析失败或网络抖动时删除已有证据却不写入新数据。
+   * 调用方应先完成 fetch + parse + 结构校验后再调用本方法。
+   */
+  replaceTradingInterruptionsBySourceAtomically(
+    symbol: string,
+    source: string,
+    interruptions: readonly SecurityTradingInterruption[],
+  ): void {
+    replaceTradingInterruptionsBySourceAtomicallyFrom(
+      this.database,
+      symbol,
+      source,
+      interruptions,
     );
   }
 

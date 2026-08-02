@@ -24,9 +24,6 @@ import type {
   MarketRefreshResult,
   PositionsOverview,
   StockInfo,
-  DividendReinvestmentInput,
-  DividendReinvestmentPreview,
-  DividendReinvestmentResult,
   LedgerRecordView,
   StoredMarketCoverage,
 } from "../../shared/contracts";
@@ -44,6 +41,7 @@ import {
   fetchDomesticEtfUniverse,
 } from "../data/stockUniverse";
 import {
+  EASTMONEY_SUSPEND_SOURCE,
   fetchCorporateActions,
   fetchTradingSuspensions,
 } from "../data/tencent";
@@ -59,7 +57,6 @@ import {
 import { discoverPendingDividends } from "../domain/dividendDiscovery";
 import {
   assertLedgerReversal,
-  normalizeLedgerInput,
   previewLedgerMutation,
 } from "../domain/ledgerCommands";
 import { buildPositionsOverview } from "../domain/positionsView";
@@ -954,34 +951,45 @@ export class AppService {
   /**
    * 自动获取并存储证券级停复牌证据。
    *
-   * 对每个 symbol 调用东方财富 API 获取停复牌历史，清除同源旧数据后
-   * 写入新证据。API 失败时记录日志并跳过该 symbol，不影响其他标的
-   * 或主流程。
+   * P1-2：刷新顺序修正为"先 fetch+parse+结构校验，再原子替换"。
+   * 旧实现"先 delete 再 insert"会在解析失败、字段变化、网络抖动等情况下
+   * 删除已有证据却不写入新数据，让一个原本可运行的历史回测在刷新后
+   * 突然失败。
+   *
+   * 当前实现：
+   * 1. fetchTradingSuspensions 内部已完成 fetch + parse + 结构校验
+   *    （rawRows 非空但零行解析成功时抛错，不会返回空数组）；
+   * 2. 拿到 interruptions 后调用 replaceTradingInterruptionsBySourceAtomically
+   *    在同一事务内 delete + insert，任一步失败整体回滚，旧证据保留；
+   * 3. interruptions 为空数组属于合法的"该证券无停牌记录"，仍会原子清空
+   *    同源旧证据。
+   *
+   * API 失败或结构错误时记录 warn 日志并跳过该 symbol，不阻断行情刷新
+   * 主流程——完整性检查会按"无停牌证据"处理。但已存在的旧证据保留，
+   * 不会被清空。
    */
   async refreshTradingInterruptions(
     symbols: readonly string[],
   ): Promise<void> {
-    const AUTO_SOURCE = "eastmoney_datacenter_RPT_SUSPENDDATA";
     for (const symbol of symbols) {
       try {
         const interruptions = await fetchTradingSuspensions(symbol);
-        // 清除同源旧数据，避免 endDate 变化后残留过时记录
-        this.database.deleteTradingInterruptionsBySymbolAndSource(
+        // 原子替换：fetch+parse 成功后才进入此事务；任一步失败整体回滚
+        this.database.replaceTradingInterruptionsBySourceAtomically(
           symbol,
-          AUTO_SOURCE,
+          EASTMONEY_SUSPEND_SOURCE,
+          interruptions,
         );
-        if (interruptions.length) {
-          this.database.insertTradingInterruptions(interruptions);
-          this.database.log(
-            "info",
-            `自动获取停牌证据：${symbol} ${interruptions.length} 条`,
-          );
-        }
+        this.database.log(
+          "info",
+          `自动获取停牌证据：${symbol} ${interruptions.length} 条`,
+        );
       } catch (error) {
         // 停牌证据获取失败不阻断行情刷新——完整性检查会按"无停牌证据"处理
+        // 旧的同源证据保留（未进入原子替换事务），不会被清空
         this.database.log(
           "warn",
-          `停牌证据获取失败(${symbol})：${error instanceof Error ? error.message : String(error)}`,
+          `停牌证据获取失败(${symbol})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -1233,9 +1241,6 @@ export class AppService {
   }
 
   addLedger(input: LedgerEntryInput): LedgerEntry {
-    if (input.linkedGroupId) {
-      throw new Error("普通单条录入不能加入分红再投入关联组");
-    }
     const preview = this.previewLedger(input);
     const entry: LedgerEntry = {
       ...preview.normalizedInput,
@@ -1247,98 +1252,6 @@ export class AppService {
     this.database.addLedger(entry);
     this.database.log("info", `新增流水：${entry.type} ${entry.businessDate}`);
     return entry;
-  }
-
-  addDividendReinvestment(
-    input: DividendReinvestmentInput,
-  ): DividendReinvestmentResult {
-    const preview = this.previewDividendReinvestment(input);
-    const linkedGroupId = randomUUID();
-    const recordedAt = new Date().toISOString();
-    const dividend: LedgerEntry = {
-      ...preview.dividend.normalizedInput,
-      linkedGroupId,
-      id: randomUUID(),
-      recordedAt,
-      currency: "CNY",
-      source: "user",
-    };
-    const buy: LedgerEntry = {
-      ...preview.buy.normalizedInput,
-      linkedGroupId,
-      id: randomUUID(),
-      recordedAt: new Date(Date.parse(recordedAt) + 1).toISOString(),
-      currency: "CNY",
-      source: "user",
-    };
-    // 同一 SQLite 事务提交；任一事实写入失败时整体回滚。
-    this.database.addLedgerEntries([dividend, buy]);
-    this.database.log(
-      "info",
-      `新增分红并再投入：${input.symbol}`,
-    );
-    return { linkedGroupId, dividend, buy };
-  }
-
-  previewDividendReinvestment(
-    input: DividendReinvestmentInput,
-  ): DividendReinvestmentPreview {
-    if (input.reinvestmentDate < input.dividendDate) {
-      throw new Error("再投入日期不得早于分红到账日期");
-    }
-    const entries = this.database.listLedger();
-    const marketDate = currentMarketDate();
-    const common = {
-      symbol: input.symbol,
-      instrumentName: input.instrumentName,
-      securityType: input.securityType,
-      note: input.note,
-      linkedGroupId: "__preview_reinvestment__",
-    };
-    const dividend = previewLedgerMutation(
-      entries,
-      normalizeLedgerInput(
-        {
-          ...common,
-          type: "dividend",
-          businessDate: input.dividendDate,
-          amount: input.dividendAmount,
-          perShare: input.perShare,
-          recordDate: input.recordDate,
-        },
-        marketDate,
-      ),
-      undefined,
-      marketDate,
-    );
-    const previewDividendEntry: LedgerEntry = {
-      ...dividend.normalizedInput,
-      id: "__preview_dividend__",
-      recordedAt: "9999-12-31T23:59:59.998Z",
-      currency: "CNY",
-      source: "system",
-    };
-    const buy = previewLedgerMutation(
-      [...entries, previewDividendEntry],
-      {
-        ...common,
-        type: "buy",
-        businessDate: input.reinvestmentDate,
-        price: input.buyPrice,
-        quantity: input.buyQuantity,
-        fee: input.fee,
-      },
-      undefined,
-      marketDate,
-      this.tradeDateContext(input.symbol),
-    );
-    return {
-      dividend,
-      buy,
-      before: dividend.before,
-      after: buy.after,
-      warnings: [...dividend.warnings, ...buy.warnings],
-    };
   }
 
   previewLedger(
@@ -1385,9 +1298,8 @@ export class AppService {
       currency: "CNY",
       source: "user",
       correctsEntryId: entryId,
-      linkedGroupId: preview.normalizedInput.linkedGroupId,
     };
-    // 最终随机 ID 与时间戳写入前再次验证完整审计图和关联组，
+    // 最终随机 ID 与时间戳写入前再次验证完整审计图，
     // 避免预览对象与实际持久化对象之间出现口径漂移。
     reduceLedger([...entries, reversal, replacement], currentMarketDate());
     this.database.addLedgerEntries([reversal, replacement]);
@@ -1530,7 +1442,7 @@ export class AppService {
   confirmPendingDividend(
     id: string,
     input: ConfirmPendingDividendInput,
-  ): { dividend: LedgerEntry; buy?: LedgerEntry } {
+  ): LedgerEntry {
     const pending = this.database.getPendingDividend(id);
     if (!pending) throw new Error("待确认分红不存在");
     if (pending.status !== "pending") {
@@ -1548,55 +1460,6 @@ export class AppService {
 
     const amount = input.actualAmount ?? pending.expectedAmount;
 
-    if (input.reinvest) {
-      // P1：用 preview 构建事实对象（不持久化），再用原子事务写入。
-      // 这样 dividend + buy + pending_dividends.status 更新在同一 SQLite 事务中。
-      const preview = this.previewDividendReinvestment({
-        symbol: pending.symbol,
-        instrumentName: pending.instrumentName,
-        securityType: pending.securityType,
-        dividendDate,
-        dividendAmount: amount,
-        perShare: pending.perShare,
-        recordDate: pending.recordDate,
-        reinvestmentDate: input.reinvest.reinvestmentDate,
-        buyPrice: input.reinvest.buyPrice,
-        buyQuantity: input.reinvest.buyQuantity,
-        fee: input.reinvest.fee,
-        note: "来源：公司行动数据推算（确认到账并再投入）",
-      });
-      const linkedGroupId = randomUUID();
-      const recordedAt = new Date().toISOString();
-      const dividend: LedgerEntry = {
-        ...preview.dividend.normalizedInput,
-        linkedGroupId,
-        id: randomUUID(),
-        recordedAt,
-        currency: "CNY",
-        source: "user",
-      };
-      const buy: LedgerEntry = {
-        ...preview.buy.normalizedInput,
-        linkedGroupId,
-        id: randomUUID(),
-        recordedAt: new Date(Date.parse(recordedAt) + 1).toISOString(),
-        currency: "CNY",
-        source: "user",
-      };
-      this.database.confirmPendingDividendAtomically({
-        pendingId: id,
-        dividendEntry: dividend,
-        buyEntry: buy,
-        actualAmount: amount,
-      });
-      this.database.log(
-        "info",
-        `确认分红并再投入：${pending.symbol} ${dividendDate}`,
-      );
-      return { dividend, buy };
-    }
-
-    // 仅确认到账，不再投入
     const preview = this.previewLedger({
       type: "dividend",
       businessDate: dividendDate,
@@ -1624,7 +1487,7 @@ export class AppService {
       "info",
       `确认分红到账：${pending.symbol} ${dividendDate}`,
     );
-    return { dividend: dividendEntry };
+    return dividendEntry;
   }
 
   /** 忽略待确认分红 */

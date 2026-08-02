@@ -749,4 +749,66 @@ describe("P1 证券级停复牌证据", () => {
     expect(errors.length).toBeGreaterThan(0);
     expect(errors.some((e) => e.date === "2026-07-06")).toBe(true);
   });
+
+  it("P1-5 连续缺口日期合并为单条区间 error，而非逐日输出", async () => {
+    // 模拟 2026-07-06 至 2026-07-10 连续 5 个交易日缺失（无停牌证据）
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    // 5 个连续缺失日应合并为 1 条 error，而不是 5 条
+    expect(errors).toHaveLength(1);
+    // date 字段为区间起点，便于 hasErrorInRequestRange 过滤
+    expect(errors[0].date).toBe("2026-07-06");
+    // 消息应包含起止区间和数量
+    expect(errors[0].message).toContain("2026-07-06");
+    expect(errors[0].message).toContain("2026-07-10");
+    expect(errors[0].message).toContain("5");
+  });
+
+  it("P1-5 不连续的缺口分别生成独立 error", async () => {
+    // 模拟两段独立缺口：07-06～07-07 和 07-13～07-14
+    const rows = JULY_2026_WEEKDAYS
+      .filter(
+        (d) =>
+          (d < "2026-07-06" || d > "2026-07-07") &&
+          (d < "2026-07-13" || d > "2026-07-14"),
+      )
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    // 两段独立缺口应生成 2 条 error
+    expect(errors).toHaveLength(2);
+    expect(errors.map((e) => e.date).sort()).toEqual([
+      "2026-07-06",
+      "2026-07-13",
+    ]);
+  });
 });

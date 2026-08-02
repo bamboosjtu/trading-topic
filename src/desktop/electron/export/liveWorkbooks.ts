@@ -30,7 +30,6 @@ export async function buildPositionsWorkbook(
     { header: "累计买入支出", key: "cumulativeBuySpend", width: 18 },
     { header: "累计卖出净收入", key: "cumulativeSellNetIncome", width: 18 },
     { header: "累计净投入", key: "netInvestment", width: 16 },
-    { header: "待再投入分红", key: "pendingReinvestmentCash", width: 18 },
     { header: "未实现收益", key: "unrealizedPnl", width: 16 },
     { header: "已实现盈亏", key: "realizedPnl", width: 16 },
     { header: "累计分红", key: "cumulativeDividend", width: 16 },
@@ -53,7 +52,6 @@ export async function buildPositionsWorkbook(
     "cumulativeBuySpend",
     "cumulativeSellNetIncome",
     "netInvestment",
-    "pendingReinvestmentCash",
     "cumulativeDividend",
   ]) {
     sheet.getColumn(key).numFmt = MONEY_NEUTRAL_NUM_FMT;
@@ -161,7 +159,6 @@ export async function buildLedgerWorkbook(
     { header: "登记日", key: "recordDate", width: 14 },
     { header: "录入时间", key: "recordedAt", width: 26 },
     { header: "修正时间", key: "correctedAt", width: 26 },
-    { header: "关联操作", key: "linkedOperation", width: 20 },
     { header: "关联记录", key: "linkedRecords", width: 32 },
   ];
   for (const row of result.rows) {
@@ -175,10 +172,6 @@ export async function buildLedgerWorkbook(
             : null,
       isReversed: row.isReversed ? "是" : "否",
       isCorrection: row.correctsEntryId ? "是" : "否",
-      linkedOperation:
-        row.linkedOperation === "dividend_reinvestment"
-          ? "分红并再投入"
-          : null,
       linkedRecords: row.linkedRecords
         .map(
           (linked) =>

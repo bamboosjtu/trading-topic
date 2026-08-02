@@ -190,12 +190,11 @@ export function updatePendingDividendStatus(
 /**
  * P1：原子地确认待确认分红。
  *
- * 把"插入 dividend 流水（可选插入 buy 流水）+ 更新 pending_dividends 状态"
+ * 把"插入 dividend 流水 + 更新 pending_dividends 状态"
  * 放进同一个 SQLite 事务。任一步失败时整体回滚，避免出现
  * "正式分红流水已生成但候选仍 pending，用户再次确认后重复记账"的不一致。
  *
  * @param dividendEntry 已通过 preview 校验、且填好 id/recordedAt 的正式分红流水
- * @param buyEntry      可选：再投入买入流水；不传则只写 dividend
  * @param actualAmount  用户确认的实际到账金额
  */
 export function confirmPendingDividendAtomically(
@@ -203,7 +202,6 @@ export function confirmPendingDividendAtomically(
   params: {
     pendingId: string;
     dividendEntry: LedgerEntry;
-    buyEntry?: LedgerEntry;
     actualAmount: number;
   },
 ): void {
@@ -225,15 +223,6 @@ export function confirmPendingDividendAtomically(
       params.dividendEntry.type,
       JSON.stringify(params.dividendEntry),
     );
-    if (params.buyEntry) {
-      insertLedger.run(
-        params.buyEntry.id,
-        params.buyEntry.businessDate,
-        params.buyEntry.recordedAt,
-        params.buyEntry.type,
-        JSON.stringify(params.buyEntry),
-      );
-    }
     const result = updatePending.run(
       params.actualAmount,
       params.dividendEntry.id,

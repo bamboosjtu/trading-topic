@@ -29,7 +29,7 @@ import {
 import { DIRECT_ENTRY_TYPE_OPTIONS } from "./liveConstants";
 import { money, numberValue } from "./liveFormat";
 
-interface LedgerFormValues {
+export interface LedgerFormValues {
   type: Exclude<EntryType, "adjustment">;
   businessDate: Dayjs;
   securityType?: SecurityType;
@@ -61,7 +61,7 @@ function rowToForm(row: LedgerRecordView): Partial<LedgerFormValues> {
   };
 }
 
-function toLedgerInput(values: LedgerFormValues): LedgerEntryInput {
+function toLedgerInput(values: LedgerFormValues, originDividendEntryId?: string): LedgerEntryInput {
   return {
     type: values.type,
     businessDate: values.businessDate.format("YYYY-MM-DD"),
@@ -75,6 +75,7 @@ function toLedgerInput(values: LedgerFormValues): LedgerEntryInput {
     perShare: values.perShare,
     recordDate: values.recordDate?.format("YYYY-MM-DD"),
     note: values.note?.trim(),
+    originDividendEntryId,
   };
 }
 
@@ -108,6 +109,8 @@ export function LedgerEntryModal({
   onRetryCatalog,
   onClose,
   onSaved,
+  prefill,
+  originDividendEntryId,
 }: {
   open: boolean;
   correctionTarget: LedgerRecordView | null;
@@ -116,6 +119,8 @@ export function LedgerEntryModal({
   onRetryCatalog: (type: SecurityType) => void;
   onClose: () => void;
   onSaved: () => void;
+  prefill?: Partial<LedgerFormValues>;
+  originDividendEntryId?: string;
 }) {
   const { message } = App.useApp();
   const [form] = Form.useForm<LedgerFormValues>();
@@ -146,13 +151,14 @@ export function LedgerEntryModal({
             businessDate: dayjs(currentMarketDate()),
             securityType: "stock",
             fee: 0,
+            ...prefill,
           },
     );
-  }, [correctionTarget, form, open]);
+  }, [correctionTarget, form, open, prefill]);
 
   const readInput = async (): Promise<LedgerEntryInput> => {
     const values = await form.validateFields();
-    return toLedgerInput(values);
+    return toLedgerInput(values, originDividendEntryId);
   };
 
   const runPreview = async (): Promise<LedgerImpactPreview | null> => {

@@ -258,7 +258,6 @@ describe("投资收益视图", () => {
       cumulativeBuySpend: 500,
       cumulativeDividend: 100,
       netInvestment: 400,
-      pendingReinvestmentCash: 0,
       marketValue: null,
       totalReturn: null,
       xirr: null,
@@ -308,7 +307,7 @@ describe("投资收益视图", () => {
     );
   });
 
-  it("收盘前录入关联分红时保留待再投入现金，但不把它放入昨日的 XIRR 期末资产", () => {
+  it("收盘前录入分红时保留账本累计值，但正式估值与 XIRR 暂不可计算", () => {
     const overview = buildPositionsOverview(
       [
         entry("buy", "buy", "2026-01-02", {
@@ -316,10 +315,9 @@ describe("投资收益视图", () => {
           price: 5,
           quantity: 100,
         }),
-        entry("linked-dividend-today", "dividend", "2026-07-28", {
+        entry("dividend-today", "dividend", "2026-07-28", {
           symbol: "601398",
           amount: 100,
-          linkedGroupId: "pending-after-cutoff",
         }),
       ],
       [
@@ -335,8 +333,7 @@ describe("投资收益视图", () => {
 
     expect(overview.metrics).toMatchObject({
       cumulativeDividend: 100,
-      netInvestment: 500,
-      pendingReinvestmentCash: 100,
+      netInvestment: 400,
       marketValue: null,
       totalReturn: null,
       xirr: null,
@@ -643,7 +640,7 @@ describe("投资收益视图", () => {
     expect(view.quality.status).toBe("stale");
   });
 
-  it("同日分红再投入不重复增加收益率资本基数", () => {
+  it("同日分红后买入全部计入外部资本基数", () => {
     const entries = [
       entry("opening", "buy", "2026-06-30", {
         symbol: "601398",
@@ -653,13 +650,12 @@ describe("投资收益视图", () => {
       entry("dividend", "dividend", "2026-07-01", {
         symbol: "601398",
         amount: 100,
-        linkedGroupId: "reinvest-1",
       }),
       entry("reinvest", "buy", "2026-07-01", {
         symbol: "601398",
         price: 10,
         quantity: 10,
-        linkedGroupId: "reinvest-1",
+        originDividendEntryId: "dividend",
       }),
     ];
     const day = dailyAttribution(
@@ -670,152 +666,8 @@ describe("投资收益视图", () => {
       ],
       "2026-07-01",
     ).at(-1)!;
-    expect(day.capitalBase).toBe(1_000);
-    expect(day.returnRate).toBe(0.1);
-  });
-
-  it("分红次日再投入仍识别为内部资金循环", () => {
-    const entries = [
-      entry("opening", "buy", "2026-06-30", {
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-      }),
-      entry("dividend", "dividend", "2026-07-01", {
-        symbol: "601398",
-        amount: 100,
-        linkedGroupId: "reinvest-next-day",
-      }),
-      entry("reinvest", "buy", "2026-07-02", {
-        symbol: "601398",
-        price: 10,
-        quantity: 10,
-        linkedGroupId: "reinvest-next-day",
-      }),
-    ];
-    const day = dailyAttribution(
-      entries,
-      [
-        price("601398", "2026-06-30", 10),
-        price("601398", "2026-07-01", 10),
-        price("601398", "2026-07-02", 10),
-      ],
-      "2026-07-02",
-    ).at(-1)!;
-    expect(day.date).toBe("2026-07-02");
     expect(day.capitalBase).toBe(1_100);
-  });
-
-  it("跨日再投入等待期间的分红现金持续进入资本基数", () => {
-    const entries = [
-      entry("opening", "buy", "2026-06-30", {
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-      }),
-      entry("dividend", "dividend", "2026-07-01", {
-        symbol: "601398",
-        amount: 100,
-        linkedGroupId: "reinvest-price-change",
-      }),
-      entry("reinvest", "buy", "2026-07-02", {
-        symbol: "601398",
-        price: 11,
-        quantity: 9,
-        linkedGroupId: "reinvest-price-change",
-      }),
-    ];
-    const days = dailyAttribution(
-      entries,
-      [
-        price("601398", "2026-06-30", 10),
-        price("601398", "2026-07-01", 10),
-        price("601398", "2026-07-02", 11),
-      ],
-      "2026-07-02",
-    );
-    const dividendDay = days.find((day) => day.date === "2026-07-01")!;
-    const reinvestmentDay = days.find((day) => day.date === "2026-07-02")!;
-
-    expect(dividendDay.returnRate).toBeCloseTo(0.1, 12);
-    expect(reinvestmentDay.marketPricePnl).toBe(100);
-    expect(reinvestmentDay.capitalBase).toBe(1_100);
-    expect(reinvestmentDay.returnRate).toBeCloseTo(100 / 1_100, 12);
-    expect(
-      days.reduce(
-        (result, day) =>
-          day.returnRate === null ? result : result * (1 + day.returnRate),
-        1,
-      ) - 1,
-    ).toBeCloseTo(0.2, 12);
-  });
-
-  it("部分再投入后未使用分红现金继续跨日进入资本基数", () => {
-    const entries = [
-      entry("opening", "buy", "2026-06-30", {
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-      }),
-      entry("dividend", "dividend", "2026-07-01", {
-        symbol: "601398",
-        amount: 100,
-        linkedGroupId: "reinvest-partial",
-      }),
-      entry("partial-buy", "buy", "2026-07-02", {
-        symbol: "601398",
-        price: 10,
-        quantity: 6,
-        linkedGroupId: "reinvest-partial",
-      }),
-    ];
-    const days = dailyAttribution(
-      entries,
-      [
-        price("601398", "2026-06-30", 10),
-        price("601398", "2026-07-01", 10),
-        price("601398", "2026-07-02", 10),
-        price("601398", "2026-07-03", 11),
-      ],
-      "2026-07-03",
-    );
-
-    expect(days.find((day) => day.date === "2026-07-02")!.capitalBase).toBe(
-      1_100,
-    );
-    expect(days.find((day) => day.date === "2026-07-03")!.capitalBase).toBe(
-      1_100,
-    );
-  });
-
-  it("再投入支出超过分红时只把补足零钱计入外部投入", () => {
-    const entries = [
-      entry("opening", "buy", "2026-06-30", {
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-      }),
-      entry("dividend", "dividend", "2026-07-01", {
-        symbol: "601398",
-        amount: 100,
-        linkedGroupId: "reinvest-extra",
-      }),
-      entry("reinvest", "buy", "2026-07-01", {
-        symbol: "601398",
-        price: 10,
-        quantity: 12,
-        linkedGroupId: "reinvest-extra",
-      }),
-    ];
-    const day = dailyAttribution(
-      entries,
-      [
-        price("601398", "2026-06-30", 10),
-        price("601398", "2026-07-01", 10),
-      ],
-      "2026-07-01",
-    ).at(-1)!;
-    expect(day.capitalBase).toBe(1_020);
+    expect(day.returnRate).toBeCloseTo(100 / 1_100, 12);
   });
 
   it("普通独立买入仍全部计入外部投入", () => {
@@ -840,64 +692,6 @@ describe("投资收益视图", () => {
       "2026-07-01",
     ).at(-1)!;
     expect(day.capitalBase).toBe(1_100);
-  });
-
-  it("冲正或修正关联事实后按当前有效版本重算内部再投入", () => {
-    const base = [
-      entry("opening", "buy", "2026-06-30", {
-        symbol: "601398",
-        price: 10,
-        quantity: 100,
-      }),
-      entry("dividend", "dividend", "2026-07-01", {
-        symbol: "601398",
-        amount: 100,
-        linkedGroupId: "reinvest-audit",
-      }),
-      entry("old-buy", "buy", "2026-07-01", {
-        symbol: "601398",
-        price: 10,
-        quantity: 10,
-        linkedGroupId: "reinvest-audit",
-      }),
-    ];
-    const prices = [
-      price("601398", "2026-06-30", 10),
-      price("601398", "2026-07-01", 10),
-    ];
-    const reversedDividend = dailyAttribution(
-      [
-        ...base,
-        entry("reverse-dividend", "adjustment", "2026-07-01", {
-          reversesEntryId: "dividend",
-          recordedAt: "2026-07-02T01:00:00Z",
-        }),
-      ],
-      prices,
-      "2026-07-02",
-    ).find((day) => day.date === "2026-07-01")!;
-    expect(reversedDividend.capitalBase).toBe(1_100);
-
-    const correctedBuy = dailyAttribution(
-      [
-        ...base,
-        entry("reverse-buy", "adjustment", "2026-07-01", {
-          reversesEntryId: "old-buy",
-          recordedAt: "2026-07-02T01:00:00Z",
-        }),
-        entry("new-buy", "buy", "2026-07-01", {
-          correctsEntryId: "old-buy",
-          recordedAt: "2026-07-02T01:00:01Z",
-          symbol: "601398",
-          price: 10,
-          quantity: 12,
-          linkedGroupId: "reinvest-audit",
-        }),
-      ],
-      prices,
-      "2026-07-02",
-    ).find((day) => day.date === "2026-07-01")!;
-    expect(correctedBuy.capitalBase).toBe(1_020);
   });
 
   it("第二个月的本月归因只与本月收益相等，不冒充累计收益等式", () => {
@@ -1153,37 +947,6 @@ describe("投资收益视图", () => {
       null,
     );
     expect(withDirectory.rows[0].name).toBe("沪深300ETF");
-  });
-
-  it("分红并再投入只展示业务关联，不暴露内部关联分组编号", () => {
-    const rows = queryLedgerRecords(
-      [
-        entry("dividend-linked", "dividend", "2026-07-10", {
-          symbol: "601398",
-          amount: 300,
-          linkedGroupId: "internal-uuid",
-        }),
-        entry("buy-linked", "buy", "2026-07-13", {
-          symbol: "601398",
-          price: 5,
-          quantity: 60,
-          linkedGroupId: "internal-uuid",
-        }),
-      ],
-      stocks,
-      { page: 1, pageSize: 20 },
-    ).rows;
-    expect(rows[0]).toMatchObject({
-      linkedOperation: "dividend_reinvestment",
-      linkedRecords: [
-        {
-          id: "dividend-linked",
-          type: "dividend",
-          businessDate: "2026-07-10",
-        },
-      ],
-    });
-    expect("linkedGroupId" in rows[0]).toBe(false);
   });
 });
 

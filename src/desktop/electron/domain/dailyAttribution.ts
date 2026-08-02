@@ -12,7 +12,6 @@ import {
   type HoldingInterval,
   reduceLedger,
 } from "./ledgerReducer";
-import { projectInvestmentCash } from "./investmentCashProjection";
 
 interface ContributionAttribution {
   holdingChange: number;
@@ -76,55 +75,6 @@ function emptyContribution(): ContributionAttribution {
   };
 }
 
-function openingPendingReinvestmentCashByDate(
-  entries: readonly LedgerEntry[],
-  orderedDates: readonly string[],
-  internalFundingByBuy: ReadonlyMap<string, number>,
-): Map<string, Map<string, number>> {
-  const entriesByDate = new Map<string, LedgerEntry[]>();
-  for (const entry of entries) {
-    const current = entriesByDate.get(entry.businessDate) ?? [];
-    current.push(entry);
-    entriesByDate.set(entry.businessDate, current);
-  }
-
-  const pendingBySymbol = new Map<string, number>();
-  const result = new Map<string, Map<string, number>>();
-  for (const date of orderedDates) {
-    result.set(date, new Map(pendingBySymbol));
-    const todaysEntries = entriesByDate.get(date) ?? [];
-
-    for (const entry of todaysEntries) {
-      if (
-        entry.type !== "dividend" ||
-        !entry.linkedGroupId ||
-        !entry.symbol
-      ) {
-        continue;
-      }
-      pendingBySymbol.set(
-        entry.symbol,
-        roundMoney(
-          (pendingBySymbol.get(entry.symbol) ?? 0) +
-            ledgerEntryAmount(entry),
-        ),
-      );
-    }
-
-    for (const entry of todaysEntries) {
-      if (entry.type !== "buy" || !entry.symbol) continue;
-      const internalFunding = internalFundingByBuy.get(entry.id) ?? 0;
-      if (internalFunding <= 0) continue;
-      const remaining = roundMoney(
-        (pendingBySymbol.get(entry.symbol) ?? 0) - internalFunding,
-      );
-      if (remaining > 0) pendingBySymbol.set(entry.symbol, remaining);
-      else pendingBySymbol.delete(entry.symbol);
-    }
-  }
-  return result;
-}
-
 export function buildDailyAttribution(
   entries: readonly LedgerEntry[],
   pricesBySymbol: Map<string, StoredMarketPrice[]>,
@@ -132,8 +82,6 @@ export function buildDailyAttribution(
   valuationCutoff: string | null,
   names: Map<string, string>,
 ): DailyAttribution[] {
-  const internalFundingByBuy =
-    projectInvestmentCash(entries).internalFundingByBuy;
   // P1-2：复用公共持仓区间函数，避免与 incomePriceRanges、positionsView 各写一套。
   const intervalsBySymbol = holdingIntervals(entries, factAsOfDate);
 
@@ -174,11 +122,6 @@ export function buildDailyAttribution(
   }
   const orderedDates = [...dates].filter(validDate).sort();
   if (!orderedDates.length) return [];
-  const openingPendingCashByDate = openingPendingReinvestmentCashByDate(
-    entries,
-    orderedDates,
-    internalFundingByBuy,
-  );
 
   const entriesByDate = new Map<string, LedgerEntry[]>();
   for (const entry of entries) {
@@ -203,8 +146,6 @@ export function buildDailyAttribution(
     const closingPositions = reduceLedger(entries, date).positions;
     const todaysPrices = closingByDate.get(date);
     const todaysEntries = entriesByDate.get(date) ?? [];
-    const openingPendingCash =
-      openingPendingCashByDate.get(date) ?? new Map<string, number>();
     const contributions = new Map<string, ContributionAttribution>();
     const events: IncomeCalendarDay["events"] = [];
 
@@ -238,7 +179,6 @@ export function buildDailyAttribution(
       ...openingPositions.keys(),
       ...closingPositions.keys(),
       ...contributions.keys(),
-      ...openingPendingCash.keys(),
     ])) {
       const openingQuantity = openingPositions.get(symbol)?.quantity ?? 0;
       const closingQuantity = closingPositions.get(symbol)?.quantity ?? 0;
@@ -313,18 +253,11 @@ export function buildDailyAttribution(
         .filter((row) => row.symbol === symbol && row.type === "buy")
         .reduce(
           (sum, row) =>
-            sum +
-            Math.max(
-              0,
-              ledgerEntryAmount(row) +
-                (row.fee ?? 0) -
-                (internalFundingByBuy.get(row.id) ?? 0),
-            ),
+            sum + ledgerEntryAmount(row) + (row.fee ?? 0),
           0,
         );
       item.capitalBase =
         openingQuantity * (previousPrice ?? close ?? 0) +
-        (openingPendingCash.get(symbol) ?? 0) +
         externalBuySpend;
       item.returnRate =
         item.capitalBase > 0 ? item.totalPnl / item.capitalBase : null;
