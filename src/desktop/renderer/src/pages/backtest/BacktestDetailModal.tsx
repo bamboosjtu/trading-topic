@@ -7,7 +7,7 @@ import {
   type BacktestResult,
   type SimpleBacktestRow,
 } from "../../api/client";
-import { money, percent, pnlClass } from "./formatters";
+import { formatYearRanges, money, percent, pnlClass } from "./formatters";
 
 const EVENT_LABELS: Record<SimpleBacktestRow["event"], string> = {
   buy: "定投买入",
@@ -78,11 +78,21 @@ export function BacktestDetailModal({
             <span className="tabular-nums">{result.symbol}</span>
             <i />
             <span>回测明细</span>
-            {result.dataQualityStatus === "degraded_common_gap" && (
+            {result.dataQuality?.level === "degraded" && (
               <Tag color="warning" bordered={false}>
                 降级
               </Tag>
             )}
+            {result.dataQuality?.reasons.includes(
+              "calendar_coverage_missing",
+            ) &&
+              result.dataQuality.uncoveredCalendarYears.length > 0 && (
+                <span className="detail-modal-degraded-years tabular-nums">
+                  未覆盖年份：{formatYearRanges(
+                    result.dataQuality.uncoveredCalendarYears,
+                  )}
+                </span>
+              )}
           </div>
         ) : (
           "回测明细"

@@ -14,8 +14,13 @@ import { insertMarketData } from "./marketRepository";
  * 为旧版本持久化的 BacktestResult 补充新增字段默认值。
  *
  * dataQualityStatus 是 P1-2 新增字段，旧实验 JSON 中不存在。
- * P2-1：对 e92fd778 到 ded25eba 之间生成的实验，已允许共同缺口降级
- * 但尚未保存 dataQualityStatus。此时通过检查旧 warning 文案推断状态。
+ * dataQuality 是后续新增的结构化模型。
+ *
+ * 兼容规则：
+ * 1. 有 dataQuality → 直接使用
+ * 2. 无 dataQuality 但有 dataQualityStatus → 推断
+ * 3. 无 dataQualityStatus → 检查旧 warnings 文案推断
+ * 不得把旧降级实验默认转换为 strict。
  */
 function normalizeBacktestResult(raw: unknown): BacktestResult {
   const result = raw as BacktestResult;
@@ -28,6 +33,15 @@ function normalizeBacktestResult(raw: unknown): BacktestResult {
     result.dataQualityStatus = hasOldCommonGapWarning
       ? "degraded_common_gap"
       : "strict";
+  }
+  if (!result.dataQuality) {
+    const isDegraded = result.dataQualityStatus !== "strict";
+    result.dataQuality = {
+      level: isDegraded ? "degraded" : "strict",
+      reasons: isDegraded ? ["cross_provider_common_gap"] : [],
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
+    };
   }
   return result;
 }
@@ -111,6 +125,7 @@ export function listBacktestExperiments(
     best_xirr: number | null;
     max_drawdown: number | null;
     has_degraded: number | null;
+    has_calendar_missing: number | null;
   }>(
     database,
     `SELECT
@@ -127,26 +142,43 @@ export function listBacktestExperiments(
          AS max_drawdown,
        MAX(CASE WHEN json_extract(r.result_json, '$.dataQualityStatus')
             = 'degraded_common_gap' THEN 1 ELSE 0 END)
-         AS has_degraded
+         AS has_degraded,
+       MAX(CASE WHEN json_extract(r.result_json, '$.dataQuality.reasons')
+            LIKE '%calendar_coverage_missing%' THEN 1 ELSE 0 END)
+         AS has_calendar_missing
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
      GROUP BY e.id
      ORDER BY created_at DESC
      LIMIT ?`,
     [boundedLimit],
-  ).map((row) => ({
-      experimentId: row.id,
-      createdAt: row.created_at,
-      request: JSON.parse(row.request_json) as BacktestExperiment["request"],
-      dataCutoff: row.data_cutoff,
-      caliberVersion: row.caliber_version,
-      status: row.status,
-      resultCount: row.result_count,
-      bestXirr: row.best_xirr,
-      maxDrawdown: row.max_drawdown ?? 0,
-      dataQualityStatus:
-        row.has_degraded === 1 ? "degraded_common_gap" : "strict",
-    }));
+  ).map((row) => {
+      const isDegraded = row.has_degraded === 1 || row.has_calendar_missing === 1;
+      const reasons: Array<
+        "cross_provider_common_gap" | "calendar_coverage_missing"
+      > = [];
+      if (row.has_degraded === 1) reasons.push("cross_provider_common_gap");
+      if (row.has_calendar_missing === 1)
+        reasons.push("calendar_coverage_missing");
+      return {
+        experimentId: row.id,
+        createdAt: row.created_at,
+        request: JSON.parse(row.request_json) as BacktestExperiment["request"],
+        dataCutoff: row.data_cutoff,
+        caliberVersion: row.caliber_version,
+        status: row.status,
+        resultCount: row.result_count,
+        bestXirr: row.best_xirr,
+        maxDrawdown: row.max_drawdown ?? 0,
+        dataQualityStatus: isDegraded ? "degraded_common_gap" : "strict",
+        dataQuality: {
+          level: isDegraded ? "degraded" : "strict",
+          reasons,
+          officialCalendarYears: [],
+          uncoveredCalendarYears: [],
+        },
+      };
+    });
 }
 
 export function getBacktestExperiment(
@@ -181,6 +213,24 @@ export function getBacktestExperiment(
     )
       ? "degraded_common_gap"
       : "strict",
+    dataQuality: {
+      level: results.some((r) => r.dataQuality?.level === "degraded")
+        ? "degraded"
+        : "strict",
+      reasons: [
+        ...new Set(results.flatMap((r) => r.dataQuality?.reasons ?? [])),
+      ],
+      officialCalendarYears: [
+        ...new Set(
+          results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),
+        ),
+      ].sort((a, b) => a - b),
+      uncoveredCalendarYears: [
+        ...new Set(
+          results.flatMap((r) => r.dataQuality?.uncoveredCalendarYears ?? []),
+        ),
+      ].sort((a, b) => a - b),
+    },
   };
 }
 

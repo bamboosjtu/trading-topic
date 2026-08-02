@@ -977,3 +977,150 @@ describe("P1 证券级停复牌证据", () => {
     expect(errors[0].severity).toBe("error");
   });
 });
+
+/**
+ * 行情结果中的日历覆盖字段验证。
+ *
+ * `fetchWithProviderFallback` 在返回结果中携带 `officialCalendarYears` 与
+ * `uncoveredCalendarYears`，分别表示请求区间内拥有正式日历的年份和未覆盖
+ * 正式日历的年份。回测引擎据此将结果标记为 strict 或 degraded。
+ */
+describe("行情结果日历覆盖字段", () => {
+  it("只覆盖正式日历年份且无缺口时 uncoveredCalendarYears 为空", async () => {
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    expect(result.uncoveredCalendarYears).toEqual([]);
+    expect(result.officialCalendarYears).toEqual([2026]);
+  });
+
+  it("请求包含 2018 年但数据无显式缺口时 uncoveredCalendarYears 包含 2018-2023", async () => {
+    // 仅返回 2026-07 完整交易日。由于未提供 listingDate，
+    // 2024-01 至 2026-06 之间缺失的预期交易日不计为头部截断 error，
+    // 仅 uncoveredCalendarYears 字段反映 2018-2023 缺少正式日历。
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2018-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    expect(result.uncoveredCalendarYears).toEqual([
+      2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    // 主源完整无 error，应直接接受
+    expect(result.provenance.source).toBe("tencent");
+    expect(result.provenance.fallbackUsed).toBe(false);
+  });
+
+  it("混合请求中两源共同内部缺口降级且 uncoveredCalendarYears 仍包含 2018-2023", async () => {
+    // 腾讯和新浪都缺少 2026-07-06 到 2026-07-10（无停牌证据）
+    // 两源在缺口前后都有正常行情 → 共同缺口 → 降级为 warning
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2018-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 共同缺口应降级为 warning，不再有 error
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(0);
+    const commonGaps = result.issues.filter(
+      (i) => i.classification === "cross_provider_common_gap",
+    );
+    expect(commonGaps.length).toBeGreaterThan(0);
+    // 日历覆盖字段不受数据质量影响
+    expect(result.uncoveredCalendarYears).toEqual([
+      2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
+    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
+  });
+
+  it("正式日历年份两源共同内部缺口降级时 uncoveredCalendarYears 为空", async () => {
+    // 请求区间只覆盖 2026-07，两源共同缺少 07-06 至 07-10
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d < "2026-07-06" || d > "2026-07-10")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601088",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const commonGaps = result.issues.filter(
+      (i) => i.classification === "cross_provider_common_gap",
+    );
+    expect(commonGaps.length).toBeGreaterThan(0);
+    // 请求区间全部位于正式日历年度内
+    expect(result.uncoveredCalendarYears).toEqual([]);
+    expect(result.officialCalendarYears).toEqual([2026]);
+  });
+
+  it("两源均空且为已确认休市区间时返回空结果并携带日历覆盖字段", async () => {
+    // 2026-02-15 至 2026-02-23 为春节休市
+    const primary = staticProvider("tencent", []);
+    const fallback = staticProvider("sina", []);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-02-15",
+      "2026-02-23",
+      primary,
+      fallback,
+      undefined,
+      new Date("2026-02-24T08:00:00Z"),
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.tailStatus).toBe("confirmed_non_trading");
+    expect(result.uncoveredCalendarYears).toEqual([]);
+    expect(result.officialCalendarYears).toEqual([2026]);
+  });
+});

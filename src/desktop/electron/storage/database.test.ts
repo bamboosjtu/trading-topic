@@ -1556,3 +1556,184 @@ describe("P1-2 停牌证据原子替换", () => {
     expect(inRange[0].startDate).toBe("2025-08-04");
   });
 });
+
+/**
+ * 旧版本持久化的 BacktestResult 兼容性验证。
+ *
+ * `normalizeBacktestResult` 在读取时为旧数据补充 `dataQuality` 字段：
+ * 1. 有 dataQuality → 直接使用
+ * 2. 无 dataQuality 但有 dataQualityStatus → 推断
+ * 3. 无 dataQualityStatus → 检查旧 warnings 文案推断
+ */
+describe("旧回测结果 dataQuality 推断", () => {
+  /** 构造一个仅含必要字段的旧 strict BacktestResult（无 dataQuality）。 */
+  function legacyStrictResult(
+    experimentId: string,
+    id: string,
+  ): BacktestResult {
+    return {
+      ...result(experimentId, id, 150000),
+      dataQualityStatus: "strict",
+      // 旧数据没有 dataQuality 字段
+    };
+  }
+
+  /** 构造一个旧 degraded BacktestResult（无 dataQuality，但有 dataQualityStatus）。 */
+  function legacyDegradedResult(
+    experimentId: string,
+    id: string,
+  ): BacktestResult {
+    return {
+      ...result(experimentId, id, 150000),
+      dataQualityStatus: "degraded_common_gap",
+    };
+  }
+
+  it("旧 strict 结果无 dataQuality 时推断为 strict level 且无 reasons", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-legacy-strict-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const experimentId = "exp-legacy-strict";
+    const resultId = "exp-legacy-strict-result";
+    database.saveBacktestExperimentWithMarketData(
+      {
+        experimentId,
+        createdAt: "2026-07-24T09:30:00Z",
+        request: request(),
+        dataCutoff: "2026-07-24",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+        status: "completed",
+        dataQualityStatus: "strict",
+        results: [legacyStrictResult(experimentId, resultId)],
+      },
+      [],
+    );
+
+    const restored = database.getBacktest(resultId);
+    expect(restored).not.toBeNull();
+    expect(restored?.dataQuality).toEqual({
+      level: "strict",
+      reasons: [],
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
+    });
+    expect(restored?.dataQualityStatus).toBe("strict");
+  });
+
+  it("旧 degraded 结果无 dataQuality 时推断为 degraded 且 reasons 含 cross_provider_common_gap", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-legacy-degraded-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const experimentId = "exp-legacy-degraded";
+    const resultId = "exp-legacy-degraded-result";
+    database.saveBacktestExperimentWithMarketData(
+      {
+        experimentId,
+        createdAt: "2026-07-24T09:30:00Z",
+        request: request(),
+        dataCutoff: "2026-07-24",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+        status: "completed",
+        dataQualityStatus: "degraded_common_gap",
+        results: [legacyDegradedResult(experimentId, resultId)],
+      },
+      [],
+    );
+
+    const restored = database.getBacktest(resultId);
+    expect(restored).not.toBeNull();
+    expect(restored?.dataQuality).toEqual({
+      level: "degraded",
+      reasons: ["cross_provider_common_gap"],
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
+    });
+    expect(restored?.dataQualityStatus).toBe("degraded_common_gap");
+  });
+
+  it("更旧结果无 dataQualityStatus 且 warnings 含旧降级文案时推断为 degraded", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-legacy-warnings-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const experimentId = "exp-legacy-warnings";
+    const resultId = "exp-legacy-warnings-result";
+    // 构造一个连 dataQualityStatus 都没有的更旧结果
+    const legacyResult = {
+      ...result(experimentId, resultId, 150000),
+      dataQualityStatus: undefined,
+      dataQuality: undefined,
+      warnings: [
+        "回测行情完整性问题：2026-07-06 至 2026-07-10 共 5 个交易日腾讯与新浪均未返回行情",
+      ],
+    } as unknown as BacktestResult;
+    database.saveBacktestExperimentWithMarketData(
+      {
+        experimentId,
+        createdAt: "2026-07-24T09:30:00Z",
+        request: request(),
+        dataCutoff: "2026-07-24",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+        status: "completed",
+        dataQualityStatus: "strict",
+        results: [legacyResult],
+      },
+      [],
+    );
+
+    const restored = database.getBacktest(resultId);
+    expect(restored).not.toBeNull();
+    // warnings 文案匹配旧降级标记 → dataQualityStatus 推断为 degraded_common_gap
+    expect(restored?.dataQualityStatus).toBe("degraded_common_gap");
+    expect(restored?.dataQuality).toEqual({
+      level: "degraded",
+      reasons: ["cross_provider_common_gap"],
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
+    });
+  });
+
+  it("更旧结果无 dataQualityStatus 且 warnings 不含降级文案时推断为 strict", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-legacy-strict-warnings-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const experimentId = "exp-legacy-strict-warnings";
+    const resultId = "exp-legacy-strict-warnings-result";
+    const legacyResult = {
+      ...result(experimentId, resultId, 150000),
+      dataQualityStatus: undefined,
+      dataQuality: undefined,
+      warnings: ["其他与降级无关的警告"],
+    } as unknown as BacktestResult;
+    database.saveBacktestExperimentWithMarketData(
+      {
+        experimentId,
+        createdAt: "2026-07-24T09:30:00Z",
+        request: request(),
+        dataCutoff: "2026-07-24",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+        status: "completed",
+        dataQualityStatus: "strict",
+        results: [legacyResult],
+      },
+      [],
+    );
+
+    const restored = database.getBacktest(resultId);
+    expect(restored).not.toBeNull();
+    expect(restored?.dataQualityStatus).toBe("strict");
+    expect(restored?.dataQuality).toEqual({
+      level: "strict",
+      reasons: [],
+      officialCalendarYears: [],
+      uncoveredCalendarYears: [],
+    });
+  });
+});

@@ -19,6 +19,7 @@ import {
 import {
   assertValidMarketDateRange,
   expectedTradingDatesInRange,
+  expectedTradingDatesWithCoverage,
   isConfirmedMarketClosureDate,
   isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
@@ -388,6 +389,11 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
   interruptions: readonly SecurityTradingInterruption[] = [],
 ): Promise<MarketFetchResult<T>> {
   assertValidMarketDateRange(startDate, endDate);
+  // 计算请求区间的正式交易日历覆盖信息
+  const calendarCoverage = expectedTradingDatesWithCoverage(
+    startDate,
+    endDate,
+  );
   interface Candidate {
     rows: T[];
     consistencyRows: PricePoint[];
@@ -612,18 +618,20 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       !hasErrorIssues(primaryCandidate)
     ) {
       return {
-        rows: primaryCandidate.rows,
-        requestedThrough: endDate,
-        dataCutoff: primaryCandidate.rows.at(-1)?.date ?? null,
-        tailStatus: primaryCandidate.tailStatus,
-        issues: primaryCandidate.rowIssues,
-        provenance: provenance(
-          "tencent",
-          primaryCandidate.rows,
-          adjustment,
-          fetchedAt,
-        ),
-      };
+      rows: primaryCandidate.rows,
+      requestedThrough: endDate,
+      dataCutoff: primaryCandidate.rows.at(-1)?.date ?? null,
+      tailStatus: primaryCandidate.tailStatus,
+      issues: primaryCandidate.rowIssues,
+      provenance: provenance(
+        "tencent",
+        primaryCandidate.rows,
+        adjustment,
+        fetchedAt,
+      ),
+      officialCalendarYears: calendarCoverage.officialYears,
+      uncoveredCalendarYears: calendarCoverage.uncoveredYears,
+    };
     }
     primaryIssueMessage = primaryCandidate.rows.length
       ? hasErrorIssues(primaryCandidate)
@@ -674,6 +682,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         fetchedAt,
         primaryIssueMessage ?? "腾讯行情不可用",
       ),
+      officialCalendarYears: calendarCoverage.officialYears,
+      uncoveredCalendarYears: calendarCoverage.uncoveredYears,
     };
   }
 
@@ -700,6 +710,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         undefined,
         "exchange_calendar",
       ),
+      officialCalendarYears: calendarCoverage.officialYears,
+      uncoveredCalendarYears: calendarCoverage.uncoveredYears,
     };
   }
 
@@ -763,6 +775,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
           ? primaryIssueMessage ?? "腾讯行情不可用"
           : undefined,
       ),
+      officialCalendarYears: calendarCoverage.officialYears,
+      uncoveredCalendarYears: calendarCoverage.uncoveredYears,
     };
   }
 
@@ -786,6 +800,8 @@ export async function fetchMarketPrices(
   tailStatus: MarketTailStatus;
   issues: MarketDataIssue[];
   provenance: MarketDataProvenance & { caliberVersion: string };
+  officialCalendarYears?: number[];
+  uncoveredCalendarYears?: number[];
 }> {
   const result = await fetchWithProviderFallback<PricePoint>(
     "prices",

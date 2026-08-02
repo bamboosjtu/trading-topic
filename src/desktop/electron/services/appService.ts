@@ -687,16 +687,38 @@ export class AppService {
       // P1：保存本次回测使用过的证券级停复牌证据，便于以后复现为什么
       // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
       result.interruptionsUsed = interruptions;
-      // P1-2：根据是否存在两源共同缺口降级 warning 判断数据质量状态。
-      // P2-2：使用结构化 classification 字段判断，不依赖中文文案。
-      const hasCommonGapWarning = prices.issues.some(
-        (issue) =>
-          issue.severity === "warning" &&
-          issue.classification === "cross_provider_common_gap",
-      );
-      result.dataQualityStatus = hasCommonGapWarning
+      // 组装结构化数据质量模型
+      const reasons: Array<
+        "cross_provider_common_gap" | "calendar_coverage_missing"
+      > = [];
+      if (
+        prices.issues.some(
+          (issue) =>
+            issue.severity === "warning" &&
+            issue.classification === "cross_provider_common_gap",
+        )
+      ) {
+        reasons.push("cross_provider_common_gap");
+      }
+      const uncoveredCalendarYears = prices.uncoveredCalendarYears ?? [];
+      if (uncoveredCalendarYears.length > 0) {
+        reasons.push("calendar_coverage_missing");
+      }
+      const officialCalendarYears = prices.officialCalendarYears ?? [];
+      result.dataQuality = {
+        level: reasons.length === 0 ? "strict" : "degraded",
+        reasons: [...new Set(reasons)],
+        officialCalendarYears,
+        uncoveredCalendarYears,
+      };
+      // 兼容字段
+      result.dataQualityStatus = reasons.includes(
+        "cross_provider_common_gap",
+      )
         ? "degraded_common_gap"
-        : "strict";
+        : reasons.includes("calendar_coverage_missing")
+          ? "degraded_common_gap"
+          : "strict";
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -737,6 +759,26 @@ export class AppService {
       )
         ? "degraded_common_gap"
         : "strict",
+      dataQuality: {
+        level: results.some((r) => r.dataQuality?.level === "degraded")
+          ? "degraded"
+          : "strict",
+        reasons: [
+          ...new Set(
+            results.flatMap((r) => r.dataQuality?.reasons ?? []),
+          ),
+        ],
+        officialCalendarYears: [
+          ...new Set(
+            results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),
+          ),
+        ].sort((a, b) => a - b),
+        uncoveredCalendarYears: [
+          ...new Set(
+            results.flatMap((r) => r.dataQuality?.uncoveredCalendarYears ?? []),
+          ),
+        ].sort((a, b) => a - b),
+      },
     };
     this.database.saveBacktestExperimentWithMarketData(
       experiment,

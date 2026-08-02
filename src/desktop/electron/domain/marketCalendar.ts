@@ -102,16 +102,55 @@ export function expectedTradingDatesInRange(
   startDate: string,
   endDate: string,
 ): string[] {
+  return expectedTradingDatesWithCoverage(startDate, endDate).expectedTradingDates;
+}
+
+/**
+ * 交易日历覆盖信息。
+ * - `expectedTradingDates`：只包含可由正式日历确认的预期交易日；
+ * - `officialYears`：请求区间内拥有 official 年度日历的年份；
+ * - `uncoveredYears`：请求区间内没有 official 日历的年份。
+ *
+ * 年份去重并升序排列。pending_official_schedule 不算 official。
+ */
+export interface MarketCalendarCoverage {
+  expectedTradingDates: string[];
+  officialYears: number[];
+  uncoveredYears: number[];
+}
+
+/**
+ * 列出 `[startDate, endDate]` 内的预期交易日，同时返回正式日历覆盖信息。
+ *
+ * 未覆盖正式日历的年份不生成预期交易日，但会在 uncoveredYears 中报告，
+ * 供调用方将回测标记为降级（calendar_coverage_missing）。
+ */
+export function expectedTradingDatesWithCoverage(
+  startDate: string,
+  endDate: string,
+): MarketCalendarCoverage {
   if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
-    return [];
+    return { expectedTradingDates: [], officialYears: [], uncoveredYears: [] };
   }
-  const result: string[] = [];
+  const expectedTradingDates: string[] = [];
+  const officialSet = new Set<number>();
+  const uncoveredSet = new Set<number>();
   for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
     const year = Number(date.slice(0, 4));
-    if (!hasOfficialCalendar(year)) continue;
-    if (!isConfirmedMarketClosureDate(date)) result.push(date);
+    if (hasOfficialCalendar(year)) {
+      officialSet.add(year);
+      if (!isConfirmedMarketClosureDate(date)) {
+        expectedTradingDates.push(date);
+      }
+    } else {
+      uncoveredSet.add(year);
+    }
   }
-  return result;
+  return {
+    expectedTradingDates,
+    officialYears: [...officialSet].sort((a, b) => a - b),
+    uncoveredYears: [...uncoveredSet].sort((a, b) => a - b),
+  };
 }
 
 export function isConfirmedMarketClosureRange(

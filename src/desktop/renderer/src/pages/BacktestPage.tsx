@@ -385,40 +385,12 @@ export function BacktestPage() {
             />
           }
           currentExperiment={
-            <>
-              {results.some(
-                (r) => r.dataQualityStatus === "degraded_common_gap",
-              ) && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  banner
-                  message="本次回测使用了降级行情证据"
-                  description={
-                    <div>
-                      {results
-                        .filter(
-                          (r) =>
-                            r.dataQualityStatus === "degraded_common_gap",
-                        )
-                        .map((r) => (
-                          <div key={r.symbol}>
-                            <strong>{r.symbol}</strong>
-                            ：存在两源共同缺口且未取得独立停牌证据，
-                            期间未生成交易价格，定投顺延至下一真实交易日。
-                          </div>
-                        ))}
-                    </div>
-                  }
-                />
-              )}
-              <CurrentExperimentTable
-                experiment={active.activeExperiment}
-                results={results}
-                loading={active.loading}
-                onDetail={setDetail}
-              />
-            </>
+            <CurrentExperimentTable
+              experiment={active.activeExperiment}
+              results={results}
+              loading={active.loading}
+              onDetail={setDetail}
+            />
           }
         />
       )}

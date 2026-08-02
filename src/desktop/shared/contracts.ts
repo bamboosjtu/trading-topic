@@ -80,6 +80,10 @@ export interface MarketFetchResult<
   tailStatus: MarketTailStatus;
   issues: MarketDataIssue[];
   provenance: P;
+  /** 请求区间内拥有正式日历的年份。 */
+  officialCalendarYears?: number[];
+  /** 请求区间内未覆盖正式日历的年份，回测须标记为降级。 */
+  uncoveredCalendarYears?: number[];
 }
 
 export interface PricePoint {
@@ -252,13 +256,33 @@ export interface BacktestResult {
    */
   interruptionsUsed: SecurityTradingInterruption[];
   /**
-   * 行情数据质量状态：
+   * 行情数据质量状态（兼容字段，新代码应使用 dataQuality）：
    * - `strict`：所有交易日都有独立停牌证据或完整行情，严格回测完成；
    * - `degraded_common_gap`：存在两源共同缺口且缺少独立停牌证据，
    *   按降级数据继续计算。不能等同于严格回测完成。
    */
   dataQualityStatus: "strict" | "degraded_common_gap";
+  /**
+   * 结构化数据质量模型，用于区分降级原因。
+   * 旧数据可能没有此字段，读取时通过 dataQualityStatus 和 warnings 推断。
+   */
+  dataQuality?: BacktestDataQuality;
   createdAt: string;
+}
+
+/**
+ * 回测数据质量模型。
+ *
+ * 将"回测能否继续计算"和"数据是否得到严格完整性证明"分开：
+ * - `strict`：所有年份都有正式交易日历覆盖且无两源共同缺口；
+ * - `degraded`：存在未覆盖日历年份或两源共同缺口，回测仍可继续
+ *   但不能等同于严格结果。
+ */
+export interface BacktestDataQuality {
+  level: "strict" | "degraded";
+  reasons: Array<"cross_provider_common_gap" | "calendar_coverage_missing">;
+  officialCalendarYears: number[];
+  uncoveredCalendarYears: number[];
 }
 
 /**
@@ -892,6 +916,8 @@ export interface BacktestExperimentSummary {
    * - `degraded_common_gap`：至少一个结果存在两源共同缺口降级。
    */
   dataQualityStatus: "strict" | "degraded_common_gap";
+  /** 结构化数据质量模型，由所有标的结果汇总。 */
+  dataQuality?: BacktestDataQuality;
 }
 
 export interface BacktestExperiment

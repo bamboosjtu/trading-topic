@@ -81,7 +81,7 @@ export function ExperimentHistoryTable({
             render: (value: string, row) => (
               <div className="history-created-cell">
                 <strong className="tabular-nums">{createdAtLabel(value)}</strong>
-                {row.dataQualityStatus === "degraded_common_gap" && (
+                {row.dataQuality?.level === "degraded" && (
                   <Tag color="warning" bordered={false}>
                     降级
                   </Tag>

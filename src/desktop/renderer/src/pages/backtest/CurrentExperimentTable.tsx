@@ -1,7 +1,7 @@
 import { Alert, Button, Table, Tag } from "antd";
 import { TrophyFilled } from "@ant-design/icons";
 import type { BacktestExperiment, BacktestResult } from "../../api/client";
-import { beijingTimestamp, money, percent, pnlClass } from "./formatters";
+import { beijingTimestamp, formatYearRanges, money, percent, pnlClass } from "./formatters";
 
 interface CurrentExperimentTableProps {
   experiment: BacktestExperiment | undefined;
@@ -33,6 +33,15 @@ export function CurrentExperimentTable({
       ),
     ),
   ];
+  const experimentReasons = experiment?.dataQuality?.reasons ?? [];
+  const calendarCoverageMissing =
+    experimentReasons.includes("calendar_coverage_missing");
+  const uncoveredCalendarYearsText = experiment?.dataQuality
+    ? formatYearRanges(experiment.dataQuality.uncoveredCalendarYears)
+    : "";
+  const commonGapResults = results.filter((result) =>
+    (result.dataQuality?.reasons ?? []).includes("cross_provider_common_gap"),
+  );
 
   return (
     <section className="workspace-panel comparison-panel">
@@ -49,6 +58,34 @@ export function CurrentExperimentTable({
           </small>
         ) : null}
       </div>
+      {calendarCoverageMissing ? (
+        <Alert
+          className="comparison-warning"
+          showIcon
+          type="warning"
+          message="本次回测包含尚未由正式交易日历逐日验证的年份"
+          description={`本次回测包含尚未由正式交易日历逐日验证的年份：${uncoveredCalendarYearsText}。回测仍可计算，但无法证明这些年份不存在两源共同缺失，因此结果属于降级证据。`}
+        />
+      ) : null}
+      {commonGapResults.length ? (
+        <Alert
+          className="comparison-warning"
+          showIcon
+          type="warning"
+          message="本次回测使用了降级行情证据"
+          description={
+            <div>
+              {commonGapResults.map((result) => (
+                <div key={result.symbol}>
+                  <strong>{result.symbol}</strong>
+                  ：存在两源共同缺口且未取得独立停牌证据，
+                  期间未生成交易价格，定投顺延至下一真实交易日。
+                </div>
+              ))}
+            </div>
+          }
+        />
+      ) : null}
       {comparisonWarning ? (
         <Alert
           className="comparison-warning"
@@ -104,7 +141,7 @@ export function CurrentExperimentTable({
               <div className="symbol-cell">
                 <strong>{row.name}</strong>
                 <span className="tabular-nums">{row.symbol}</span>
-                {row.dataQualityStatus === "degraded_common_gap" && (
+                {row.dataQuality?.level === "degraded" && (
                   <Tag color="warning" className="degraded-tag">
                     降级
                   </Tag>

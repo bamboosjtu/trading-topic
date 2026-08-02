@@ -57,6 +57,59 @@ function eventLabel(event: SimpleBacktestRow["event"]): string {
   }[event];
 }
 
+const DATA_QUALITY_REASON_LABELS: Record<
+  "cross_provider_common_gap" | "calendar_coverage_missing",
+  string
+> = {
+  cross_provider_common_gap: "两源共同缺口",
+  calendar_coverage_missing: "未覆盖正式交易日历",
+};
+
+/**
+ * 将年份列表格式化为连续区间字符串。
+ *
+ * 连续年份合并为 `start—end`，多段区间以「、」分隔；
+ * 单年保持原样。空数组返回空串。
+ *
+ * renderer 侧 formatters.ts 中有同名实现；electron 侧不能跨域导入，
+ * 因此这里保留一份本地版本，避免破坏域隔离。
+ */
+function formatYearRanges(years: readonly number[]): string {
+  if (!years.length) return "";
+  const sorted = [...years].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === end + 1) {
+      end = sorted[i];
+    } else {
+      ranges.push(start === end ? `${start}` : `${start}—${end}`);
+      start = sorted[i];
+      end = sorted[i];
+    }
+  }
+  ranges.push(start === end ? `${start}` : `${start}—${end}`);
+  return ranges.join("、");
+}
+
+function dataQualityLevelLabel(
+  result: BacktestResult,
+): "strict" | "degraded" {
+  return result.dataQuality?.level ?? "strict";
+}
+
+function dataQualityReasonsLabel(result: BacktestResult): string {
+  const reasons = result.dataQuality?.reasons ?? [];
+  if (!reasons.length) return "";
+  return reasons.map((reason) => DATA_QUALITY_REASON_LABELS[reason]).join("、");
+}
+
+function uncoveredCalendarYearsLabel(result: BacktestResult): string {
+  const years = result.dataQuality?.uncoveredCalendarYears ?? [];
+  return formatYearRanges(years);
+}
+
 function addSummarySheet(
   workbook: ExcelJS.Workbook,
   results: BacktestResult[],
@@ -84,6 +137,13 @@ function addSummarySheet(
     { header: "备用源切换原因", key: "fallbackReason", width: 34 },
     { header: "行情截止", key: "marketCutoff", width: 14 },
     { header: "复权方式", key: "adjustment", width: 12 },
+    { header: "数据质量等级", key: "dataQualityLevel", width: 14 },
+    { header: "降级原因", key: "dataQualityReasons", width: 24 },
+    {
+      header: "未覆盖正式交易日历年份",
+      key: "uncoveredCalendarYears",
+      width: 24,
+    },
     { header: "告警与口径说明", key: "warnings", width: 48 },
   ];
   for (const result of results) {
@@ -117,6 +177,9 @@ function addSummarySheet(
           : market
             ? "不复权"
             : "—",
+      dataQualityLevel: dataQualityLevelLabel(result),
+      dataQualityReasons: dataQualityReasonsLabel(result),
+      uncoveredCalendarYears: uncoveredCalendarYearsLabel(result),
       warnings: result.warnings.join("\n"),
     });
   }
