@@ -142,6 +142,8 @@ export function listBacktestExperiments(
     max_drawdown: number | null;
     has_cross_provider_gap: number | null;
     has_calendar_partial: number | null;
+    has_degraded_level: number | null;
+    has_research_level: number | null;
   }>(
     database,
     `SELECT
@@ -167,7 +169,24 @@ export function listBacktestExperiments(
            json_extract(r.result_json, '$.dataQuality.reasons')
              LIKE '%calendar_coverage_partial%'
            THEN 1 ELSE 0 END)
-         AS has_calendar_partial
+         AS has_calendar_partial,
+       MAX(CASE WHEN
+            -- 新数据：dataQuality.level 已存在
+            json_extract(r.result_json, '$.dataQuality.level') = 'degraded'
+            OR (
+              -- 旧数据：dataQuality.level 不存在时回退到 dataQualityStatus
+              json_extract(r.result_json, '$.dataQuality.level') IS NULL
+              AND (
+                json_extract(r.result_json, '$.dataQualityStatus') = 'degraded'
+                OR json_extract(r.result_json, '$.dataQualityStatus') = 'degraded_common_gap'
+              )
+            )
+           THEN 1 ELSE 0 END)
+         AS has_degraded_level,
+       MAX(CASE WHEN
+            json_extract(r.result_json, '$.dataQuality.level') = 'research'
+           THEN 1 ELSE 0 END)
+         AS has_research_level
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
      GROUP BY e.id
@@ -177,11 +196,17 @@ export function listBacktestExperiments(
   ).map((row) => {
       const hasCommonGap = row.has_cross_provider_gap === 1;
       const hasPartial = row.has_calendar_partial === 1;
-      const level: "strict" | "research" | "degraded" = hasCommonGap
+      // 实验级 level 按优先级 degraded > research > strict 判断。
+      // 优先读取 dataQuality.level；旧数据无 dataQuality 时回退到 dataQualityStatus。
+      // 这样旧版通用 degraded（level=degraded, reasons=[]）不会被错误聚合成 strict。
+      const hasDegraded = row.has_degraded_level === 1;
+      const hasResearchLevel = row.has_research_level === 1;
+      const level: "strict" | "research" | "degraded" = hasDegraded
         ? "degraded"
-        : hasPartial
+        : hasResearchLevel
           ? "research"
           : "strict";
+      // reasons 单独合并：仅展示数据中实际出现的降级原因
       const reasons: Array<
         "cross_provider_common_gap" | "calendar_coverage_partial"
       > = [];
@@ -228,15 +253,19 @@ export function getBacktestExperiment(
   )[0];
   if (!row) return null;
   const results = listExperimentResults(database, row.id);
+  // 实验级 level 按优先级 degraded > research > strict 判断，直接读取每个结果的实际 level。
+  // 这样旧版通用 degraded（level=degraded, reasons=[]）不会被错误聚合成 strict。
+  // reasons 单独合并：仅展示数据中实际出现的降级原因。
+  const experimentLevel: "strict" | "research" | "degraded" = results.some(
+    (r) => r.dataQuality?.level === "degraded",
+  )
+    ? "degraded"
+    : results.some((r) => r.dataQuality?.level === "research")
+      ? "research"
+      : "strict";
   const experimentReasons = [
     ...new Set(results.flatMap((r) => r.dataQuality?.reasons ?? [])),
-  ];
-  const experimentLevel: "strict" | "research" | "degraded" =
-    experimentReasons.includes("cross_provider_common_gap")
-      ? "degraded"
-      : experimentReasons.includes("calendar_coverage_partial")
-        ? "research"
-        : "strict";
+  ] as Array<"cross_provider_common_gap" | "calendar_coverage_partial">;
   return {
     experimentId: row.id,
     createdAt: row.created_at,

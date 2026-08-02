@@ -1,5 +1,5 @@
 {
-  "executedAt": "2026-08-02T08:55:00.196Z",
+  "executedAt": "2026-08-02T09:23:08.457Z",
   "requestRange": {
     "startDate": "2026-07-20",
     "endDate": "2026-07-24"
@@ -15,7 +15,7 @@
       "primarySource": "eastmoney",
       "fallbackUsed": true,
       "fallbackReason": "fetch failed",
-      "fetchedAt": "2026-08-02T08:54:57.403Z"
+      "fetchedAt": "2026-08-02T09:23:05.650Z"
     }
   },
   "checks": [

@@ -58,7 +58,7 @@
     "productName": "投资研究实验室",
     "executableName": "dividend-desk",
     "directories": {
-      "output": "release-v2"
+      "output": "release"
     },
     "files": [
       "out/**/*",
