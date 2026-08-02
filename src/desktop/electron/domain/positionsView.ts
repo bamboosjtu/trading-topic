@@ -439,13 +439,15 @@ export function buildPositionsOverview(
     const symbolPeriodPerformance = hasPostValuationFact
       ? emptyPeriodPerformance()
       : periodPerformance(impairedDaily, model.cutoff, symbol);
-    // P1-1：当日盈亏直接读取估值截止日的归因金额，不再由收益率反推。
-    // 反推公式在分红/交易场景下不准确（如分红日会低估）。
+    // P1-1/P1-4：当日盈亏直接读取估值截止日的归因金额。
+    // 估值截止日之后存在新事实时，当日盈亏也必须为 null，
+    // 与市值和区间表现使用同一估值边界。
     const dayContribution = impairedDaily
       .find((day) => day.date === model.cutoff)
       ?.contributions.get(symbol);
-    const dayPnl =
-      dayContribution?.totalPnl == null
+    const dayPnl = hasPostValuationFact
+      ? null
+      : dayContribution?.totalPnl == null
         ? null
         : roundMoney(dayContribution.totalPnl);
     return {

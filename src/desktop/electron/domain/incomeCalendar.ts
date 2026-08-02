@@ -85,12 +85,20 @@ export function buildIncomeCalendar(
       : new Set(model.effectiveEntries.flatMap((entry) => entry.symbol ?? []));
   // P1-2 + P1-3：在 buildIncomeCalendar 内统一过滤覆盖损伤，
   // 按 selectedSymbols + 持仓区间 + 月份/年度范围筛选。
+  // P1-2：损伤查询起点使用所选证券最早相关持仓区间开始日，
+  // 而非当年1月1日，使累计收益也能反映历史 partial。
   const year = query.month.slice(0, 4);
+  const intervalsBySymbol = holdingIntervals(entries, boundary.factAsOfDate);
+  const earliestHoldingStart = [...selectedSymbols]
+    .flatMap((symbol) => intervalsBySymbol.get(symbol) ?? [])
+    .map((interval) => interval.startDate)
+    .sort()
+    .at(0) ?? `${year}-01-01`;
   const impairments = buildCoverageImpairments(
     coverage,
     selectedSymbols,
-    holdingIntervals(entries, boundary.factAsOfDate),
-    `${year}-01-01`,
+    intervalsBySymbol,
+    earliestHoldingStart,
     monthEnd(query.month),
   );
 

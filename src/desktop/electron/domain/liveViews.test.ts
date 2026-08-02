@@ -10,11 +10,14 @@ import type {
   EntryType,
   LedgerEntry,
   StockInfo,
+  StoredMarketCoverage,
   StoredMarketPrice,
 } from "../../shared/contracts";
 import {
   buildDailyAttribution,
+  mergeImpairments,
   rowsBySymbol,
+  type CoverageImpairment,
 } from "./dailyAttribution";
 import { buildIncomeCalendar } from "./incomeCalendar";
 import { queryLedgerRecords } from "./ledgerQuery";
@@ -1181,5 +1184,236 @@ describe("投资收益视图", () => {
       ],
     });
     expect("linkedGroupId" in rows[0]).toBe(false);
+  });
+});
+
+describe("覆盖损伤合并（P1-1）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("mergeImpairments 合并同一证券两条不相邻 partial 覆盖的日期、区间与描述", () => {
+    const impairments: CoverageImpairment[] = [
+      {
+        symbol: "601398",
+        impairedDates: new Set(["2025-03-15"]),
+        impairedRanges: [],
+        descriptions: ["2025-03-15 行情缺失"],
+      },
+      {
+        symbol: "601398",
+        impairedDates: new Set(["2026-07-15"]),
+        impairedRanges: [],
+        descriptions: ["2026-07-15 行情缺失"],
+      },
+    ];
+    const merged = mergeImpairments(impairments);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.symbol).toBe("601398");
+    expect(merged[0]!.impairedDates).toEqual(
+      new Set(["2025-03-15", "2026-07-15"]),
+    );
+    expect(merged[0]!.descriptions).toEqual([
+      "2025-03-15 行情缺失",
+      "2026-07-15 行情缺失",
+    ]);
+  });
+
+  it("mergeImpairments 去重相同描述", () => {
+    const impairments: CoverageImpairment[] = [
+      {
+        symbol: "601398",
+        impairedDates: new Set(["2025-03-15"]),
+        impairedRanges: [{ from: "2025-03-01", through: "2025-03-31" }],
+        descriptions: ["区间内存在非法 OHLCV"],
+      },
+      {
+        symbol: "601398",
+        impairedDates: new Set(["2026-07-15"]),
+        impairedRanges: [{ from: "2026-07-01", through: "2026-07-31" }],
+        descriptions: ["区间内存在非法 OHLCV"],
+      },
+    ];
+    const merged = mergeImpairments(impairments);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.impairedDates).toEqual(
+      new Set(["2025-03-15", "2026-07-15"]),
+    );
+    expect(merged[0]!.impairedRanges).toEqual([
+      { from: "2025-03-01", through: "2025-03-31" },
+      { from: "2026-07-01", through: "2026-07-31" },
+    ]);
+    // 相同描述只保留一条
+    expect(merged[0]!.descriptions).toEqual(["区间内存在非法 OHLCV"]);
+  });
+
+  it("同一证券两个不相邻 partial 覆盖在收益日历中全部生效", () => {
+    const entries = [
+      entry("buy", "buy", "2025-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+    ];
+    const prices = [
+      price("601398", "2025-01-02", 5),
+      price("601398", "2025-03-14", 5.1),
+      price("601398", "2025-03-16", 5.2),
+      price("601398", "2026-07-14", 6),
+      price("601398", "2026-07-16", 6.1),
+      price("601398", "2026-07-31", 6.2),
+    ];
+    const coverage: StoredMarketCoverage[] = [
+      {
+        coverageId: 1,
+        symbol: "601398",
+        requestedFrom: "2025-03-01",
+        requestedThrough: "2025-03-31",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2025-04-01T08:00:00Z",
+        dataCutoff: "2025-03-31",
+        adjustment: "none",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2025-03-15",
+            type: "gap",
+            severity: "error",
+            message: "行情缺失",
+          },
+        ],
+      },
+      {
+        coverageId: 2,
+        symbol: "601398",
+        requestedFrom: "2026-07-01",
+        requestedThrough: "2026-07-31",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2026-08-01T08:00:00Z",
+        dataCutoff: "2026-07-31",
+        adjustment: "none",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2026-07-15",
+            type: "gap",
+            severity: "error",
+            message: "行情缺失",
+          },
+        ],
+      },
+    ];
+    const boundary = {
+      factAsOfDate: "2026-07-31",
+      valuationCutoff: "2026-07-31",
+    };
+    const view = buildIncomeCalendar(
+      entries,
+      prices,
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      boundary,
+      coverage,
+    );
+
+    // 两条损伤都应进入质量说明
+    const issuesText = view.quality.issues.join("；");
+    expect(issuesText).toContain("2025-03-15");
+    expect(issuesText).toContain("2026-07-15");
+
+    // 本月收益因 2026-07-15 受损而不可计算
+    expect(view.metrics.month.amount).toBeNull();
+    expect(view.metrics.month.rate).toBeNull();
+
+    // 年内收益因 2026-07-15 受损而不可计算
+    expect(view.metrics.yearToDate.amount).toBeNull();
+    expect(view.metrics.yearToDate.rate).toBeNull();
+
+    // 累计收益因 2025-03-15 受损而不可计算（历史 partial 也影响累计）
+    expect(view.metrics.cumulative.amount).toBeNull();
+    expect(view.metrics.cumulative.rate).toBeNull();
+
+    // 2026-07-15 在日历中标记为 partial
+    const impairedJulyDay = view.days.find(
+      (day) => day.date === "2026-07-15",
+    );
+    expect(impairedJulyDay).toMatchObject({
+      isPartial: true,
+      totalPnl: null,
+      returnRate: null,
+    });
+
+    expect(view.quality.status).toBe("partial");
+  });
+
+  it("历史 partial 不影响本月和年内收益，但影响累计收益", () => {
+    const entries = [
+      entry("buy", "buy", "2025-01-02", {
+        symbol: "601398",
+        price: 5,
+        quantity: 100,
+      }),
+    ];
+    const prices = [
+      price("601398", "2025-01-02", 5),
+      price("601398", "2025-03-14", 5.1),
+      price("601398", "2025-03-16", 5.2),
+      // 2026-07 行情完整
+      price("601398", "2026-07-10", 6),
+      price("601398", "2026-07-31", 6.2),
+    ];
+    const coverage: StoredMarketCoverage[] = [
+      {
+        coverageId: 1,
+        symbol: "601398",
+        requestedFrom: "2025-03-01",
+        requestedThrough: "2025-03-31",
+        source: "tencent",
+        primarySource: "tencent",
+        fallbackUsed: false,
+        fetchedAt: "2025-04-01T08:00:00Z",
+        dataCutoff: "2025-03-31",
+        adjustment: "none",
+        resultStatus: "partial",
+        issues: [
+          {
+            date: "2025-03-15",
+            type: "gap",
+            severity: "error",
+            message: "行情缺失",
+          },
+        ],
+      },
+    ];
+    const boundary = {
+      factAsOfDate: "2026-07-31",
+      valuationCutoff: "2026-07-31",
+    };
+    const view = buildIncomeCalendar(
+      entries,
+      prices,
+      stocks,
+      { month: "2026-07", scope: "all" },
+      [],
+      boundary,
+      coverage,
+    );
+
+    // 本月和年内行情完整，收益可计算
+    expect(view.metrics.month.amount).not.toBeNull();
+    expect(view.metrics.yearToDate.amount).not.toBeNull();
+    // 累计收益因 2025-03-15 受损而不可计算
+    expect(view.metrics.cumulative.amount).toBeNull();
+    expect(view.metrics.cumulative.rate).toBeNull();
+    expect(view.quality.status).toBe("partial");
   });
 });

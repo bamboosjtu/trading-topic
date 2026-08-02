@@ -95,43 +95,81 @@ interface MarketCoverageRow {
   issues_json: string | null;
 }
 
+/** P2-1：issues_json 数组元素的合法值集合。 */
+const VALID_ISSUE_TYPES = new Set([
+  "invalid_ohlcv",
+  "invalid_date",
+  "duplicate",
+  "gap",
+]);
+const VALID_ISSUE_SEVERITIES = new Set(["warning", "error"]);
+
+/** P2-1：逐项校验 issues_json 数组元素结构。 */
+function validateIssueItems(
+  parsed: unknown[],
+): StoredMarketCoverage["issues"] {
+  const valid: NonNullable<StoredMarketCoverage["issues"]> = [];
+  for (const item of parsed) {
+    if (typeof item !== "object" || item === null) continue;
+    const obj = item as Record<string, unknown>;
+    const type = obj.type;
+    const severity = obj.severity;
+    const message = obj.message;
+    const date = obj.date;
+    if (
+      typeof type !== "string" ||
+      !VALID_ISSUE_TYPES.has(type) ||
+      typeof severity !== "string" ||
+      !VALID_ISSUE_SEVERITIES.has(severity) ||
+      typeof message !== "string" ||
+      message.length === 0
+    ) {
+      continue;
+    }
+    if (date !== undefined && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
+      continue;
+    }
+    const issue: NonNullable<StoredMarketCoverage["issues"]>[number] = {
+      type: type as NonNullable<StoredMarketCoverage["issues"]>[number]["type"],
+      severity: severity as "warning" | "error",
+      message,
+    };
+    if (typeof date === "string") issue.date = date;
+    valid.push(issue);
+  }
+  return valid;
+}
+
 /** 将 live_market_coverage SQL 行映射为 StoredMarketCoverage。 */
 function mapStoredMarketCoverage(row: MarketCoverageRow): StoredMarketCoverage {
   let issues: StoredMarketCoverage["issues"] | undefined;
+  let corrupted = false;
   if (row.issues_json) {
     try {
       const parsed = JSON.parse(row.issues_json) as unknown;
       if (Array.isArray(parsed)) {
-        issues = parsed as StoredMarketCoverage["issues"];
+        // P2-1：逐项校验数组元素结构，过滤掉字段不合法的条目
+        issues = validateIssueItems(parsed);
       } else {
-        // P2-3：合法 JSON 但不是数组也视为损坏。
         throw new Error("issues_json 不是数组");
       }
     } catch {
-      // P2：损坏的 issues_json 不能静默降级为无问题详情。
-      // partial 覆盖必须保留至少一个通用 error，否则读模型会错误恢复为 ready。
-      if (row.result_status === "partial") {
-        issues = [
-          {
-            type: "invalid_ohlcv",
-            severity: "error",
-            message: "覆盖问题详情损坏，无法解析 issues_json",
-          },
-        ];
-      }
+      corrupted = true;
     }
   }
-  // P2-3：partial 覆盖的 issues 为空数组或不包含 error 级别问题时，
-  // 同样视为损坏，生成通用 error 保持 partial 状态。
+  // P2：损坏的 issues_json 不能静默降级为无问题详情。
+  // partial 覆盖必须保留至少一个通用 error，否则读模型会错误恢复为 ready。
   if (
     row.result_status === "partial" &&
-    (!issues || !issues.some((issue) => issue.severity === "error"))
+    (corrupted || !issues || !issues.some((issue) => issue.severity === "error"))
   ) {
     issues = [
       {
         type: "invalid_ohlcv",
         severity: "error",
-        message: "覆盖问题详情损坏或缺少 error 级别问题",
+        message: corrupted
+          ? "覆盖问题详情损坏，无法解析 issues_json"
+          : "覆盖问题详情损坏或缺少 error 级别问题",
       },
     ];
   }

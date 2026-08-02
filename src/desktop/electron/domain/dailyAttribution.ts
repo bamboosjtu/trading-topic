@@ -460,9 +460,46 @@ export function buildCoverageImpairments(
 }
 
 /**
+ * P1-1：合并同一证券的多条覆盖损伤。
+ *
+ * 同一证券可能存在多条 partial 覆盖（如不同月份各自有坏行），
+ * 直接构造 Map 会丢失前面的记录。合并时：
+ * - 合并全部日期集合；
+ * - 合并全部区间；
+ * - 去重描述。
+ */
+export function mergeImpairments(
+  impairments: readonly CoverageImpairment[],
+): CoverageImpairment[] {
+  if (impairments.length <= 1) return [...impairments];
+  const merged = new Map<string, CoverageImpairment>();
+  for (const imp of impairments) {
+    const existing = merged.get(imp.symbol);
+    if (existing) {
+      for (const date of imp.impairedDates) existing.impairedDates.add(date);
+      existing.impairedRanges.push(...imp.impairedRanges);
+      for (const desc of imp.descriptions) {
+        if (!existing.descriptions.includes(desc)) {
+          existing.descriptions.push(desc);
+        }
+      }
+    } else {
+      merged.set(imp.symbol, {
+        symbol: imp.symbol,
+        impairedDates: new Set(imp.impairedDates),
+        impairedRanges: [...imp.impairedRanges],
+        descriptions: [...imp.descriptions],
+      });
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
  * P1-3：将覆盖损伤应用到日度归因序列。
  *
- * - 标记已有日期中受影响证券的 totalPnl = null、isPartial = true；
+ * - 标记已有日期中受影响证券的 totalPnl/marketPricePnl/returnRate = null、isPartial = true；
+ * - 日级 totalPnl 在任何贡献受损时也必须为 null，不再由子分量重新计算；
  * - 为缺失的损伤日期注入合成 partial 日，使期间收益自动返回 null。
  */
 export function applyCoverageImpairments(
@@ -470,9 +507,9 @@ export function applyCoverageImpairments(
   impairments: readonly CoverageImpairment[],
 ): DailyAttribution[] {
   if (!impairments.length) return [...daily];
-  const impairmentBySymbol = new Map(
-    impairments.map((imp) => [imp.symbol, imp]),
-  );
+  // P1-1：合并同一证券的多条覆盖损伤
+  const merged = mergeImpairments(impairments);
+  const impairmentBySymbol = new Map(merged.map((imp) => [imp.symbol, imp]));
   const marked = daily.map((day) => {
     let changed = false;
     const newContributions = new Map(day.contributions);
@@ -486,11 +523,20 @@ export function applyCoverageImpairments(
         );
       if (isImpaired && contribution.totalPnl !== null) {
         changed = true;
-        newContributions.set(symbol, { ...contribution, totalPnl: null });
+        // P1-3：价格数据错误时 marketPricePnl、totalPnl、returnRate 都失效。
+        // dividendPnl 属于账本事实，可以保留；tradingCostPnl 同理。
+        newContributions.set(symbol, {
+          ...contribution,
+          totalPnl: null,
+          marketPricePnl: null,
+          returnRate: null,
+        });
       }
     }
     if (!changed) return day;
     const values = [...newContributions.values()];
+    // P1-3：任何贡献的 totalPnl 为 null 时，日级 totalPnl 也必须为 null
+    const hasImpairedContribution = values.some((v) => v.totalPnl === null);
     const marketPriceValues = values.map((v) => v.marketPricePnl);
     const marketPricePnl = marketPriceValues.some((v) => v === null)
       ? null
@@ -501,8 +547,9 @@ export function applyCoverageImpairments(
     const tradingCostPnl = roundMoney(
       values.reduce((s, v) => s + v.tradingCostPnl, 0),
     );
-    const totalPnl =
-      marketPricePnl === null
+    const totalPnl = hasImpairedContribution
+      ? null
+      : marketPricePnl === null
         ? null
         : roundMoney(marketPricePnl + dividendPnl + tradingCostPnl);
     const capitalBase = values.reduce((s, v) => s + v.capitalBase, 0);
@@ -514,17 +561,15 @@ export function applyCoverageImpairments(
       dividendPnl,
       tradingCostPnl,
       capitalBase,
-      returnRate:
-        totalPnl !== null && capitalBase > 0
-          ? totalPnl / capitalBase
-          : null,
+      // P1-3：受损日的收益率不可计算
+      returnRate: null,
       isPartial: true,
     };
   });
   // 为缺失的损伤日期注入合成 partial 日
   const existingDates = new Set(marked.map((day) => day.date));
   const synthetic: DailyAttribution[] = [];
-  for (const impairment of impairments) {
+  for (const impairment of merged) {
     for (const date of impairment.impairedDates) {
       if (existingDates.has(date)) continue;
       synthetic.push({

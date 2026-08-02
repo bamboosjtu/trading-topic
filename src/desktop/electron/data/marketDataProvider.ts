@@ -99,18 +99,34 @@ function assertDates(
  * P2-1：在拥有正式日历的年度中逐交易日核对行情完整性。
  * 返回 warning 级别问题，标记缺失的预期交易日。严格回测层会根据
  * 请求区间判断这些缺失是否落入回测范围并决定是否阻断。
+ *
+ * P2-2：请求区间明显超过一个月但只返回极少交易日时，
+ * 增加 warning 提示可能的接口截断或解析故障。
  */
 function detectDateCompletenessIssues(
   rows: readonly { date: string }[],
   label: string,
+  startDate: string,
+  endDate: string,
 ): MarketDataIssue[] {
-  if (rows.length < 2) return [];
+  const issues: MarketDataIssue[] = [];
+  // P2-2：长区间仅返回极少交易日时提示可能的接口截断
+  if (rows.length < 2) {
+    const span = daysBetween(startDate, endDate);
+    if (span > 30 && rows.length <= 1) {
+      issues.push({
+        type: "gap",
+        severity: "warning",
+        message: `${label}请求区间 ${startDate}～${endDate} 跨度 ${span} 天但仅返回 ${rows.length} 行行情，可能存在接口截断`,
+      });
+    }
+    return issues;
+  }
   const firstDate = rows[0]!.date;
   const lastDate = rows[rows.length - 1]!.date;
   const expected = expectedTradingDatesInRange(firstDate, lastDate);
-  if (!expected.length) return [];
+  if (!expected.length) return issues;
   const present = new Set(rows.map((row) => row.date));
-  const issues: MarketDataIssue[] = [];
   for (const date of expected) {
     if (!present.has(date)) {
       issues.push({
@@ -299,7 +315,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       }
     }
     // P2-1：在正式日历年度内逐交易日核对完整性，产出 warning 级别问题。
-    const dateIssues = detectDateCompletenessIssues(completed, label);
+    const dateIssues = detectDateCompletenessIssues(completed, label, startDate, endDate);
     return {
       rows: completed,
       consistencyRows:
