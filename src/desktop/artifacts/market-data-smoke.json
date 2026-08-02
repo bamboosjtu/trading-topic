@@ -1,15 +1,22 @@
 {
-  "executedAt": "2026-07-29T15:35:10.967Z",
+  "executedAt": "2026-08-02T01:06:14.337Z",
   "requestRange": {
     "startDate": "2026-07-20",
     "endDate": "2026-07-24"
   },
   "instrumentCatalog": {
-    "etfCount": 1609,
+    "etfCount": 1613,
     "verifiedSymbols": [
       "510300",
       "159915"
-    ]
+    ],
+    "provenance": {
+      "source": "新浪财经境内交易所 ETF 代码表",
+      "primarySource": "eastmoney",
+      "fallbackUsed": true,
+      "fallbackReason": "fetch failed",
+      "fetchedAt": "2026-08-02T01:06:11.362Z"
+    }
   },
   "checks": [
     {
@@ -89,8 +96,8 @@
       "label": "收盘后最新已完成交易日",
       "symbol": "600036",
       "source": "tencent",
-      "requestedCutoff": "2026-07-29",
-      "dataCutoff": "2026-07-29",
+      "requestedCutoff": "2026-07-31",
+      "dataCutoff": "2026-07-31",
       "fallbackUsed": false
     }
   ],

@@ -91,50 +91,89 @@ function createWindow(): void {
     return { action: "deny" };
   });
 
+  // P1-2：拦截当前窗口导航。桌面应用为 SPA，不允许窗口内导航到外部页面，
+  // 避免 preload 向被注入的远程页面暴露 window.desktop。
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!isTrustedAppUrl(url)) event.preventDefault();
+  });
+
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   if (devUrl) void win.loadURL(devUrl);
   else void win.loadFile(join(__dirname, "..", "renderer", "index.html"));
 }
 
+/** P1-2：判断 URL 是否为可信的应用页面（开发服务器或本地文件）。 */
+function isTrustedAppUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const devUrl = process.env["ELECTRON_RENDERER_URL"];
+    if (devUrl && url.startsWith(devUrl)) return true;
+    if (parsed.protocol === "file:") return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** P1-2：校验 IPC 消息来源，拒绝不可信页面调用特权接口。 */
+function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
+  const url = event.senderFrame?.url;
+  if (!url || !isTrustedAppUrl(url)) {
+    throw new Error("拒绝不可信页面调用");
+  }
+}
+
 function registerIpc(): void {
-  ipcMain.handle("app:health", () => {
+  // P1-2：所有 IPC handler 统一通过 secureHandle 包装，校验 sender 来源。
+  function secureHandle(
+    channel: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown,
+  ): void {
+    ipcMain.handle(channel, (event, ...args) => {
+      assertTrustedSender(event);
+      return handler(event, ...args);
+    });
+  }
+
+  secureHandle("app:health", () => {
     return {
       status: "ok",
       version: app.getVersion(),
       storage: "sqlite",
     };
   });
-  ipcMain.handle("diagnostics:get", () => service.getDiagnostics());
-  ipcMain.handle("backtest:run", (_event, request: BacktestRequest) =>
+  secureHandle("diagnostics:get", () => service.getDiagnostics());
+  secureHandle("backtest:run", (_event, request: BacktestRequest) =>
     service.runBacktest(request),
   );
-  ipcMain.handle("stocks:list", () => service.listAStocks());
-  ipcMain.handle("etfs:list", () => service.listEtfs());
-  ipcMain.handle("backtest:experiments:list", () =>
+  secureHandle("stocks:list", () => service.listAStocks());
+  secureHandle("etfs:list", () => service.listEtfs());
+  secureHandle("backtest:experiments:list", () =>
     service.listBacktestExperiments(),
   );
-  ipcMain.handle(
+  secureHandle(
     "backtest:experiment:get",
     (_event, experimentId: string) =>
       service.getBacktestExperiment(experimentId),
   );
-  ipcMain.handle(
+  secureHandle(
     "backtest:experiment:delete",
     (_event, experimentId: string) =>
       service.deleteBacktestExperiment(experimentId),
   );
-  ipcMain.handle("backtest:detail", (_event, backtestId: string) =>
+  secureHandle("backtest:detail", (_event, backtestId: string) =>
     service.getBacktestDetail(backtestId),
   );
-  ipcMain.handle("backtest:workspace:get", () =>
+  secureHandle("backtest:workspace:get", () =>
     service.getBacktestWorkspace(),
   );
-  ipcMain.handle(
+  secureHandle(
     "backtest:workspace:save",
     (_event, state: BacktestWorkspaceState) =>
       service.saveBacktestWorkspace(state),
   );
-  ipcMain.handle(
+  secureHandle(
     "backtest:experiment:export",
     async (_event, experimentId: string) => {
       const experiment = service.getBacktestExperiment(experimentId);
@@ -155,9 +194,9 @@ function registerIpc(): void {
       return { cancelled: false, path: result.filePath };
     },
   );
-  ipcMain.handle("positions:overview", () => service.getPositionsOverview());
-  ipcMain.handle("positions:refresh", () => service.refreshPositionsMarket());
-  ipcMain.handle("positions:export", async () => {
+  secureHandle("positions:overview", () => service.getPositionsOverview());
+  secureHandle("positions:refresh", () => service.refreshPositionsMarket());
+  secureHandle("positions:export", async () => {
     const overview = service.getPositionsOverview();
     const result = await dialog.showSaveDialog({
       title: "导出持仓明细",
@@ -169,13 +208,13 @@ function registerIpc(): void {
     database.log("info", "已导出持仓明细");
     return { cancelled: false, path: result.filePath };
   });
-  ipcMain.handle("ledger:query", (_event, query: LedgerQuery) =>
+  secureHandle("ledger:query", (_event, query: LedgerQuery) =>
     service.queryLedger(query),
   );
-  ipcMain.handle("ledger:record:get", (_event, entryId: string) =>
+  secureHandle("ledger:record:get", (_event, entryId: string) =>
     service.getLedgerRecord(entryId),
   );
-  ipcMain.handle("ledger:export", async (_event, query: LedgerQuery) => {
+  secureHandle("ledger:export", async (_event, query: LedgerQuery) => {
     const exportResult = service.exportLedger({ ...query, page: 1, pageSize: 100 });
     const result = await dialog.showSaveDialog({
       title: "导出交易流水",
@@ -190,12 +229,12 @@ function registerIpc(): void {
     database.log("info", `已导出 ${exportResult.rows.length} 条交易流水`);
     return { cancelled: false, path: result.filePath };
   });
-  ipcMain.handle(
+  secureHandle(
     "income-calendar:get",
     (_event, query: IncomeCalendarQuery) =>
       service.getIncomeCalendar(query),
   );
-  ipcMain.handle(
+  secureHandle(
     "income-calendar:export",
     async (_event, query: IncomeCalendarQuery) => {
       const view = await service.getIncomeCalendar(query);
@@ -210,37 +249,37 @@ function registerIpc(): void {
       return { cancelled: false, path: result.filePath };
     },
   );
-  ipcMain.handle(
+  secureHandle(
     "ledger:preview",
     (_event, input: LedgerEntryInput, replacingEntryId?: string) =>
       service.previewLedger(input, replacingEntryId),
   );
-  ipcMain.handle("ledger:add", (_event, input: LedgerEntryInput) =>
+  secureHandle("ledger:add", (_event, input: LedgerEntryInput) =>
     service.addLedger(input),
   );
-  ipcMain.handle(
+  secureHandle(
     "ledger:dividend-reinvestment:preview",
     (_event, input: DividendReinvestmentInput) =>
       service.previewDividendReinvestment(input),
   );
-  ipcMain.handle(
+  secureHandle(
     "ledger:dividend-reinvestment:add",
     (_event, input: DividendReinvestmentInput) =>
       service.addDividendReinvestment(input),
   );
-  ipcMain.handle(
+  secureHandle(
     "ledger:correct",
     (_event, entryId: string, input: LedgerEntryInput) =>
       service.correctLedger(entryId, input),
   );
-  ipcMain.handle(
+  secureHandle(
     "ledger:reverse",
     (_event, entryId: string, reason: string) =>
       service.reverseLedger(entryId, reason),
   );
-  ipcMain.handle("settings:get", () => database.getSettings());
+  secureHandle("settings:get", () => database.getSettings());
 
-  ipcMain.handle("backup:export", async () => {
+  secureHandle("backup:export", async () => {
     const result = await dialog.showSaveDialog({
       title: "导出 JSON 备份",
       defaultPath: `投资研究实验室-backup-${timestamp()}.json`,
@@ -256,7 +295,7 @@ function registerIpc(): void {
     return { cancelled: false, path: result.filePath };
   });
 
-  ipcMain.handle("backup:restore", async () => {
+  secureHandle("backup:restore", async () => {
     const selected = await dialog.showOpenDialog({
       title: "选择 JSON 备份",
       properties: ["openFile"],
@@ -366,7 +405,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("logs:export", async () => {
+  secureHandle("logs:export", async () => {
     const result = await dialog.showSaveDialog({
       title: "导出运行日志",
       defaultPath: `投资研究实验室-log-${timestamp()}.txt`,

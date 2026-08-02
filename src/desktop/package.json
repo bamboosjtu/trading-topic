@@ -1,5 +1,5 @@
 {
-  "name": "desktop",
+  "name": "trading-topic",
   "version": "0.1.0",
   "private": true,
   "description": "投资研究实验室 R1 桌面应用",
@@ -12,10 +12,13 @@
     "dev": "electron-vite dev",
     "dev:renderer": "vite --config renderer/vite.config.ts",
     "check:market-calendar": "node scripts/check-market-calendar.mjs",
-    "prebuild": "npm run check:market-calendar",
+    "check:domain-boundaries": "node scripts/check-domain-boundaries.mjs",
+    "prebuild": "npm run check:market-calendar && npm run check:domain-boundaries",
     "build": "electron-vite build",
+    "rebuild": "electron-builder install-app-deps",
     "pack:portable": "npm run build && electron-builder --win portable --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pretest": "npm run check:domain-boundaries",
     "test": "vitest run",
     "smoke:market-data": "node scripts/run-market-data-smoke.mjs",
     "preview": "electron-vite preview"
@@ -66,7 +69,7 @@
       "node_modules/better-sqlite3/**/*"
     ],
     "electronDist": "node_modules/electron/dist",
-    "npmRebuild": false,
+    "npmRebuild": true,
     "win": {
       "target": [
         {

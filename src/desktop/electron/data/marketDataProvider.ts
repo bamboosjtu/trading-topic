@@ -96,12 +96,16 @@ function assertDates(
 }
 
 /**
- * P2-1：在拥有正式日历的年度中逐交易日核对行情完整性。
- * 返回 warning 级别问题，标记缺失的预期交易日。严格回测层会根据
- * 请求区间判断这些缺失是否落入回测范围并决定是否阻断。
+ * P1-1：在拥有正式日历的年度中逐交易日核对行情完整性。
  *
- * P2-2：请求区间明显超过一个月但只返回极少交易日时，
- * 增加 warning 提示可能的接口截断或解析故障。
+ * 检查范围覆盖请求区间 [startDate, endDate]，而非仅 [firstDate, lastDate]。
+ * 已有正式日历年度内缺少的预期交易日升级为 error，严格回测必须阻断。
+ *
+ * 头部截断（首条返回行情晚于请求开始日）生成单条无日期 error，
+ * 表示整个前置区间不可信。内部缺口逐日生成带日期 error。
+ * 尾部缺失由 tailStatus 处理，不在此生成 error。
+ *
+ * 没有正式日历的区间仍检查极端截断，仅生成 warning。
  */
 function detectDateCompletenessIssues(
   rows: readonly { date: string }[],
@@ -110,33 +114,53 @@ function detectDateCompletenessIssues(
   endDate: string,
 ): MarketDataIssue[] {
   const issues: MarketDataIssue[] = [];
-  // P2-2：长区间仅返回极少交易日时提示可能的接口截断
-  if (rows.length < 2) {
-    const span = daysBetween(startDate, endDate);
-    if (span > 30 && rows.length <= 1) {
-      issues.push({
-        type: "gap",
-        severity: "warning",
-        message: `${label}请求区间 ${startDate}～${endDate} 跨度 ${span} 天但仅返回 ${rows.length} 行行情，可能存在接口截断`,
-      });
+  const expected = expectedTradingDatesInRange(startDate, endDate);
+  if (!expected.length) {
+    // 没有正式日历的区间仍检查极端截断
+    if (rows.length < 2) {
+      const span = daysBetween(startDate, endDate);
+      if (span > 30 && rows.length <= 1) {
+        issues.push({
+          type: "gap",
+          severity: "warning",
+          message: `${label}请求区间 ${startDate}～${endDate} 跨度 ${span} 天但仅返回 ${rows.length} 行行情，可能存在接口截断`,
+        });
+      }
     }
     return issues;
   }
-  const firstDate = rows[0]!.date;
-  const lastDate = rows[rows.length - 1]!.date;
-  const expected = expectedTradingDatesInRange(firstDate, lastDate);
-  if (!expected.length) return issues;
   const present = new Set(rows.map((row) => row.date));
-  for (const date of expected) {
-    if (!present.has(date)) {
-      issues.push({
-        date,
-        type: "gap",
-        severity: "warning",
-        message: `${label}在正式交易日历年度内缺少 ${date} 的行情`,
-      });
-    }
+  const missing = expected.filter((date) => !present.has(date));
+  if (!missing.length) return issues;
+
+  const firstRowDate = rows[0]?.date;
+  const lastRowDate = rows.at(-1)?.date;
+  // 头部截断：首条返回行情之前的缺失
+  const headMissing = firstRowDate
+    ? missing.filter((date) => date < firstRowDate)
+    : missing;
+  // 内部缺口：首条和末条返回行情之间的缺失
+  const internalMissing = firstRowDate && lastRowDate
+    ? missing.filter((date) => date > firstRowDate && date < lastRowDate)
+    : [];
+
+  if (headMissing.length) {
+    // 头部截断生成单条无日期 error，表示整个前置区间不可信
+    issues.push({
+      type: "gap",
+      severity: "error",
+      message: `${label}请求区间 ${startDate}～${endDate} 内存在头部截断，缺少 ${headMissing.length} 个预期交易日（首个预期交易日 ${headMissing[0]}，首条返回行情 ${firstRowDate ?? "无"}）`,
+    });
   }
+  for (const date of internalMissing) {
+    issues.push({
+      date,
+      type: "gap",
+      severity: "error",
+      message: `${label}在正式交易日历年度内缺少 ${date} 的行情`,
+    });
+  }
+  // 尾部缺失由 tailStatus 处理，不生成 error
   return issues;
 }
 
@@ -337,13 +361,20 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     message,
   });
 
+  /** 判断候选是否存在 error 级别数据质量问题（头部截断或内部缺口）。 */
+  const hasErrorIssues = (candidate: Candidate | null): boolean =>
+    candidate?.rowIssues.some((issue) => issue.severity === "error") ?? false;
+
   let primaryCandidate: Candidate | null = null;
   let primaryIssueMessage: string | null = null;
   try {
     primaryCandidate = await evaluate(primary, "腾讯");
+    // P1-1：主源存在 error 级别问题（头部截断、内部缺口）时不能直接接受，
+    // 必须请求备用源尝试获取更完整的数据。
     if (
       primaryCandidate.rows.length &&
-      primaryCandidate.tailStatus !== "incomplete"
+      primaryCandidate.tailStatus !== "incomplete" &&
+      !hasErrorIssues(primaryCandidate)
     ) {
       return {
         rows: primaryCandidate.rows,
@@ -360,7 +391,9 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       };
     }
     primaryIssueMessage = primaryCandidate.rows.length
-      ? `腾讯行情仅更新至 ${primaryCandidate.rows.at(-1)?.date ?? "未知日期"}，尾部不完整`
+      ? hasErrorIssues(primaryCandidate)
+        ? `腾讯行情存在数据质量问题（${primaryCandidate.rowIssues.filter((i) => i.severity === "error").length} 个 error）`
+        : `腾讯行情仅更新至 ${primaryCandidate.rows.at(-1)?.date ?? "未知日期"}，尾部不完整`
       : "腾讯在请求区间返回空数据";
   } catch (error) {
     primaryIssueMessage = error instanceof Error ? error.message : String(error);
@@ -387,7 +420,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
 
   if (
     fallbackCandidate?.rows.length &&
-    fallbackCandidate.tailStatus !== "incomplete"
+    fallbackCandidate.tailStatus !== "incomplete" &&
+    !hasErrorIssues(fallbackCandidate)
   ) {
     return {
       rows: fallbackCandidate.rows,
@@ -434,7 +468,10 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     };
   }
 
-  const incompleteCandidates = [
+  // P1-1：两个来源都未被直接接受时（均有 error 或尾部不完整），
+  // 选择行情行数更多（截断更少）的候选。保留实际 tailStatus：
+  // 头部截断但尾部完整时保持 "complete"，error 问题负责阻断回测。
+  const bestCandidates = [
     ...(primaryCandidate?.rows.length
       ? [{ source: "tencent" as const, candidate: primaryCandidate }]
       : []),
@@ -442,16 +479,19 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       ? [{ source: "sina" as const, candidate: fallbackCandidate }]
       : []),
   ].sort((left, right) =>
+    right.candidate.rows.length - left.candidate.rows.length ||
     (right.candidate.rows.at(-1)?.date ?? "").localeCompare(
       left.candidate.rows.at(-1)?.date ?? "",
     ),
   );
-  const selected = incompleteCandidates[0];
+  const selected = bestCandidates[0];
   if (selected) {
-    if (fallbackCandidate?.rows.length) {
-      fallbackIssueMessage = `新浪行情仅更新至 ${
-        fallbackCandidate.rows.at(-1)?.date ?? "未知日期"
-      }，尾部不完整`;
+    if (fallbackCandidate?.rows.length && selected.source === "tencent") {
+      fallbackIssueMessage = hasErrorIssues(fallbackCandidate)
+        ? `新浪行情存在数据质量问题`
+        : `新浪行情仅更新至 ${
+            fallbackCandidate.rows.at(-1)?.date ?? "未知日期"
+          }，尾部不完整`;
     } else if (!fallbackIssueMessage && fallbackEmpty) {
       fallbackIssueMessage = "新浪在请求区间返回空数据";
     }
@@ -459,11 +499,14 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     if (primaryIssueMessage) issues.push(providerIssue(primaryIssueMessage));
     if (fallbackIssueMessage) issues.push(providerIssue(fallbackIssueMessage));
     issues.push(...selected.candidate.rowIssues);
+    // P1-1：保留候选的实际 tailStatus。头部截断但尾部完整时为 "complete"，
+    // error 问题负责阻断回测；尾部不完整时为 "incomplete"。
+    const tailStatus: MarketTailStatus = selected.candidate.tailStatus;
     return {
       rows: selected.candidate.rows,
       requestedThrough: endDate,
       dataCutoff: selected.candidate.rows.at(-1)?.date ?? null,
-      tailStatus: "incomplete",
+      tailStatus,
       issues,
       provenance: provenance(
         selected.source,

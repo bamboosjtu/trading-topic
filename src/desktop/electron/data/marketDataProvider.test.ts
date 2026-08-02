@@ -444,3 +444,160 @@ describe("腾讯主源与新浪整段兜底", () => {
     ).toThrow("OHLCV");
   });
 });
+
+/** P1-1：严格回测完整性检查升级测试 */
+function staticProvider(
+  source: "tencent" | "sina",
+  rows: { date: string; close: number }[],
+): MarketDataProvider {
+  return {
+    source,
+    fetchPrices: vi.fn(async () => ({ rows, issues: [] })),
+    fetchAdjustedBars: vi.fn(async () => ({ rows: [], issues: [] })),
+  };
+}
+
+const JULY_2026_WEEKDAYS = [
+  "2026-07-01", "2026-07-02", "2026-07-03",
+  "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10",
+  "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17",
+  "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24",
+  "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31",
+];
+
+describe("P1-1 严格回测行情完整性检查", () => {
+  it("五年请求仅返回最后 2 行时主源产生头部截断 error 并请求备用源", async () => {
+    const truncatedRows = [
+      { date: "2026-07-30", close: 5 },
+      { date: "2026-07-31", close: 5.1 },
+    ];
+    const primary = staticProvider("tencent", truncatedRows);
+    const fallback = staticProvider("sina", truncatedRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2020-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 主源存在 error 时必须请求备用源
+    expect(fallback.fetchPrices).toHaveBeenCalled();
+    // 结果包含头部截断 error
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]!.message).toContain("头部截断");
+  });
+
+  it("五年请求仅返回最后 100 行仍产生头部截断 error", async () => {
+    // 返回 2026-07 全部交易日（23 行），请求从 2024-01-01 开始
+    const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
+      date,
+      close: 5 + i * 0.01,
+    }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2024-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]!.message).toContain("头部截断");
+    // 缺失的预期交易日数量应远大于 23
+    expect(errors[0]!.message).toMatch(/缺少 \d+ 个预期交易日/);
+  });
+
+  it("请求区间内部少一个正式交易日时产生带日期的 error", async () => {
+    // 返回 2026-07 全部交易日 except 2026-07-15
+    const rows = JULY_2026_WEEKDAYS
+      .filter((d) => d !== "2026-07-15")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", rows);
+    const fallback = staticProvider("sina", rows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.date).toBe("2026-07-15");
+    expect(errors[0]!.message).toContain("2026-07-15");
+  });
+
+  it("新股上市导致请求头部无数据时仍产生头部截断 error", async () => {
+    // 假设 2026-07-15 上市，返回 07-15 到 07-31 的行情
+    const listingRows = JULY_2026_WEEKDAYS
+      .filter((d) => d >= "2026-07-15")
+      .map((date, i) => ({ date, close: 5 + i * 0.01 }));
+    const primary = staticProvider("tencent", listingRows);
+    const fallback = staticProvider("sina", listingRows);
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2020-01-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 没有上市日证据时，不能把首条行情日期解释成上市日
+    const errors = result.issues.filter((i) => i.severity === "error");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]!.message).toContain("头部截断");
+  });
+
+  it("主源头部截断时使用备用源完整数据且不产生 error", async () => {
+    // 主源仅返回最后 2 行（头部截断）
+    const primary = staticProvider("tencent", [
+      { date: "2026-07-30", close: 5 },
+      { date: "2026-07-31", close: 5 },
+    ]);
+    // 备用源返回完整 7 月数据（价格一致以通过跨源校验）
+    const fallback = staticProvider(
+      "sina",
+      JULY_2026_WEEKDAYS.map((date) => ({ date, close: 5 })),
+    );
+
+    const result = await fetchWithProviderFallback(
+      "prices",
+      "601398",
+      "2026-07-01",
+      "2026-07-31",
+      primary,
+      fallback,
+      new Date("2026-07-31T08:00:00Z"),
+    );
+
+    // 备用源被调用
+    expect(fallback.fetchPrices).toHaveBeenCalled();
+    // 使用备用源数据
+    expect(result.provenance.source).toBe("sina");
+    expect(result.provenance.fallbackUsed).toBe(true);
+    // 无 error 级别问题
+    expect(result.issues.filter((i) => i.severity === "error")).toHaveLength(0);
+    // 尾部完整
+    expect(result.tailStatus).toBe("complete");
+    // 返回完整 7 月数据
+    expect(result.rows).toHaveLength(JULY_2026_WEEKDAYS.length);
+  });
+});
