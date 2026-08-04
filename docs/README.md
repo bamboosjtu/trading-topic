@@ -11,8 +11,4 @@
 
 Labs、Research、Src 三域隔离的完整决策见根目录 [`AGENTS.md`](../AGENTS.md) 与 [`product/ARCHITECTURE.md` §2](product/ARCHITECTURE.md)，不单独维护 ADR 文件。
 
-## 教程资料（`tutorial/`）
 
-`tutorial/` 收录构建 Labs 教程与产物时用到的脚本和说明（如 AKShare 接口体检、筛选与 API 速查），详见 [`tutorial/akshare.md`](tutorial/akshare.md) 末尾说明。
-
-研究主线收敛在 `labs/` 下，每个主题为一个独立 Lab 目录（金融数据获取相关材料位于 `labs/00_金融数据获取/`，银行股定投回测位于 `labs/01_银行股定投回测/`）；可复现研究说明位于 `research/<topic>/`，最终研究成稿位于 `reports/`。
