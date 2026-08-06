@@ -1,1240 +1,1370 @@
-"""AkShare 股票接口健康检测脚本
+"""AKShare 股票接口健康检测脚本。
 
-从官方文档 https://akshare.akfamily.xyz/data/stock/stock.html 解析接口清单，
-逐个调用检测可用性，输出 xlsx 结果，
-同步更新 akshare_stock_api.xlsx 和 akshare_api.md。
+职责仅限于：
+1. 从 AKShare 官方股票文档和当前安装包发现股票接口；
+2. 逐个执行最小化调用，检查接口在当前环境下是否可运行；
+3. 按“数据源 / 接口名称”排序；
+4. 输出不可变的 JSON/XLSX 运行快照，并更新 latest 副本。
 
-运行方式:
+本脚本不负责业务分类，不会修改：
+- akshare_stock_api.xlsx
+- akshare_api.md
+- akshare_tutorial.ipynb
+
+默认运行方式：
     uv run --project labs python labs/00_金融数据获取/akshare_health_check.py
+
+快速验证前 10 个接口：
+    uv run --project labs python labs/00_金融数据获取/akshare_health_check.py --limit 10
+
+仅检测名称匹配的接口：
+    uv run --project labs python labs/00_金融数据获取/akshare_health_check.py --match "stock_zh_a"
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import inspect
+import json
+import multiprocessing as mp
+import os
+import platform
 import re
+import shutil
+import sys
 import time
 import traceback
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
+from urllib.parse import urlparse
 
 import akshare as ak
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 
-# ── 配置 ──────────────────────────────────────────────
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - AKShare 环境通常已间接安装
+    BeautifulSoup = None  # type: ignore[assignment]
+
+
+# -----------------------------------------------------------------------------
+# 配置
+# -----------------------------------------------------------------------------
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 DOC_URL = "https://akshare.akfamily.xyz/data/stock/stock.html"
-STOCK_API_XLSX = SCRIPT_DIR / "akshare_stock_api.xlsx"
-HEALTH_CHECK_XLSX = SCRIPT_DIR / "akshare_health_check_result.xlsx"
-AKSHARE_API_MD = SCRIPT_DIR / "akshare_api.md"
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "health"
 
-TIMEOUT_PER_CALL = 15  # 单个接口调用超时(秒)
-TEST_SYMBOL = "000001"       # 平安银行
-TEST_SYMBOL_SH = "600036"    # 招商银行
-TEST_START = "20260701"
-TEST_END = "20260720"
-TEST_DATE = "20260720"
+SNAPSHOT_SCHEMA_VERSION = "1.0"
+TEST_CONFIG_VERSION = "1.0"
+DEFAULT_TIMEOUT_SECONDS = 15.0
 
-# 官方标题对少数接口过于笼统时，按返回数据覆盖展示名称，避免把市场范围写错。
-DISPLAY_NAME_OVERRIDES = {
-    "stock_hk_spot": "港股实时行情数据-新浪",
-    "stock_zh_a_hist_tx": "A股历史行情数据-腾讯",
-    "stock_zh_a_new": "次新股实时行情数据-新浪",
-    "stock_zh_ah_spot": "A+H股实时行情数据-腾讯",
-    "stock_zh_b_spot": "B股实时行情数据-新浪",
-    "stock_zh_kcb_spot": "科创板实时行情数据-新浪",
+TEST_SYMBOL_A = "000001"       # 平安银行
+TEST_SYMBOL_A_SH = "600036"    # 招商银行
+TEST_SYMBOL_A_TX = "sz000001"
+TEST_SYMBOL_HK = "00700"
+TEST_SYMBOL_US = "105.MSFT"
+
+STATUS_AVAILABLE = "AVAILABLE"
+STATUS_EMPTY = "EMPTY"
+STATUS_FAILED = "FAILED"
+STATUS_TIMEOUT = "TIMEOUT"
+STATUS_MISSING = "MISSING"
+STATUS_SKIPPED = "SKIPPED"
+
+STATUS_ORDER = {
+    STATUS_AVAILABLE: 0,
+    STATUS_EMPTY: 1,
+    STATUS_SKIPPED: 2,
+    STATUS_TIMEOUT: 3,
+    STATUS_FAILED: 4,
+    STATUS_MISSING: 5,
 }
 
-# ── 面向投资研究的 7 领域分类 ─────────────────────────
-CATEGORIES = [
-    "universe：证券主数据与股票池",
-    "market：行情与估值快照",
-    "fundamentals：公司与财务基本面",
-    "corporate_actions：公司行为与股本事件",
-    "sector：行业、概念与市场结构",
-    "flows_events：资金、交易行为与市场事件",
-    "research_disclosure：研报、公告与资讯",
-]
-
-CAT_NUMBER = {
-    category: number
-    for category, number in zip(CATEGORIES, "一二三四五六七", strict=True)
-}
-
-# “可用”是面向当前研究的状态，不等同于“函数能被调用”。
-# 不同数据类型的更新节奏不同，因此使用保守的、按子类区分的日期窗口。
-QUALITY_USABLE = "可用"
-QUALITY_EXPIRED = "过期"
-QUALITY_UNAVAILABLE = "不可用"
-
-FRESHNESS_WINDOWS_DAYS = {
-    "intraday": 45,
-    "snapshot": 90,
-    "quotes": 90,
-    "daily": 365,
-    "history": 730,
-    "valuation": 730,
-    "industry_metrics": 730,
-    "financial_statements": 900,
-    "financial_indicators": 900,
-    "forecasts": 900,
-    "shareholders": 900,
-    "fund_flow": 365,
-    "margin": 365,
-    "northbound": 365,
-    "block_trade": 365,
-    "limit_up": 365,
-    "sentiment": 365,
-    "unusual_trade": 365,
-    "investor_relations": 730,
-    "announcements": 730,
-    "analyst_forecasts": 900,
-    "news": 180,
-    "research_reports": 730,
-    "capital_change": 730,
-    "unlock": 730,
-    "rights_issue": 730,
-    "repurchase": 730,
-    "pledge": 730,
-    "dividend": 730,
-    "issuance": 365,
-}
-
-DATE_COLUMN_TOKENS = (
-    "date", "日期", "时间", "交易日", "报告期", "公告日", "发布日", "更新时间",
-    "更新日期", "统计日", "截止日", "披露日", "申报日", "实施日", "解禁日",
-    "除权日", "股权登记日", "回购日", "分红日", "上榜日",
+SENSITIVE_KEY_RE = re.compile(
+    r"token|api[_-]?key|authorization|cookie|password|secret",
+    re.IGNORECASE,
 )
-STATIC_DATE_COLUMNS = {"上市日期", "成立日期", "注册日期"}
+
+PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
+
+# 文档目标地址优先于函数名后缀，用于得到单一且稳定的数据源字段。
+DOMAIN_SOURCE_MAP: tuple[tuple[str, str], ...] = (
+    ("eastmoney.com", "东方财富"),
+    ("sina.com.cn", "新浪财经"),
+    ("sina.com", "新浪财经"),
+    ("qq.com", "腾讯财经"),
+    ("xueqiu.com", "雪球"),
+    ("sse.com.cn", "上海证券交易所"),
+    ("szse.cn", "深圳证券交易所"),
+    ("bse.cn", "北京证券交易所"),
+    ("hkex.com.hk", "香港交易所"),
+    ("10jqka.com.cn", "同花顺"),
+    ("iwencai.com", "i问财"),
+    ("cninfo.com.cn", "巨潮资讯"),
+    ("baidu.com", "百度股市通"),
+    ("cls.cn", "财联社"),
+    ("futunn.com", "富途牛牛"),
+    ("futu5.com", "富途牛牛"),
+    ("legulegu.com", "乐咕乐股"),
+    ("eniu.com", "亿牛网"),
+    ("csindex.com.cn", "中证指数"),
+    ("swindex.com", "申万指数"),
+    ("csrc.gov.cn", "中国证监会"),
+    ("stcn.com", "证券时报"),
+    ("chinamoney.com.cn", "中国货币网"),
+    ("nasdaq.com", "Nasdaq"),
+)
+
+# 只覆盖那些通用参数推断容易明显出错的接口。
+FUNCTION_ARG_OVERRIDES: dict[str, dict[str, Any]] = {
+    "stock_zh_a_hist": {
+        "symbol": TEST_SYMBOL_A,
+        "period": "daily",
+        "adjust": "",
+    },
+    "stock_zh_a_hist_tx": {
+        "symbol": TEST_SYMBOL_A_TX,
+        "adjust": "",
+    },
+    "stock_zh_a_daily": {
+        "symbol": TEST_SYMBOL_A_TX,
+        "adjust": "",
+    },
+    "stock_zh_a_hist_min_em": {
+        "symbol": TEST_SYMBOL_A,
+        "period": "5",
+        "adjust": "",
+    },
+    "stock_zh_a_hist_pre_min_em": {
+        "symbol": TEST_SYMBOL_A,
+    },
+    "stock_hk_hist": {
+        "symbol": TEST_SYMBOL_HK,
+        "period": "daily",
+        "adjust": "",
+    },
+    "stock_hk_hist_min_em": {
+        "symbol": TEST_SYMBOL_HK,
+        "period": "5",
+        "adjust": "",
+    },
+    "stock_us_hist": {
+        "symbol": TEST_SYMBOL_US,
+        "period": "daily",
+        "adjust": "",
+    },
+    "stock_us_hist_min_em": {
+        "symbol": TEST_SYMBOL_US,
+        "period": "5",
+        "adjust": "",
+    },
+    "stock_sector_spot": {
+        "indicator": "行业",
+    },
+    "stock_sector_detail": {
+        "sector": "hangye_ZB07",
+    },
+}
 
 
-def _return_columns(result: Any) -> list[str]:
-    """提取返回值的字段名，避免把整份大表写入检测结果。"""
-    if isinstance(result, pd.DataFrame):
-        return [str(column) for column in result.columns]
-    if isinstance(result, pd.Series):
-        if result.name is not None:
-            return [str(result.name)]
-        return [str(index) for index in result.index[:50]]
-    if isinstance(result, dict):
-        return [str(key) for key in result.keys()]
-    if isinstance(result, (list, tuple)) and result and isinstance(result[0], dict):
-        return [str(key) for key in result[0].keys()]
-    return []
+# -----------------------------------------------------------------------------
+# 数据模型
+# -----------------------------------------------------------------------------
 
 
-def _classify_return_semantics(result: Any) -> str | None:
-    """按实际返回字段补充语义分类，优先于官方标题和函数名。"""
-    columns = {column.lower() for column in _return_columns(result)}
-    if not columns:
-        return None
+@dataclass(slots=True)
+class InterfaceDefinition:
+    """接口目录信息，不包含业务分类。"""
 
-    def contains_any(*tokens: str) -> bool:
-        return any(token.lower() in column for column in columns for token in tokens)
-
-    # 上交所/深交所市场总貌：项目 × 股票/主板/科创板，而非单只股票行情。
-    if "项目" in columns and columns.intersection({"股票", "主板", "科创板", "总市值", "流通市值"}):
-        return CATEGORIES[1]
-
-    # 板块自身的行情/资金字段归 sector；先于通用“净流入”规则判断。
-    if columns.intersection({"板块", "行业", "概念"}) and columns.intersection(
-        {"涨跌幅", "总成交额", "净流入", "上涨家数", "下跌家数"}
-    ):
-        return CATEGORIES[4]
-
-    if contains_any("除权除息", "股权登记", "分红", "送股", "转增", "派息", "解禁数量", "回购价格"):
-        return CATEGORIES[3]
-
-    if contains_any("公告标题", "新闻标题", "研报标题", "资讯标题", "标题"):
-        return CATEGORIES[6]
-
-    if contains_any("报告期", "营业收入", "净利润", "资产总计", "负债合计", "每股收益"):
-        return CATEGORIES[2]
-
-    return None
+    interface_name: str
+    description: str = ""
+    target_url: str = ""
+    input_params: list[str] = field(default_factory=list)
+    upstream: str = "未识别"
+    documented: bool = False
+    installed: bool = False
+    callable: bool = False
 
 
-def classify_interface(func_name: str, description: str = "", sample: Any = None) -> str:
-    """按 ``1-akshare股票数据源.md`` 推断接口所属的 7 个稳定领域。
+@dataclass(slots=True)
+class HealthResult:
+    """单个接口的一次运行结果。"""
 
-    规则按数据语义而不是上游网站组织。优先级从边界最明确的领域到
-    最通用的行情领域；同一上游的接口因此可能分属不同领域。
-    """
-    name = func_name.lower()
-    name_category = classify_interface(func_name, description) if sample is not None else None
-    # 返回值语义只在它与稳定的函数名分类一致，或函数名落入通用行情兜底时参与决策。
-    # 这样不会把 IPO/重大合同/行业比较等明确领域，因返回字段里出现“报告/营业收入”而误改。
-    semantic_category = _classify_return_semantics(sample) if sample is not None else None
-    if semantic_category is not None and (
-        semantic_category == name_category or name_category == CATEGORIES[1]
-    ):
-        return semantic_category
-
-    desc = description or ""
-
-    # 虽以 news_ 命名，但返回的是除权除息/分红事件，按公司行为归档。
-    if name == "news_trade_notify_dividend_baidu":
-        return CATEGORIES[3]
-
-    # 官方文档中少量股票接口以 news_ 开头；仍按“资讯/事件通知”语义归档。
-    if name.startswith("news_"):
-        return CATEGORIES[6]
-
-    # 行业质押统计研究的是行业结构，不是单家公司行为。
-    if name == "stock_gpzy_industry_data_em":
-        return CATEGORIES[4]
-
-    # 1. universe：证券主数据、上市状态、分类归属和股票池成分
-    if any(kw in name for kw in [
-        "info_a_code", "info_bj_name", "info_sh_name", "info_sz_name",
-        "info_change_name", "info_sz_change", "info_sz_delist", "info_sh_delist",
-        "staq_net_stop", "zh_a_st_em", "zh_a_stop_em", "zh_ah_name",
-        "board_concept_cons", "board_industry_cons", "concept_cons_futu",
-        "ggt_components", "industry_category", "industry_change",
-        "security_profile", "basic_info", "sector_detail",
-    ]):
-        return CATEGORIES[0]
-
-    # 4. corporate_actions：公司发起或直接改变持有人权益/股本的事件
-    if any(kw in name for kw in [
-        "dividend", "fhps", "fhpx", "history_dividend",
-        "repurchase", "restricted_release",
-        "allotment", "add_stock", "qbzf", "pg_em",
-        "ipo_", "register_", "new_ipo", "new_gh", "xgsglb", "xgsr", "dxsyl",
-        "gpzy_", "equity_mortgage",
-        "share_change", "share_hold_change", "shareholder_change",
-        "management_change", "ggcg", "hold_change", "hold_control",
-        "hold_management", "gbjg", "gddh_em",
-    ]):
-        return CATEGORIES[3]
-
-    # 7. research_disclosure：公告、研报、资讯、互动和外部评价
-    if any(kw in name for kw in [
-        "research_report", "analyst", "institute_recommend", "rank_forecast",
-        "jgdy_", "notice_report", "individual_notice",
-        "news_", "info_cjzc", "info_global",
-        "report_disclosure", "disclosure_report", "disclosure_relation",
-        "irm_", "sns_sseinfo", "esg_",
-        "cg_guarantee", "cg_lawsuit", "zdhtmx", "gsrl_gsdt",
-        "zh_kcb_report", "price_js",
-    ]):
-        return CATEGORIES[6]
-    if name == "stock_comment_em":
-        return CATEGORIES[6]
-
-    # 5. sector：行业/概念本身的分类、行情、估值、资金和中观指标
-    if any(kw in name for kw in [
-        "board_concept_name", "board_concept_info", "board_concept_spot",
-        "board_concept_hist", "board_concept_index",
-        "board_industry_name", "board_industry_summary", "board_industry_spot",
-        "board_industry_hist", "board_industry_index",
-        "industry_clf", "industry_pe_ratio", "szse_sector_summary",
-        "sector_spot", "sector_fund_flow", "concept_fund_flow",
-        "fund_flow_concept", "fund_flow_industry", "hsgt_board_rank",
-        "gpzy_industry_data", "sy_hy", "dupont_comparison",
-        "growth_comparison", "scale_comparison", "valuation_comparison",
-    ]):
-        return CATEGORIES[4]
-
-    # 6. flows_events：资金、交易行为、异动、涨跌停与情绪
-    if any(kw in name for kw in [
-        "fund_flow", "dzjy_", "lhb_", "lh_",
-        "cyq_em", "margin_", "hsgt_", "sgt_",
-        "hot_follow", "hot_tweet", "hot_deal", "hot_rank", "hot_up",
-        "hot_keyword", "hot_search", "hk_hot_rank",
-        "comment_detail", "changes_em", "zt_pool", "tfp_em",
-        "board_change", "inner_trade", "rank_xzjp", "zh_vote_baidu",
-        "rank_cxg", "rank_cxd", "rank_lxsz", "rank_lxxd",
-        "rank_xstp", "rank_xxtp", "rank_ljqd", "rank_ljqs",
-        "rank_cxfl", "rank_cxsl",
-        "account_statistics", "market_activity", "a_congestion", "a_high_low",
-    ]):
-        return CATEGORIES[5]
-
-    # 3. fundamentals：公司资料、三表、指标、业务、股东与聚合预测
-    if any(kw in name for kw in [
-        "company_profile", "profile_cninfo", "individual_info_em",
-        "financial", "balance_sheet", "profit_sheet", "cash_flow",
-        "zcfz", "lrb", "xjll", "yjbb", "yjkb", "yjyg", "yysj",
-        "sy_em", "sy_profile", "sy_yq", "sy_jz", "qsjy", "zygc",
-        "zyjs_ths",
-        "gdfx", "gdhs", "circulate_stock", "main_stock_holder",
-        "hold_num", "yzxdr", "institute_hold", "fund_stock_holder",
-        "report_fund_hold", "profit_forecast",
-    ]):
-        return CATEGORIES[2]
-
-    # 2. market：价格、行情、市场概况与估值快照
-    if any(kw in name for kw in [
-        "spot", "hist", "daily", "minute", "tick", "intraday", "bid_ask",
-        "sse_deal", "sse_summary", "szse_area", "szse_summary",
-        "a_all_pb", "a_below_net_asset", "a_gxl", "a_ttm",
-        "hk_gxl", "buffett_index", "ebs_lg", "market_pe", "market_pb",
-        "index_pe", "index_pb", "value_em", "valuation_baidu",
-        "indicator_eniu", "zh_ab_comparison",
-    ]):
-        return CATEGORIES[1]
-
-    # Fallback: 描述关键词
-    if any(kw in desc for kw in ["公告", "新闻", "研报", "机构调研", "投资者互动"]):
-        return CATEGORIES[6]
-    if any(kw in desc for kw in ["股东", "财务", "报表", "业绩"]):
-        return CATEGORIES[2]
-    if any(kw in desc for kw in ["板块", "行业"]):
-        return CATEGORIES[4]
-    if any(kw in desc for kw in ["龙虎榜", "资金流", "融资融券", "涨停", "异动"]):
-        return CATEGORIES[5]
-    return CATEGORIES[1]
-
-
-def classify_subcategory(func_name: str, category: str | None = None) -> str:
-    """返回 7 领域下的稳定子类，便于表格筛选和教程导航。"""
-    name = func_name.lower()
-    category = category or classify_interface(func_name)
-
-    if category == CATEGORIES[0]:
-        if any(kw in name for kw in ["_cons", "components", "sector_detail"]):
-            return "constituents"
-        if any(kw in name for kw in ["delist", "stop", "_st_em", "change_name", "sz_change"]):
-            return "listing_status"
-        if "industry_" in name:
-            return "classification"
-        return "security_master"
-
-    if category == CATEGORIES[1]:
-        if any(kw in name for kw in [
-            "valuation", "value_em", "_pb", "_pe", "gxl", "ebs_lg",
-            "buffett_index", "below_net_asset", "indicator_eniu", "zh_ab_comparison",
-        ]):
-            return "valuation"
-        if any(kw in name for kw in ["minute", "intraday", "tick"]):
-            return "intraday"
-        if any(kw in name for kw in ["daily", "hist"]):
-            return "daily"
-        return "snapshot"
-
-    if category == CATEGORIES[2]:
-        if any(kw in name for kw in [
-            "balance_sheet", "profit_sheet", "cash_flow", "financial_report",
-            "financial_benefit", "financial_cash", "financial_debt", "zcfz", "lrb", "xjll",
-        ]):
-            return "financial_statements"
-        if any(kw in name for kw in ["profit_forecast", "yjyg"]):
-            return "forecasts"
-        if any(kw in name for kw in [
-            "holder", "gdfx", "gdhs", "hold_num", "yzxdr", "institute_hold", "report_fund_hold",
-        ]):
-            return "shareholders"
-        if any(kw in name for kw in ["zygc", "zyjs_ths"]):
-            return "business_segments"
-        if any(kw in name for kw in [
-            "abstract", "indicator", "yjbb", "yjkb", "yysj", "sy_", "qsjy",
-        ]):
-            return "financial_indicators"
-        return "company_profile"
-
-    if category == CATEGORIES[3]:
-        if any(kw in name for kw in ["dividend", "fhps", "fhpx"]):
-            return "dividend"
-        if "repurchase" in name:
-            return "repurchase"
-        if "restricted_release" in name:
-            return "unlock"
-        if any(kw in name for kw in ["gpzy", "equity_mortgage"]):
-            return "pledge"
-        if any(kw in name for kw in ["allotment", "pg_em"]):
-            return "rights_issue"
-        if any(kw in name for kw in [
-            "ipo_", "register_", "new_ipo", "new_gh", "xgsglb", "xgsr", "dxsyl",
-            "add_stock", "qbzf",
-        ]):
-            return "issuance"
-        return "capital_change"
-
-    if category == CATEGORIES[4]:
-        if "fund_flow" in name or "hsgt_board_rank" in name:
-            return "fund_flow"
-        if "hist" in name:
-            return "history"
-        if any(kw in name for kw in ["pe_ratio", "comparison"]):
-            return "valuation"
-        if any(kw in name for kw in ["_name", "_info", "industry_clf"]):
-            return "classification"
-        if any(kw in name for kw in ["spot", "index", "summary"]):
-            return "quotes"
-        return "industry_metrics"
-
-    if category == CATEGORIES[5]:
-        if "margin" in name:
-            return "margin"
-        if any(kw in name for kw in ["hsgt", "sgt_"]):
-            return "northbound"
-        if "dzjy" in name:
-            return "block_trade"
-        if "zt_pool" in name or "market_activity" in name:
-            return "limit_up"
-        if any(kw in name for kw in [
-            "hot_", "comment_detail", "congestion", "high_low", "account_statistics",
-            "zh_vote", "rank_cx", "rank_lx", "rank_xs", "rank_xx", "rank_lj",
-        ]):
-            return "sentiment"
-        if any(kw in name for kw in ["lhb", "lh_", "changes", "board_change", "inner_trade", "tfp", "rank_xzjp"]):
-            return "unusual_trade"
-        return "fund_flow"
-
-    if any(kw in name for kw in ["irm_", "sns_sseinfo"]):
-        return "investor_relations"
-    if any(kw in name for kw in [
-        "notice", "notify", "disclosure", "zdhtmx", "gsrl_gsdt",
-        "cg_guarantee", "cg_lawsuit",
-    ]):
-        return "announcements"
-    if "rank_forecast" in name:
-        return "analyst_forecasts"
-    if any(kw in name for kw in ["notice", "notify", "disclosure", "zh_kcb_report"]):
-        return "announcements"
-    if any(kw in name for kw in ["news_", "info_cjzc", "info_global"]):
-        return "news"
-    return "research_reports"
-
-
-@dataclass
-class InterfaceInfo:
-    """从文档解析的接口信息 + 检测结果。"""
-    # 文档解析字段
-    category: str = ""        # 文档标题层级 (h2 > h3)
-    subcategory: str = ""     # 文档标题层级 (h4 > h5)
-    name: str = ""            # 接口函数名
-    target_url: str = ""      # 目标地址
-    description: str = ""     # 描述
-    input_params: str = ""    # 输入参数(逗号分隔)
-    # 检测结果字段
-    available: bool = False
-    quality_status: str = QUALITY_UNAVAILABLE
-    error: str = ""
+    interface_name: str
+    description: str
+    upstream: str
+    target_url: str
+    input_params: list[str]
+    documented: bool
+    installed: bool
+    callable: bool
+    status: str
     rows: int = 0
-    elapsed: float = 0.0
-    check_time: str = ""
-    latest_date: str = ""
-    sample_columns: str = ""
-    quality_note: str = ""
-    # 推断字段
-    upstream: str = ""        # 数据源
-    semantic_category: str = ""  # 根据实际返回字段校正后的领域
+    columns: list[str] = field(default_factory=list)
+    result_type: str = ""
+    elapsed_seconds: float = 0.0
+    error_type: str = ""
+    error_message: str = ""
+    test_case: str = ""
+    test_params_hash: str = ""
+    test_args_preview: dict[str, Any] = field(default_factory=dict)
+    tested_at: str = ""
 
 
-# ── 文档解析 ──────────────────────────────────────────
-
-def fetch_documentation(url: str = DOC_URL) -> str:
-    """获取官方文档 HTML。"""
-    print(f"正在获取文档: {url}")
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    print(f"文档大小: {len(resp.text)} 字符")
-    return resp.text
+# -----------------------------------------------------------------------------
+# 终端显示
+# -----------------------------------------------------------------------------
 
 
-def _clean_heading(text: str) -> str:
-    """清理标题文本中的锚点字符 (\uf0c1 等)。"""
-    return text.replace("\uf0c1", "").strip()
+class ConsoleStyle:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    GRAY = "\033[90m"
+
+    def __init__(self) -> None:
+        self.enabled = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+    def apply(self, text: str, *styles: str) -> str:
+        if not self.enabled:
+            return text
+        return "".join(styles) + text + self.RESET
 
 
-def parse_documentation(html: str) -> list[InterfaceInfo]:
-    """解析文档 HTML，提取所有接口信息。
+CONSOLE = ConsoleStyle()
 
-    文档结构:
-      <h2>A股</h2>            → 市场
-      <h3>股票市场总貌</h3>    → 大类
-      <h4>上海证券交易所</h4>   → 子类
-      <h5>证券类别统计</h5>    → 细类
-      <p>接口: stock_xxx</p>
-      <p>目标地址: http://...</p>
-      <p>描述: ...</p>
-      <p>输入参数</p>
-      <table>名称/类型/描述</table>
-    """
+STATUS_STYLES = {
+    STATUS_AVAILABLE: ConsoleStyle.GREEN,
+    STATUS_EMPTY: ConsoleStyle.YELLOW,
+    STATUS_FAILED: ConsoleStyle.RED,
+    STATUS_TIMEOUT: ConsoleStyle.MAGENTA,
+    STATUS_MISSING: ConsoleStyle.GRAY,
+    STATUS_SKIPPED: ConsoleStyle.CYAN,
+}
+
+
+def _status_text(status: str) -> str:
+    return CONSOLE.apply(status, STATUS_STYLES.get(status, ""), ConsoleStyle.BOLD)
+
+
+# -----------------------------------------------------------------------------
+# 通用工具
+# -----------------------------------------------------------------------------
+
+
+def _now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _iso_now() -> str:
+    return _now().isoformat(timespec="seconds")
+
+
+def _safe_version(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", value)
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, (date, datetime, pd.Timestamp)):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (set, tuple)):
+        return list(value)
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return repr(value)
+
+
+def _json_dumps(value: Any, *, indent: int | None = None) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=indent,
+        default=_json_default,
+    )
+
+
+def _sanitize_error(text: str, limit: int = 500) -> str:
+    """清理错误信息中的密钥、本地路径和多余空白。"""
+    text = text.replace("\r", " ").replace("\n", " | ")
+    text = re.sub(
+        r"(?i)(token|api[_-]?key|authorization|cookie|password|secret)"
+        r"\s*[:=]\s*([^&\s|,;]+)",
+        r"\1=***",
+        text,
+    )
+    text = re.sub(r"[A-Za-z]:[\\/][^\s|\"']+", "<local-path>", text)
+    text = re.sub(r"(?<![A-Za-z])/(?:Users|home)/[^\s|\"']+", "<local-path>", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[-limit:]
+
+
+def _safe_args_preview(args: dict[str, Any]) -> dict[str, Any]:
+    preview: dict[str, Any] = {}
+    for key, value in args.items():
+        preview[key] = "***" if SENSITIVE_KEY_RE.search(key) else value
+    return preview
+
+
+def _args_hash(interface_name: str, args: dict[str, Any]) -> str:
+    payload = {
+        "interface_name": interface_name,
+        "args": args,
+        "test_config_version": TEST_CONFIG_VERSION,
+    }
+    return _sha256_text(_json_dumps(payload))[:16]
+
+
+def _previous_weekday(value: date) -> date:
+    while value.weekday() >= 5:
+        value -= timedelta(days=1)
+    return value
+
+
+def _test_dates() -> dict[str, str]:
+    end = _previous_weekday(date.today() - timedelta(days=1))
+    start = end - timedelta(days=35)
+    return {
+        "start_date": start.strftime("%Y%m%d"),
+        "end_date": end.strftime("%Y%m%d"),
+        "date": end.strftime("%Y%m%d"),
+        "begin_date": start.strftime("%Y%m%d"),
+        "year": str(max(end.year - 1, 2000)),
+        "quarter": f"{max(end.year - 1, 2000)}1",
+        "start_time": start.strftime("%Y%m%d") + "093000",
+        "end_time": end.strftime("%Y%m%d") + "150000",
+    }
+
+
+# -----------------------------------------------------------------------------
+# 文档解析与接口发现
+# -----------------------------------------------------------------------------
+
+
+def fetch_documentation(url: str, timeout: float = 30.0) -> tuple[str, str]:
+    """获取官方股票接口文档；失败时返回空文本和错误信息。"""
+    try:
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response.text, ""
+    except Exception as exc:
+        return "", _sanitize_error(f"{type(exc).__name__}: {exc}")
+
+
+def _parse_params_table(table: Any) -> list[str]:
+    params: list[str] = []
+    rows = table.find_all("tr")
+    for row in rows[1:]:
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        name = cells[0].get_text(strip=True)
+        if name and name != "-":
+            params.append(name)
+    return params
+
+
+def parse_documentation(html: str) -> list[InterfaceDefinition]:
+    """从官方股票文档提取接口名、描述、目标地址和参数。"""
+    if not html:
+        return []
+
+    if BeautifulSoup is None:
+        names = sorted(set(re.findall(r"接口[:：]\s*(stock_[A-Za-z0-9_]+)", html)))
+        return [InterfaceDefinition(interface_name=name, documented=True) for name in names]
+
     soup = BeautifulSoup(html, "html.parser")
-
-    interfaces: list[InterfaceInfo] = []
-    headings: list[tuple[int, str]] = []  # [(level, text)]
-    current: InterfaceInfo | None = None
+    interfaces: list[InterfaceDefinition] = []
+    current: InterfaceDefinition | None = None
     expect_params_table = False
 
-    # 获取所有相关元素(过滤掉 table 内的嵌套元素)
     elements = [
-        e for e in soup.find_all(
-            ["h1", "h2", "h3", "h4", "h5", "h6", "p", "table"], recursive=True
-        )
-        if not e.find_parent("table")
+        element
+        for element in soup.find_all(["p", "table"], recursive=True)
+        if not element.find_parent("table")
     ]
 
-    for elem in elements:
-        tag = elem.name
-        text = elem.get_text(strip=True)
-
-        if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
-            level = int(tag[1])
-            heading = _clean_heading(text)
-            if not heading:
-                continue
-            # 维护标题栈: 移除同级或更深层级的标题
-            headings = [h for h in headings if h[0] < level]
-            headings.append((level, heading))
-            if heading == "输入参数":
-                expect_params_table = True
-            continue
+    for element in elements:
+        tag = element.name
+        text = element.get_text(strip=True)
 
         if tag == "p":
-            # 检测接口名
-            m = re.match(r"接口[:：]\s*(\S+)", text)
-            if m:
-                if current:
+            match = re.match(r"接口[:：]\s*(\S+)", text)
+            if match:
+                if current is not None:
                     interfaces.append(current)
-                current = InterfaceInfo(name=m.group(1))
-                # 从标题层级构建类别
-                h2_texts = [h[1] for h in headings if h[0] == 2]
-                h3_texts = [h[1] for h in headings if h[0] == 3]
-                h4_texts = [h[1] for h in headings if h[0] == 4]
-                h5_texts = [h[1] for h in headings if h[0] == 5]
-                current.category = (
-                    " > ".join(h2_texts + h3_texts)
-                    if (h2_texts or h3_texts)
-                    else "未分类"
+                current = InterfaceDefinition(
+                    interface_name=match.group(1).strip(),
+                    documented=True,
                 )
-                current.subcategory = (
-                    " > ".join(h4_texts + h5_texts)
-                    if (h4_texts or h5_texts)
-                    else ""
-                )
+                expect_params_table = False
                 continue
 
             if current is None:
                 continue
 
-            # 目标地址
-            m = re.match(r"目标地址[:：]\s*(\S+)", text)
-            if m:
-                current.target_url = m.group(1)
+            match = re.match(r"目标地址[:：]\s*(\S+)", text)
+            if match:
+                current.target_url = match.group(1).strip()
                 continue
 
-            # 描述
-            m = re.match(r"描述[:：]\s*(.+)", text)
-            if m:
-                current.description = m.group(1).strip()
+            match = re.match(r"描述[:：]\s*(.+)", text)
+            if match:
+                current.description = match.group(1).strip()
                 continue
 
-            # 输入参数标记
             if text == "输入参数":
                 expect_params_table = True
                 continue
 
         if tag == "table" and expect_params_table and current is not None:
-            # 解析参数表: 第一列为参数名
-            params: list[str] = []
-            rows = elem.find_all("tr")
-            for row in rows[1:]:  # 跳过表头
-                cells = row.find_all(["td", "th"])
-                if cells:
-                    param_name = cells[0].get_text(strip=True)
-                    if param_name and param_name != "-":
-                        params.append(param_name)
-            current.input_params = ", ".join(params) if params else "null"
+            current.input_params = _parse_params_table(element)
             expect_params_table = False
 
-    if current:
+    if current is not None:
         interfaces.append(current)
 
-    # `stock_hk_spot` 只返回港股行情，官方标题“实时行情数据-新浪”
-    # 范围过宽；统一修正文档和 xlsx 的展示名称。
-    for iface in interfaces:
-        if iface.name in DISPLAY_NAME_OVERRIDES:
-            iface.description = DISPLAY_NAME_OVERRIDES[iface.name]
+    # 文档偶尔重复展示同一接口，按接口名保留信息更完整的一条。
+    deduplicated: dict[str, InterfaceDefinition] = {}
+    for item in interfaces:
+        previous = deduplicated.get(item.interface_name)
+        if previous is None:
+            deduplicated[item.interface_name] = item
+            continue
+        if len(item.description) > len(previous.description):
+            previous.description = item.description
+        if item.target_url and not previous.target_url:
+            previous.target_url = item.target_url
+        if len(item.input_params) > len(previous.input_params):
+            previous.input_params = item.input_params
 
-    # 推断数据源
-    for iface in interfaces:
-        iface.upstream = _guess_upstream(iface.name, iface.description)
-
-    return interfaces
-
-
-# ── 接口检测 ──────────────────────────────────────────
-
-def _sanitize_error(text: str, limit: int = 200) -> str:
-    """清理错误信息，去除敏感信息和换行。"""
-    text = text.replace("\r", " ").replace("\n", " | ")
-    text = re.sub(r"(token|api[_-]?key|authorization|cookie)=([^&\s]+)", r"\1=***", text)
-    # 报告会提交到仓库，不能把本机用户目录和虚拟环境路径写入学习文档。
-    text = re.sub(r"[A-Za-z]:[\\/][^\s|\"']+", "<local-path>", text)
-    text = re.sub(r"(?i)(?:[A-Za-z]:)?[\\/:]*Users[\\/][^\s|\"']+", "<local-path>", text)
-    text = re.sub(r"(?i)Documents[\\/][^\s|\"']+", "<local-path>", text)
-    text = re.sub(r"(?<![A-Za-z])/(?:Users|home)/[^\s|\"']+", "<local-path>", text)
-    return text[-limit:]
+    return list(deduplicated.values())
 
 
-def _guess_upstream(func_name: str, doc: str) -> str:
-    """根据函数名和描述推测上游数据源。"""
-    combined = f"{func_name} {doc}"
-    sources: list[str] = []
-    if "em" in func_name.split("_")[-3:]:
-        sources.append("东方财富")
-    if any(kw in combined for kw in ["tx", "腾讯", "qq"]):
-        sources.append("腾讯")
-    if any(kw in combined for kw in ["sina", "新浪"]):
-        sources.append("新浪")
-    if any(kw in combined for kw in ["xq", "雪球"]):
-        sources.append("雪球")
-    if any(kw in combined for kw in ["sse", "上交所", "sse"]):
-        sources.append("上交所")
-    if any(kw in combined for kw in ["szse", "深交所"]):
-        sources.append("深交所")
-    if any(kw in combined for kw in ["bj", "bse", "北交所"]):
-        sources.append("北交所")
-    if any(kw in combined for kw in ["ths", "同花顺"]):
-        sources.append("同花顺")
-    if any(kw in combined for kw in ["iwencai", "问财"]):
-        sources.append("问财")
-    if any(kw in combined for kw in ["cninfo", "巨潮"]):
-        sources.append("巨潮")
-    if any(kw in combined for kw in ["mootdx", "tdx", "通达信"]):
-        sources.append("通达信")
-    if any(kw in combined for kw in ["baidu", "百度"]):
-        sources.append("百度")
-    if any(kw in combined for kw in ["lg", "legu", "乐估"]):
-        sources.append("乐估乐股")
-    if any(kw in combined for kw in ["futu", "富途"]):
-        sources.append("富途")
-    if any(kw in combined for kw in ["cx", "财新"]):
-        sources.append("财新")
-    if any(kw in combined for kw in ["eniu", "亿牛"]):
-        sources.append("亿牛")
-    if any(kw in combined for kw in ["et", "经济通"]):
-        sources.append("经济通")
-    return "/".join(sources) if sources else "未识别"
-
-
-def _call_with_args(func, args_map: dict[str, Any]) -> tuple[bool, int, str, Any]:
-    """调用 func，返回 (成功, 行数, 错误信息, 返回值)。"""
+def _source_from_domain(target_url: str) -> str | None:
+    if not target_url:
+        return None
     try:
-        sig = inspect.signature(func)
-        valid = {k: v for k, v in args_map.items() if k in sig.parameters}
-        result = func(**valid)
-        if isinstance(result, pd.DataFrame):
-            return True, len(result), "", result
-        if isinstance(result, pd.Series):
-            return True, len(result), "", result
-        if result is None:
-            return True, 0, "", result
-        if isinstance(result, (list, dict)):
-            return True, len(result), "", result
-        return True, 1, "", result
+        parsed = urlparse(target_url if "://" in target_url else f"https://{target_url}")
+        host = (parsed.hostname or "").lower()
     except Exception:
-        return False, 0, _sanitize_error(traceback.format_exc()), None
+        host = target_url.lower()
 
-
-def _parse_date_value(value: Any) -> date | None:
-    """只解析明确的日期值，避免把财务数值误当成时间戳。"""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if isinstance(value, (datetime, date, pd.Timestamp)):
-        return value.date() if isinstance(value, (datetime, pd.Timestamp)) else value
-
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "nat", "none", "null", "-"}:
-        return None
-    match = re.search(r"(?<!\d)(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?", text)
-    if match:
-        try:
-            return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
-        except ValueError:
-            return None
-    digits = re.sub(r"\D", "", text)
-    if len(digits) == 8 and digits.startswith("20"):
-        try:
-            return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
-        except ValueError:
-            return None
+    for domain, source in DOMAIN_SOURCE_MAP:
+        if domain in host:
+            return source
     return None
 
 
-def _date_columns(result: Any) -> list[str]:
-    columns = [
-        column for column in _return_columns(result)
-        if any(token in column.lower() for token in DATE_COLUMN_TOKENS)
-        and column not in STATIC_DATE_COLUMNS
-    ]
-    # 财务摘要常把报告期放在列名中（如 20260331），不是单独的日期字段。
-    columns.extend(
-        column for column in _return_columns(result)
-        if column not in columns and _parse_date_value(column) is not None
+def _source_from_name(interface_name: str, description: str) -> str | None:
+    name = interface_name.lower()
+    tokens = set(name.split("_"))
+    text = f"{interface_name} {description}".lower()
+
+    suffix_rules: tuple[tuple[Callable[[], bool], str], ...] = (
+        (lambda: "em" in tokens or name.endswith("_em"), "东方财富"),
+        (lambda: "sina" in tokens or "新浪" in description, "新浪财经"),
+        (lambda: "tx" in tokens or "腾讯" in description, "腾讯财经"),
+        (lambda: "xq" in tokens or "雪球" in description, "雪球"),
+        (lambda: "ths" in tokens or "同花顺" in description, "同花顺"),
+        (lambda: "iwencai" in tokens or "问财" in description, "i问财"),
+        (lambda: "cninfo" in tokens or "巨潮" in description, "巨潮资讯"),
+        (lambda: "baidu" in tokens or "百度" in description, "百度股市通"),
+        (lambda: "futu" in tokens or "富途" in description, "富途牛牛"),
+        (lambda: "eniu" in tokens or "亿牛" in description, "亿牛网"),
+        (lambda: "lg" in tokens or "乐咕" in description, "乐咕乐股"),
+        (lambda: "sse" in tokens or "上交所" in description, "上海证券交易所"),
+        (lambda: "szse" in tokens or "深交所" in description, "深圳证券交易所"),
+        (lambda: "bse" in tokens or "北交所" in description, "北京证券交易所"),
+        (lambda: "cls" in tokens or "财联社" in description, "财联社"),
     )
-    return columns
+
+    for predicate, source in suffix_rules:
+        if predicate():
+            return source
+
+    if "通达信" in text or "mootdx" in text:
+        return "通达信"
+    return None
 
 
-def _latest_return_date(result: Any) -> tuple[date | None, list[str]]:
-    """从返回值中找出最晚的时序日期及对应字段。"""
-    columns = _date_columns(result)
-    values: list[Any] = []
-    label_dates = [
-        parsed for column in columns
-        if _parse_date_value(column) is not None
-        and not any(token in column.lower() for token in DATE_COLUMN_TOKENS)
-        if (parsed := _parse_date_value(column)) is not None
-    ]
-    value_columns = [column for column in columns if column not in {
-        str(parsed.strftime("%Y%m%d")) for parsed in label_dates
-    }]
-    if isinstance(result, pd.DataFrame):
-        for column in value_columns:
-            values.extend(result[column].dropna().tolist())
-        # stock_sse_summary 等交易所总貌接口是“指标在行、市场在列”，
-        # 报告时间落在“项目”这一列的某一行，不能只看列名。
-        if len(result.columns) >= 2:
-            first_column = result.columns[0]
-            for _, row in result.iterrows():
-                label = str(row[first_column])
-                if any(token in label for token in ("报告时间", "统计日期", "更新时间", "交易日期")):
-                    columns.append(label)
-                    values.extend(row.iloc[1:].tolist())
-    elif isinstance(result, pd.Series):
-        if result.name is not None and str(result.name) in columns:
-            values.extend(result.dropna().tolist())
-    elif isinstance(result, dict):
-        values.extend(result.get(column) for column in columns if column in result)
-    elif isinstance(result, (list, tuple)):
-        for item in result:
-            if isinstance(item, dict):
-                values.extend(item.get(column) for column in columns if column in item)
-
-    parsed_values = [parsed for value in values if (parsed := _parse_date_value(value)) is not None]
-    parsed = label_dates + parsed_values
-    return (max(parsed) if parsed else None), columns
+def guess_upstream(interface_name: str, target_url: str, description: str) -> str:
+    return (
+        _source_from_domain(target_url)
+        or _source_from_name(interface_name, description)
+        or "未识别"
+    )
 
 
-def _freshness_window(iface: InterfaceInfo) -> int | None:
-    # 一次性事件/累计历史统计本来就可能只有很早的日期，不能因事件发生日早而误报“过期”。
-    if iface.name in {"stock_ipo_summary_cninfo", "stock_history_dividend", "stock_history_dividend_detail"}:
-        return None
-    category = iface.semantic_category or classify_interface(iface.name, iface.description)
-    subcategory = classify_subcategory(iface.name, category)
-    return FRESHNESS_WINDOWS_DAYS.get(subcategory)
-
-
-def _assess_return_value(iface: InterfaceInfo, result: Any) -> None:
-    """结合返回值字段和最近数据日期判定研究可用性。"""
-    if not iface.available:
-        iface.quality_status = QUALITY_UNAVAILABLE
-        iface.quality_note = iface.error or "接口调用失败"
-        return
-
-    columns = _return_columns(result)
-    iface.sample_columns = ", ".join(columns[:20])
-    latest_date, date_columns = _latest_return_date(result)
-    if latest_date is not None:
-        iface.latest_date = latest_date.isoformat()
-
-    if iface.rows == 0:
-        iface.quality_status = QUALITY_USABLE
-        iface.quality_note = "接口可调用；本次测试参数返回 0 行，未据此判定过期"
-        return
-
-    if latest_date is None:
-        iface.quality_status = QUALITY_USABLE
-        iface.quality_note = "接口可调用；返回值未识别到时序日期字段，仅做可调用性判断"
-        return
-
-    observed = _parse_date_value(iface.check_time) or datetime.now().date()
-    age_days = (observed - latest_date).days
-    window_days = _freshness_window(iface)
-    if window_days is not None and age_days > window_days:
-        iface.quality_status = QUALITY_EXPIRED
-        iface.quality_note = (
-            f"最近数据 {latest_date.isoformat()}，距检测日 {age_days} 天；"
-            f"超过 {window_days} 天更新窗口（字段: {', '.join(date_columns[:3])}）"
-        )
-    else:
-        window_text = f"，窗口 {window_days} 天" if window_days is not None else ""
-        iface.quality_status = QUALITY_USABLE
-        iface.quality_note = (
-            f"最近数据 {latest_date.isoformat()}，距检测日 {max(age_days, 0)} 天"
-            f"{window_text}（字段: {', '.join(date_columns[:3])}）"
-        )
-
-
-def build_call_args(func_name: str, func: Any) -> list[dict[str, Any]]:
-    """为函数推断合适的测试参数组合。"""
-    sig = inspect.signature(func)
-    params = set(sig.parameters.keys())
-    defaults = {
-        parameter.name: parameter.default
-        for parameter in sig.parameters.values()
-        if parameter.default is not inspect.Parameter.empty
+def discover_interfaces(
+    documented: Iterable[InterfaceDefinition],
+) -> list[InterfaceDefinition]:
+    """合并官方文档接口与当前 AKShare 安装包中的公开 stock_* 函数。"""
+    catalog: dict[str, InterfaceDefinition] = {
+        item.interface_name: item for item in documented
     }
 
-    if not params:
-        return [{}]
+    installed_stock_names = {
+        name
+        for name in dir(ak)
+        if name.startswith("stock_")
+        and not name.startswith("stock__")
+        and callable(getattr(ak, name, None))
+    }
 
-    only_kwargs = all(
-        p.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
-        for p in sig.parameters.values()
-    )
-    if only_kwargs:
-        return [{}]
+    for name in installed_stock_names:
+        if name not in catalog:
+            catalog[name] = InterfaceDefinition(interface_name=name)
 
-    combos: list[dict[str, Any]] = []
-    common: dict[str, Any] = {}
+    for name, item in catalog.items():
+        attribute = getattr(ak, name, None)
+        item.installed = attribute is not None
+        item.callable = callable(attribute)
+        item.upstream = guess_upstream(name, item.target_url, item.description)
 
-    # 日期参数
-    if "start_date" in params:
-        common["start_date"] = TEST_START
-    if "end_date" in params:
-        common["end_date"] = TEST_END
-    if "date" in params:
-        common["date"] = TEST_DATE
-    if "begin_date" in params:
-        common["begin_date"] = TEST_START
-    if "start_year" in params:
-        common["start_year"] = "2024"
-    if "end_year" in params:
-        common["end_year"] = "2025"
-    if "start_time" in params:
-        common["start_time"] = TEST_START + "093000"
-    if "end_time" in params:
-        common["end_time"] = TEST_END + "150000"
-    if "year" in params:
-        common["year"] = "2024"
-    if "quarter" in params:
-        common["quarter"] = "20241"
-
-    # 通用参数
-    if "timeout" in params:
-        common["timeout"] = 10
-    if "adjust" in params:
-        common["adjust"] = "qfq"
-    if "period" in params:
-        common["period"] = "daily"
-    if "indicator" in params:
-        default_indicator = defaults.get("indicator")
-        common["indicator"] = (
-            default_indicator
-            if isinstance(default_indicator, str) and default_indicator.strip()
-            else "分红"
-        )
-
-    # 分页参数
-    if "from_page" in params:
-        common["from_page"] = 1
-    if "to_page" in params:
-        common["to_page"] = 1
-
-    # 市场参数
-    if "market" in params:
-        default_market = defaults.get("market")
-        common["market"] = (
-            default_market
-            if isinstance(default_market, str) and default_market.strip()
-            else "沪"
-        )
-
-    # symbol 参数
-    need_symbol = any(p in params for p in ("symbol", "stock", "code", "security"))
-
-    def add_symbol_combo(sym: str):
-        c = dict(common)
-        for p in ("symbol", "stock", "code", "security"):
-            if p in params:
-                default_value = defaults.get(p)
-                c[p] = (
-                    default_value
-                    if isinstance(default_value, str) and default_value.strip()
-                    else sym
-                )
-        combos.append(c)
-
-    if need_symbol:
-        if any(kw in func_name for kw in ["tick", "intraday", "minute", "bid_ask"]):
-            add_symbol_combo(TEST_SYMBOL_SH)
-        else:
-            add_symbol_combo(TEST_SYMBOL)
-    else:
-        combos.append(dict(common))
-
-    if not combos:
-        combos = [{}]
-
-    return combos
-
-
-def test_interface(iface: InterfaceInfo) -> None:
-    """测试单个接口，更新 iface 的检测结果字段。"""
-    iface.check_time = time.strftime("%Y-%m-%d %H:%M:%S")
-
-    # 检查接口是否存在于 akshare
-    func = getattr(ak, iface.name, None)
-    if func is None or not callable(func):
-        iface.available = False
-        iface.quality_status = QUALITY_UNAVAILABLE
-        iface.error = f"接口 {iface.name} 在 akshare 中不存在"
-        iface.quality_note = iface.error
-        return
-
-    combos = build_call_args(iface.name, func)
-
-    best_ok = False
-    best_rows = 0
-    best_elapsed = 0.0
-    best_result: Any = None
-    errors: list[str] = []
-
-    for args in combos:
-        started = time.perf_counter()
-        ok, n_rows, err, result = _call_with_args(func, args)
-        elapsed = time.perf_counter() - started
-
-        if ok:
-            best_ok = True
-            best_rows = max(best_rows, n_rows)
-            best_elapsed = elapsed
-            best_result = result
-            break
-        else:
-            errors.append(err)
-            if elapsed > TIMEOUT_PER_CALL:
-                best_elapsed = elapsed
-                break
-            best_elapsed += elapsed
-
-    iface.available = best_ok
-    iface.rows = best_rows
-    iface.elapsed = best_elapsed
-    iface.error = "; ".join(errors)[:200] if errors else ""
-    if best_ok:
-        iface.semantic_category = classify_interface(iface.name, iface.description, best_result)
-    _assess_return_value(iface, best_result)
-
-
-def run_health_checks(interfaces: list[InterfaceInfo]) -> list[InterfaceInfo]:
-    """对所有接口执行健康检测。"""
-    total = len(interfaces)
-    print(f"\n开始检测 {total} 个接口...\n")
-
-    for i, iface in enumerate(interfaces, 1):
-        test_interface(iface)
-        status = iface.quality_status or (QUALITY_USABLE if iface.available else QUALITY_UNAVAILABLE)
-        print(f"  [{i}/{total}] {status:4s} {iface.name} ({iface.elapsed:.1f}s)")
-        if i % 20 == 0:
-            usable_count = sum(1 for x in interfaces[:i] if x.quality_status == QUALITY_USABLE)
-            expired_count = sum(1 for x in interfaces[:i] if x.quality_status == QUALITY_EXPIRED)
-            print(f"  --- 进度: {i}/{total}, 当前可用 {usable_count}, 过期 {expired_count} ---")
-
-    usable = sum(1 for x in interfaces if x.quality_status == QUALITY_USABLE)
-    expired = sum(1 for x in interfaces if x.quality_status == QUALITY_EXPIRED)
-    unavailable = total - usable - expired
-    callable_count = sum(1 for x in interfaces if x.available)
-    print(
-        f"\n检测完成: 共 {total} 个接口, 可调用 {callable_count}, "
-        f"当前可用 {usable}, 过期 {expired}, 不可用 {unavailable}"
-    )
-    return interfaces
-
-
-# ── 输出健康检测报告 ──────────────────────────────────
-
-def write_health_check_xlsx(
-    interfaces: list[InterfaceInfo], path: Path = HEALTH_CHECK_XLSX
-) -> None:
-    """输出健康检测结果到 xlsx。
-
-    输出列同时保留“接口可调用”和“研究可用性”，避免把旧数据误标为可用。
-    """
-    rows = []
-    for iface in interfaces:
-        category = iface.semantic_category or classify_interface(iface.name, iface.description)
-        rows.append({
-            "领域": category,
-            "子类": classify_subcategory(iface.name, category),
-            "接口名称": iface.name,
-            "接口路径": iface.target_url,
-            "检测时间": iface.check_time,
-            "接口可调用": "是" if iface.available else "否",
-            "可用性状态": iface.quality_status,
-            "最近数据日期": iface.latest_date,
-            "返回值字段": iface.sample_columns,
-            "判定依据": iface.quality_note,
-            "错误信息": iface.error,
-            "返回行数": iface.rows,
-            "耗时": f"{iface.elapsed:.1f}s",
-        })
-
-    df = pd.DataFrame(rows)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_excel(path, index=False, engine="openpyxl")
-    print(f"\n健康检测报告已输出: {path}")
-
-
-# ── 同步 akshare_stock_api.xlsx ──────────────────────
-
-def sync_stock_api_xlsx(
-    interfaces: list[InterfaceInfo], path: Path = STOCK_API_XLSX
-) -> None:
-    """同步更新 akshare_stock_api.xlsx。
-
-    - 使用 classify_interface / classify_subcategory 统一分类到 7 个领域
-    - 更新已有接口的可用性状态（可用 / 过期 / 不可用）
-    - 补充文档中有但 xlsx 中缺失的接口
-    - 删除文档中已不存在的接口
-    - 按类别排序
-    """
-    # 读取现有 xlsx
-    if path.exists():
-        existing_df = pd.read_excel(path, engine="openpyxl")
-        print(f"读取现有 xlsx: {len(existing_df)} 行")
-    else:
-        existing_df = pd.DataFrame(
-            columns=["序号", "领域", "子类", "接口名称", "数据源", "接口", "目标地址", "输入参数", "可用性"]
-        )
-        print("现有 xlsx 不存在, 创建新文件")
-
-    # 构建检测结果映射
-    check_map = {iface.name: iface for iface in interfaces}
-
-    # 构建现有数据映射
-    existing_map: dict[str, dict] = {}
-    for _, row in existing_df.iterrows():
-        func_name = str(row.get("接口", "")).strip()
-        if func_name:
-            existing_map[func_name] = row.to_dict()
-
-    # 合并: 保留现有数据 + 更新可用性 + 添加新接口
-    result_rows: list[dict] = []
-    seen: set[str] = set()
-
-    # 1. 遍历现有数据, 更新可用性和分类
-    for _, row in existing_df.iterrows():
-        func_name = str(row.get("接口", "")).strip()
-        if not func_name:
-            continue
-
-        if func_name in check_map:
-            # 接口在文档中存在, 更新可用性和分类
-            iface = check_map[func_name]
-            new_row = row.to_dict()
-            new_row["接口可调用"] = "是" if iface.available else "否"
-            new_row["可用性"] = iface.quality_status
-            new_row["最近数据日期"] = iface.latest_date
-            new_row["判定依据"] = iface.quality_note
-            # 使用返回值语义（若本轮调用有返回值）统一更新领域和子类
-            category = iface.semantic_category or classify_interface(
-                func_name, iface.description or str(row.get("接口名称", ""))
-            )
-            new_row.pop("类别", None)
-            new_row["领域"] = category
-            new_row["子类"] = classify_subcategory(func_name, category)
-            # 更新目标地址和输入参数(文档中的信息更准确)
-            if iface.description:
-                new_row["接口名称"] = iface.description
-            if iface.upstream:
-                new_row["数据源"] = iface.upstream
-            if iface.target_url:
-                new_row["目标地址"] = iface.target_url
-            if iface.input_params:
-                new_row["输入参数"] = iface.input_params
-            result_rows.append(new_row)
-            seen.add(func_name)
-        else:
-            # 接口在文档中不存在, 跳过(即删除)
-            print(f"  删除(文档中不存在): {func_name}")
-
-    # 2. 添加文档中有但 xlsx 中没有的接口
-    added_count = 0
-    for iface in interfaces:
-        if iface.name not in seen:
-            result_rows.append({
-                "序号": 0,
-                "领域": iface.semantic_category or classify_interface(iface.name, iface.description),
-                "子类": classify_subcategory(
-                    iface.name, iface.semantic_category or classify_interface(iface.name, iface.description)
-                ),
-                "接口名称": iface.description or iface.name,
-                "数据源": iface.upstream,
-                "接口": iface.name,
-                "目标地址": iface.target_url,
-                "输入参数": iface.input_params,
-                "接口可调用": "是" if iface.available else "否",
-                "可用性": iface.quality_status,
-                "最近数据日期": iface.latest_date,
-                "判定依据": iface.quality_note,
-            })
-            added_count += 1
-            print(f"  新增: {iface.name}")
-
-    # 按类别排序 (按 CATEGORIES 顺序)
-    cat_order = {cat: i for i, cat in enumerate(CATEGORIES)}
-    result_rows.sort(
-        key=lambda x: (
-            cat_order.get(x.get("领域", ""), 99),
-            str(x.get("子类", "")),
-            str(x.get("接口", "")),
-        )
+    return sorted(
+        catalog.values(),
+        key=lambda item: (item.upstream, item.interface_name),
     )
 
-    # 重新编号
-    for i, row in enumerate(result_rows, 1):
-        row["序号"] = i
 
-    # 写回 xlsx
-    output_columns = [
-        "序号", "领域", "子类", "接口名称", "数据源",
-        "接口", "目标地址", "输入参数", "接口可调用", "可用性",
-        "最近数据日期", "判定依据",
+# -----------------------------------------------------------------------------
+# 测试参数构造
+# -----------------------------------------------------------------------------
+
+
+def _has_default(parameter: inspect.Parameter) -> bool:
+    return parameter.default is not inspect.Parameter.empty
+
+
+def _required_parameters(signature: inspect.Signature) -> list[inspect.Parameter]:
+    return [
+        parameter
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        and not _has_default(parameter)
     ]
-    result_df = pd.DataFrame(result_rows).reindex(columns=output_columns)
-    result_df.to_excel(path, index=False, engine="openpyxl")
-
-    usable = len(result_df[result_df["可用性"] == QUALITY_USABLE])
-    expired = len(result_df[result_df["可用性"] == QUALITY_EXPIRED])
-    unavailable = len(result_df[result_df["可用性"] == QUALITY_UNAVAILABLE])
-    callable_count = len(result_df[result_df["接口可调用"] == "是"])
-    print(f"\n同步完成: {path}")
-    print(
-        f"  共 {len(result_df)} 个接口, 可调用 {callable_count}, "
-        f"当前可用 {usable}, 过期 {expired}, 不可用 {unavailable}"
-    )
-    print(f"  新增 {added_count} 个, 删除 {len(existing_map) - len(seen)} 个")
 
 
-# ── 更新 akshare_api.md ──────────────────────────────
+def _symbol_for_interface(interface_name: str) -> str:
+    name = interface_name.lower()
+    if "_hk_" in name or name.startswith("stock_hk"):
+        return TEST_SYMBOL_HK
+    if "_us_" in name or name.startswith("stock_us"):
+        return TEST_SYMBOL_US
+    if name in {"stock_zh_a_daily", "stock_zh_a_hist_tx"}:
+        return TEST_SYMBOL_A_TX
+    if any(token in name for token in ("minute", "intraday", "tick", "bid_ask")):
+        return TEST_SYMBOL_A_SH
+    return TEST_SYMBOL_A
 
-def update_akshare_api_md(
-    interfaces: list[InterfaceInfo], path: Path = AKSHARE_API_MD
+
+def _value_for_required_parameter(
+    interface_name: str,
+    parameter: inspect.Parameter,
+    dates: dict[str, str],
+) -> tuple[bool, Any]:
+    name = parameter.name
+    lower_interface = interface_name.lower()
+
+    if name in {"symbol", "stock", "code", "security"}:
+        return True, _symbol_for_interface(interface_name)
+    if name in dates:
+        return True, dates[name]
+    if name == "start_year":
+        return True, dates["year"]
+    if name == "end_year":
+        return True, str(int(dates["year"]) + 1)
+    if name == "period":
+        if "minute" in lower_interface or "intraday" in lower_interface:
+            return True, "5"
+        return True, "daily"
+    if name == "adjust":
+        return True, ""
+    if name == "market":
+        return True, "沪"
+    if name == "exchange":
+        return True, "上海证券交易所"
+    if name == "indicator":
+        return False, None
+    if name in {"page", "page_no", "page_num", "from_page", "to_page"}:
+        return True, 1
+    if name in {"page_size", "limit", "size", "count"}:
+        return True, 20
+    if name == "timeout":
+        return True, 10
+    if name == "quarter":
+        return True, dates["quarter"]
+    if name == "year":
+        return True, dates["year"]
+    if name == "sector":
+        return True, "hangye_ZB07"
+
+    return False, None
+
+
+def build_test_args(interface_name: str, function: Any) -> tuple[dict[str, Any] | None, str]:
+    """构造最小化测试参数；无法可靠推断时返回 SKIPPED 原因。"""
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError) as exc:
+        return None, f"无法读取函数签名: {type(exc).__name__}: {exc}"
+
+    parameters = signature.parameters
+    dates = _test_dates()
+    args: dict[str, Any] = {}
+
+    # 明确覆盖先应用，并只保留当前函数实际接受的参数。
+    for key, value in FUNCTION_ARG_OVERRIDES.get(interface_name, {}).items():
+        if key in parameters:
+            args[key] = value
+
+    # 用较短的时间范围和较小分页降低接口压力，但不覆盖有明确默认值的业务参数。
+    safe_optional_overrides: dict[str, Any] = {
+        "start_date": dates["start_date"],
+        "end_date": dates["end_date"],
+        "begin_date": dates["begin_date"],
+        "date": dates["date"],
+        "start_time": dates["start_time"],
+        "end_time": dates["end_time"],
+        "from_page": 1,
+        "to_page": 1,
+        "page": 1,
+        "page_no": 1,
+        "page_num": 1,
+        "page_size": 20,
+        "limit": 20,
+        "timeout": 10,
+    }
+    for key, value in safe_optional_overrides.items():
+        if key in parameters and key not in args:
+            args[key] = value
+
+    unresolved: list[str] = []
+    for parameter in _required_parameters(signature):
+        if parameter.name in args:
+            continue
+        resolved, value = _value_for_required_parameter(interface_name, parameter, dates)
+        if resolved:
+            args[parameter.name] = value
+        else:
+            unresolved.append(parameter.name)
+
+    if unresolved:
+        return None, "缺少可靠测试值的必填参数: " + ", ".join(unresolved)
+
+    # 不向只接受 *args/**kwargs 的包装函数注入猜测参数。
+    concrete_parameters = [
+        parameter
+        for parameter in parameters.values()
+        if parameter.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+    if not concrete_parameters:
+        return {}, "default"
+
+    return args, "default"
+
+
+# -----------------------------------------------------------------------------
+# 子进程调用与健康判定
+# -----------------------------------------------------------------------------
+
+
+def _disable_proxy_for_akshare() -> None:
+    """仅在 AKShare 测试子进程中绕过系统代理。"""
+    for key in PROXY_ENV_KEYS:
+        os.environ.pop(key, None)
+    os.environ["NO_PROXY"] = "*"
+    os.environ["no_proxy"] = "*"
+
+
+def _result_metadata(result: Any) -> dict[str, Any]:
+    result_type = type(result).__name__
+    rows = 0
+    columns: list[str] = []
+
+    if isinstance(result, pd.DataFrame):
+        rows = len(result)
+        columns = [str(column) for column in result.columns[:50]]
+    elif isinstance(result, pd.Series):
+        rows = len(result)
+        if result.name is not None:
+            columns = [str(result.name)]
+        else:
+            columns = [str(index) for index in result.index[:50]]
+    elif isinstance(result, dict):
+        rows = len(result)
+        columns = [str(key) for key in list(result.keys())[:50]]
+    elif isinstance(result, (list, tuple, set)):
+        rows = len(result)
+        first = next(iter(result), None)
+        if isinstance(first, dict):
+            columns = [str(key) for key in list(first.keys())[:50]]
+    elif result is None:
+        rows = 0
+    else:
+        rows = 1
+
+    return {
+        "ok": True,
+        "rows": rows,
+        "columns": columns,
+        "result_type": result_type,
+        "error_type": "",
+        "error_message": "",
+    }
+
+
+def _process_worker(
+    send_connection: Any,
+    interface_name: str,
+    args: dict[str, Any],
 ) -> None:
-    """根据检测结果重新生成 akshare_api.md。
+    """子进程入口：执行一个 AKShare 接口并只回传轻量元数据。"""
+    try:
+        _disable_proxy_for_akshare()
+        function = getattr(ak, interface_name)
+        result = function(**args)
+        payload = _result_metadata(result)
+    except BaseException as exc:  # 子进程必须将接口异常转换为结构化结果
+        payload = {
+            "ok": False,
+            "rows": 0,
+            "columns": [],
+            "result_type": "",
+            "error_type": type(exc).__name__,
+            "error_message": _sanitize_error(
+                "".join(traceback.format_exception_only(type(exc), exc))
+            ),
+        }
 
-    - 使用 classify_interface / classify_subcategory 统一分类到 7 个领域
-    - 按类别分章节，每类一张表格
-    - Markdown 只展示当前可用接口，表格固定保留六列：序号、子类、接口名称、接口函数、数据源、输入参数
-    - 统计摘要与 xlsx 保持一致
-    """
-    # 按类别分组
-    by_cat: dict[str, list[InterfaceInfo]] = {cat: [] for cat in CATEGORIES}
-    for iface in interfaces:
-        cat = iface.semantic_category or classify_interface(iface.name, iface.description)
-        by_cat[cat].append(iface)
+    try:
+        send_connection.send(payload)
+    finally:
+        send_connection.close()
 
-    total = len(interfaces)
-    callable_count = sum(1 for x in interfaces if x.available)
-    usable = sum(1 for x in interfaces if x.quality_status == QUALITY_USABLE)
-    expired = sum(1 for x in interfaces if x.quality_status == QUALITY_EXPIRED)
-    unavailable = sum(1 for x in interfaces if x.quality_status == QUALITY_UNAVAILABLE)
 
-    lines: list[str] = []
-    lines.append("# AkShare 股票接口可用性")
-    lines.append("")
-    lines.append(
-        f"> 接口总数:**{total}** 个  |  接口可调用:**{callable_count}** 个  "
-        f"|  当前可用:**{usable}** 个  |  过期:**{expired}** 个  "
-        f"|  不可用:**{unavailable}** 个"
+def _direct_call(interface_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """调试模式：在当前进程直接调用，不提供硬超时。"""
+    try:
+        original_env = {key: os.environ.get(key) for key in PROXY_ENV_KEYS}
+        _disable_proxy_for_akshare()
+        try:
+            result = getattr(ak, interface_name)(**args)
+        finally:
+            for key in PROXY_ENV_KEYS:
+                os.environ.pop(key, None)
+            for key, value in original_env.items():
+                if value is not None:
+                    os.environ[key] = value
+        return _result_metadata(result)
+    except BaseException as exc:
+        return {
+            "ok": False,
+            "rows": 0,
+            "columns": [],
+            "result_type": "",
+            "error_type": type(exc).__name__,
+            "error_message": _sanitize_error(
+                "".join(traceback.format_exception_only(type(exc), exc))
+            ),
+        }
+
+
+def execute_with_timeout(
+    interface_name: str,
+    args: dict[str, Any],
+    timeout_seconds: float,
+    mode: str,
+) -> tuple[dict[str, Any] | None, float, bool]:
+    """返回 (子进程结果, 耗时, 是否超时)。"""
+    started = time.perf_counter()
+
+    if mode == "direct":
+        payload = _direct_call(interface_name, args)
+        return payload, time.perf_counter() - started, False
+
+    context = mp.get_context("spawn")
+    receive_connection, send_connection = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_process_worker,
+        args=(send_connection, interface_name, args),
+        daemon=True,
     )
-    lines.append(">")
-    lines.append(
-        "> 本文档由 `akshare_health_check.py` 自动生成；“接口可调用”只表示函数未抛错，"
-        "“当前可用”还要求返回值未超过按子类设定的更新窗口；分类优先参考返回字段语义，"
-        "再按 `1-akshare股票数据源.md` 的 7 个投资研究领域组织；下列表格仅列当前可用接口。"
-    )
-    lines.append(
-        "> 例如 `stock_sse_summary` 返回 `项目/股票/主板/科创板/报告时间`，表示交易所市场总体情况，"
-        "因此归入 `market`，不是单只股票行情。"
-    )
-    lines.append(">")
-    lines.append("> 数据源: https://akshare.akfamily.xyz/data/stock/stock.html")
-    lines.append("")
-    lines.append("---")
-    lines.append("")
 
-    for cat in CATEGORIES:
-        items = by_cat.get(cat, [])
-        if not items:
-            continue
-        # 只把当前仍在更新窗口内的接口放入学习文档；可调用但过期、调用失败的接口
-        # 继续保留在 xlsx 健康检测结果中，避免把“能调用”误当作“可用”。
-        items = [iface for iface in items if iface.quality_status == QUALITY_USABLE]
-        if not items:
-            continue
-        # 先按子类、再按接口名排序
-        items.sort(key=lambda x: (classify_subcategory(x.name, cat), x.name))
-        num = CAT_NUMBER[cat]
-        lines.append(f"## {num}、{cat}")
-        lines.append("")
-        lines.append("| 序号 | 子类 | 接口名称 | 接口函数 | 数据源 | 输入参数 |")
-        lines.append("| ---: | --- | --- | --- | --- | --- |")
-        for i, iface in enumerate(items, 1):
-            display_name = (iface.description or iface.name).replace("|", "/")
-            subcategory = classify_subcategory(iface.name, cat)
-            lines.append(
-                f"| {i} | `{subcategory}` | {display_name} | `{iface.name}` | {iface.upstream} "
-                f"| {iface.input_params} |"
+    process.start()
+    send_connection.close()
+    process.join(timeout_seconds)
+
+    if process.is_alive():
+        process.terminate()
+        process.join(3.0)
+        receive_connection.close()
+        return None, time.perf_counter() - started, True
+
+    payload: dict[str, Any] | None = None
+    if receive_connection.poll(1.0):
+        try:
+            payload = receive_connection.recv()
+        except EOFError:
+            payload = None
+    receive_connection.close()
+
+    if payload is None:
+        payload = {
+            "ok": False,
+            "rows": 0,
+            "columns": [],
+            "result_type": "",
+            "error_type": "WorkerExitError",
+            "error_message": f"测试子进程异常退出，exitcode={process.exitcode}",
+        }
+
+    return payload, time.perf_counter() - started, False
+
+
+def test_interface(
+    definition: InterfaceDefinition,
+    timeout_seconds: float,
+    mode: str,
+) -> HealthResult:
+    tested_at = _iso_now()
+
+    if not definition.installed or not definition.callable:
+        return HealthResult(
+            **asdict(definition),
+            status=STATUS_MISSING,
+            error_type="MissingInterface",
+            error_message="接口在当前 AKShare 安装包中不存在或不可调用",
+            tested_at=tested_at,
+        )
+
+    function = getattr(ak, definition.interface_name)
+    args, test_case = build_test_args(definition.interface_name, function)
+
+    if args is None:
+        return HealthResult(
+            **asdict(definition),
+            status=STATUS_SKIPPED,
+            error_type="MissingTestArguments",
+            error_message=_sanitize_error(test_case),
+            test_case="signature_unresolved",
+            tested_at=tested_at,
+        )
+
+    test_params_hash = _args_hash(definition.interface_name, args)
+    preview = _safe_args_preview(args)
+    payload, elapsed, timed_out = execute_with_timeout(
+        definition.interface_name,
+        args,
+        timeout_seconds,
+        mode,
+    )
+
+    if timed_out:
+        return HealthResult(
+            **asdict(definition),
+            status=STATUS_TIMEOUT,
+            elapsed_seconds=round(elapsed, 3),
+            error_type="TimeoutError",
+            error_message=f"超过 {timeout_seconds:.1f} 秒硬超时",
+            test_case=test_case,
+            test_params_hash=test_params_hash,
+            test_args_preview=preview,
+            tested_at=tested_at,
+        )
+
+    assert payload is not None
+    if not payload.get("ok", False):
+        return HealthResult(
+            **asdict(definition),
+            status=STATUS_FAILED,
+            elapsed_seconds=round(elapsed, 3),
+            error_type=str(payload.get("error_type", "Exception")),
+            error_message=_sanitize_error(str(payload.get("error_message", ""))),
+            test_case=test_case,
+            test_params_hash=test_params_hash,
+            test_args_preview=preview,
+            tested_at=tested_at,
+        )
+
+    rows = int(payload.get("rows", 0) or 0)
+    status = STATUS_AVAILABLE if rows > 0 else STATUS_EMPTY
+    return HealthResult(
+        **asdict(definition),
+        status=status,
+        rows=rows,
+        columns=[str(column) for column in payload.get("columns", [])],
+        result_type=str(payload.get("result_type", "")),
+        elapsed_seconds=round(elapsed, 3),
+        test_case=test_case,
+        test_params_hash=test_params_hash,
+        test_args_preview=preview,
+        tested_at=tested_at,
+    )
+
+
+def run_health_checks(
+    definitions: list[InterfaceDefinition],
+    timeout_seconds: float,
+    mode: str,
+) -> list[HealthResult]:
+    total = len(definitions)
+    results: list[HealthResult] = []
+    current_source: str | None = None
+
+    print()
+    print(CONSOLE.apply("AKShare 股票接口健康检查", ConsoleStyle.BOLD))
+    print(f"AKShare: {ak.__version__}  接口数: {total}  模式: {mode}")
+    print(f"单接口超时: {timeout_seconds:.1f}s  测试时间: {_iso_now()}")
+
+    for index, definition in enumerate(definitions, start=1):
+        if definition.upstream != current_source:
+            current_source = definition.upstream
+            print()
+            print(CONSOLE.apply(f"[{current_source}]", ConsoleStyle.CYAN, ConsoleStyle.BOLD))
+
+        result = test_interface(definition, timeout_seconds, mode)
+        results.append(result)
+        row_text = f"{result.rows} 行" if result.rows else "-"
+        print(
+            f"  {index:>3}/{total:<3} "
+            f"{result.interface_name:<42} "
+            f"{_status_text(result.status):<18} "
+            f"{row_text:>8}  {result.elapsed_seconds:>7.3f}s"
+        )
+
+    return sorted(results, key=lambda item: (item.upstream, item.interface_name))
+
+
+# -----------------------------------------------------------------------------
+# 快照输出
+# -----------------------------------------------------------------------------
+
+
+def _status_counts(results: list[HealthResult]) -> dict[str, int]:
+    counts = {status: 0 for status in STATUS_ORDER}
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+    return counts
+
+
+def _source_counts(results: list[HealthResult]) -> list[dict[str, Any]]:
+    frame = pd.DataFrame(
+        {
+            "数据源": [result.upstream for result in results],
+            "状态": [result.status for result in results],
+        }
+    )
+    if frame.empty:
+        return []
+
+    pivot = pd.crosstab(frame["数据源"], frame["状态"])
+    for status in STATUS_ORDER:
+        if status not in pivot.columns:
+            pivot[status] = 0
+    pivot = pivot[list(STATUS_ORDER.keys())]
+    pivot["TOTAL"] = pivot.sum(axis=1)
+    pivot = pivot.sort_index()
+    return pivot.reset_index().to_dict(orient="records")
+
+
+def build_snapshot(
+    results: list[HealthResult],
+    *,
+    run_id: str,
+    started_at: str,
+    finished_at: str,
+    duration_seconds: float,
+    documentation_url: str,
+    documentation_hash: str,
+    documentation_error: str,
+    timeout_seconds: float,
+    mode: str,
+) -> dict[str, Any]:
+    status_counts = _status_counts(results)
+    config = {
+        "test_config_version": TEST_CONFIG_VERSION,
+        "timeout_seconds": timeout_seconds,
+        "execution_mode": mode,
+        "proxy_policy": "AKShare 子进程内 NO_PROXY=*；文档请求沿用系统环境",
+        "test_dates": _test_dates(),
+        "function_arg_overrides": FUNCTION_ARG_OVERRIDES,
+    }
+    config_hash = _sha256_text(_json_dumps(config))
+
+    return {
+        "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "run_id": run_id,
+        "metadata": {
+            "akshare_version": str(ak.__version__),
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration_seconds": round(duration_seconds, 3),
+            "documentation_url": documentation_url,
+            "documentation_hash": documentation_hash,
+            "documentation_error": documentation_error,
+            "test_config_version": TEST_CONFIG_VERSION,
+            "test_config_hash": config_hash,
+            "execution_mode": mode,
+            "timeout_seconds": timeout_seconds,
+        },
+        "summary": {
+            "interface_count": len(results),
+            "documented_count": sum(result.documented for result in results),
+            "installed_count": sum(result.installed for result in results),
+            "callable_count": sum(result.callable for result in results),
+            "status_counts": status_counts,
+            "source_counts": _source_counts(results),
+        },
+        "interfaces": [asdict(result) for result in results],
+    }
+
+
+def write_snapshot_json(snapshot: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(_json_dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _interface_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in snapshot["interfaces"]:
+        rows.append(
+            {
+                "数据源": item["upstream"],
+                "接口名称": item["interface_name"],
+                "描述": item["description"],
+                "状态": item["status"],
+                "文档存在": "是" if item["documented"] else "否",
+                "安装包存在": "是" if item["installed"] else "否",
+                "可调用": "是" if item["callable"] else "否",
+                "返回行数": item["rows"],
+                "返回类型": item["result_type"],
+                "返回字段": ", ".join(item["columns"]),
+                "耗时(秒)": item["elapsed_seconds"],
+                "错误类型": item["error_type"],
+                "错误信息": item["error_message"],
+                "测试参数摘要": _json_dumps(item["test_args_preview"]),
+                "测试参数哈希": item["test_params_hash"],
+                "目标地址": item["target_url"],
+                "文档输入参数": ", ".join(item["input_params"]),
+                "测试时间": item["tested_at"],
+            }
+        )
+    return rows
+
+
+def _apply_excel_style(path: Path) -> None:
+    from openpyxl import load_workbook
+    from openpyxl.formatting.rule import FormulaRule
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    workbook = load_workbook(path)
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(color="FFFFFF", bold=True)
+    title_fill = PatternFill("solid", fgColor="D9EAF7")
+    status_fills = {
+        STATUS_AVAILABLE: PatternFill("solid", fgColor="C6EFCE"),
+        STATUS_EMPTY: PatternFill("solid", fgColor="FFEB9C"),
+        STATUS_FAILED: PatternFill("solid", fgColor="FFC7CE"),
+        STATUS_TIMEOUT: PatternFill("solid", fgColor="E4DFEC"),
+        STATUS_MISSING: PatternFill("solid", fgColor="D9D9D9"),
+        STATUS_SKIPPED: PatternFill("solid", fgColor="DDEBF7"),
+    }
+
+    for worksheet in workbook.worksheets:
+        worksheet.sheet_view.showGridLines = False
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for column_index, cells in enumerate(worksheet.columns, start=1):
+            values = [str(cell.value) if cell.value is not None else "" for cell in cells]
+            width = min(max(max((len(value) for value in values), default=0) + 2, 10), 50)
+            worksheet.column_dimensions[get_column_letter(column_index)].width = width
+
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    summary_sheet = workbook["运行摘要"]
+    summary_sheet.column_dimensions["A"].width = 28
+    summary_sheet.column_dimensions["B"].width = 70
+    for cell in summary_sheet["A"]:
+        if cell.row > 1:
+            cell.fill = title_fill
+            cell.font = Font(bold=True)
+
+    detail_sheet = workbook["接口明细"]
+    headers = {cell.value: cell.column for cell in detail_sheet[1]}
+    status_column = headers.get("状态")
+    interface_column = headers.get("接口名称")
+    error_column = headers.get("错误信息")
+
+    if interface_column:
+        for row in range(2, detail_sheet.max_row + 1):
+            detail_sheet.cell(row=row, column=interface_column).font = Font(name="Consolas")
+
+    if error_column:
+        detail_sheet.column_dimensions[get_column_letter(error_column)].width = 60
+
+    if status_column:
+        status_letter = get_column_letter(status_column)
+        for status, fill in status_fills.items():
+            formula = f'${status_letter}2="{status}"'
+            detail_sheet.conditional_formatting.add(
+                f"A2:R{detail_sheet.max_row}",
+                FormulaRule(formula=[formula], fill=fill),
             )
-        lines.append("")
 
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines))
+    workbook.save(path)
 
-    print(f"\nmd 重新生成完成: {path}")
+
+def write_snapshot_xlsx(snapshot: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata = snapshot["metadata"]
+    summary = snapshot["summary"]
+    status_counts = summary["status_counts"]
+
+    summary_rows = [
+        {"项目": "运行 ID", "值": snapshot["run_id"]},
+        {"项目": "AKShare 版本", "值": metadata["akshare_version"]},
+        {"项目": "Python 版本", "值": metadata["python_version"]},
+        {"项目": "操作系统", "值": metadata["platform"]},
+        {"项目": "开始时间", "值": metadata["started_at"]},
+        {"项目": "完成时间", "值": metadata["finished_at"]},
+        {"项目": "总耗时(秒)", "值": metadata["duration_seconds"]},
+        {"项目": "接口总数", "值": summary["interface_count"]},
+        {"项目": "文档接口数", "值": summary["documented_count"]},
+        {"项目": "安装包接口数", "值": summary["installed_count"]},
+        {"项目": "可调用接口数", "值": summary["callable_count"]},
+        *(
+            {"项目": status, "值": count}
+            for status, count in status_counts.items()
+        ),
+        {"项目": "单接口超时(秒)", "值": metadata["timeout_seconds"]},
+        {"项目": "执行模式", "值": metadata["execution_mode"]},
+        {"项目": "测试配置版本", "值": metadata["test_config_version"]},
+        {"项目": "测试配置哈希", "值": metadata["test_config_hash"]},
+        {"项目": "官方文档", "值": metadata["documentation_url"]},
+        {"项目": "文档哈希", "值": metadata["documentation_hash"]},
+        {"项目": "文档获取错误", "值": metadata["documentation_error"]},
+    ]
+
+    interface_frame = pd.DataFrame(_interface_rows(snapshot))
+    interface_frame = interface_frame.sort_values(
+        ["数据源", "接口名称"],
+        kind="stable",
+        na_position="last",
+    )
+    source_frame = pd.DataFrame(summary["source_counts"])
+
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        pd.DataFrame(summary_rows).to_excel(writer, sheet_name="运行摘要", index=False)
+        source_frame.to_excel(writer, sheet_name="数据源统计", index=False)
+        interface_frame.to_excel(writer, sheet_name="接口明细", index=False)
+
+    _apply_excel_style(path)
+
+
+def write_outputs(snapshot: dict[str, Any], output_dir: Path) -> tuple[Path, Path]:
+    run_id = snapshot["run_id"]
+    version = _safe_version(snapshot["metadata"]["akshare_version"])
+    runs_dir = output_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = f"{run_id}_akshare_{version}"
+    json_path = runs_dir / f"{stem}.json"
+    xlsx_path = runs_dir / f"{stem}.xlsx"
+
+    write_snapshot_json(snapshot, json_path)
+    write_snapshot_xlsx(snapshot, xlsx_path)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(json_path, output_dir / "latest.json")
+    shutil.copy2(xlsx_path, output_dir / "latest.xlsx")
+
+    return json_path, xlsx_path
+
+
+def print_summary(snapshot: dict[str, Any], json_path: Path, xlsx_path: Path) -> None:
+    counts = snapshot["summary"]["status_counts"]
+    print()
+    print(CONSOLE.apply("检测完成", ConsoleStyle.BOLD))
+    print("  " + "  ".join(f"{status}={counts.get(status, 0)}" for status in STATUS_ORDER))
+    print(f"  JSON: {json_path}")
+    print(f"  XLSX: {xlsx_path}")
+    print(f"  latest: {json_path.parent.parent / 'latest.json'}")
+
+
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="检测当前环境中 AKShare 股票接口的运行健康状态。",
+    )
+    parser.add_argument(
+        "--doc-url",
+        default=DOC_URL,
+        help="AKShare 股票接口官方文档地址。",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="健康快照输出目录。",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="单个接口硬超时秒数，默认 15。",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("process", "direct"),
+        default="process",
+        help="process 提供硬超时；direct 较快但无法终止卡住的请求。",
+    )
+    parser.add_argument(
+        "--match",
+        default="",
+        help="只检测接口名匹配该正则表达式的接口。",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="仅检测排序后的前 N 个接口；0 表示不限制。",
+    )
+    parser.add_argument(
+        "--skip-doc",
+        action="store_true",
+        help="不请求官方文档，只检测当前安装包公开的 stock_* 接口。",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.timeout <= 0:
+        print("--timeout 必须大于 0", file=sys.stderr)
+        return 2
+    if args.limit < 0:
+        print("--limit 不能小于 0", file=sys.stderr)
+        return 2
+
+    started = _now()
+    started_at = started.isoformat(timespec="seconds")
+    run_id = started.strftime("%Y%m%d_%H%M%S")
+
+    print(CONSOLE.apply("=" * 72, ConsoleStyle.DIM))
+    print(CONSOLE.apply("AKShare 股票接口健康检测", ConsoleStyle.BOLD))
+    print(CONSOLE.apply("=" * 72, ConsoleStyle.DIM))
+
+    html = ""
+    documentation_error = ""
+    if not args.skip_doc:
+        print(f"读取官方文档: {args.doc_url}")
+        html, documentation_error = fetch_documentation(args.doc_url)
+        if documentation_error:
+            print(CONSOLE.apply(f"文档读取失败，将仅使用安装包接口: {documentation_error}", ConsoleStyle.YELLOW))
+        else:
+            print(f"文档大小: {len(html):,} 字符")
+
+    documented = parse_documentation(html)
+    definitions = discover_interfaces(documented)
+
+    if args.match:
+        try:
+            pattern = re.compile(args.match)
+        except re.error as exc:
+            print(f"--match 正则无效: {exc}", file=sys.stderr)
+            return 2
+        definitions = [item for item in definitions if pattern.search(item.interface_name)]
+
+    if args.limit:
+        definitions = definitions[: args.limit]
+
+    if not definitions:
+        print("未发现可检测的股票接口。", file=sys.stderr)
+        return 1
+
     print(
-        f"  共 {total} 个接口, 可调用 {callable_count}, 当前可用 {usable}, "
-        f"过期 {expired}, 不可用 {unavailable}"
+        f"发现接口: {len(definitions)} 个 "
+        f"(文档 {sum(item.documented for item in definitions)}, "
+        f"安装包 {sum(item.installed for item in definitions)})"
     )
 
+    results = run_health_checks(
+        definitions,
+        timeout_seconds=args.timeout,
+        mode=args.mode,
+    )
 
-# ── 主流程 ────────────────────────────────────────────
+    finished = _now()
+    snapshot = build_snapshot(
+        results,
+        run_id=run_id,
+        started_at=started_at,
+        finished_at=finished.isoformat(timespec="seconds"),
+        duration_seconds=(finished - started).total_seconds(),
+        documentation_url=args.doc_url,
+        documentation_hash=_sha256_text(html) if html else "",
+        documentation_error=documentation_error,
+        timeout_seconds=args.timeout,
+        mode=args.mode,
+    )
 
-def main():
-    """主流程: 获取文档 → 解析 → 检测 → 输出 → 同步。"""
-    print("=" * 60)
-    print("AkShare 股票接口健康检测")
-    print("=" * 60)
-
-    # 1. 获取文档
-    html = fetch_documentation()
-
-    # 2. 解析文档
-    interfaces = parse_documentation(html)
-    print(f"\n解析到 {len(interfaces)} 个接口")
-
-    if not interfaces:
-        print("未解析到任何接口, 请检查文档 URL 或 HTML 结构")
-        return
-
-    # 打印前 5 个接口作为预览
-    print("\n前 5 个接口预览:")
-    for iface in interfaces[:5]:
-        cat = classify_interface(iface.name, iface.description)
-        print(f"  {iface.name} | {cat} | {iface.target_url[:50]}")
-
-    # 3. 执行健康检测
-    run_health_checks(interfaces)
-
-    # 4. 输出健康检测报告
-    write_health_check_xlsx(interfaces)
-
-    # 5. 同步 akshare_stock_api.xlsx
-    print("\n" + "-" * 40)
-    print("同步 akshare_stock_api.xlsx")
-    print("-" * 40)
-    sync_stock_api_xlsx(interfaces)
-
-    # 6. 更新 akshare_api.md
-    print("\n" + "-" * 40)
-    print("更新 akshare_api.md")
-    print("-" * 40)
-    update_akshare_api_md(interfaces)
-
-    print("\n" + "=" * 60)
-    print("全部完成!")
-    print("=" * 60)
+    json_path, xlsx_path = write_outputs(snapshot, args.output_dir.resolve())
+    print_summary(snapshot, json_path, xlsx_path)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    mp.freeze_support()
+    raise SystemExit(main())

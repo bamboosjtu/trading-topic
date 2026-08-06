@@ -53,6 +53,8 @@ labs/02_行业走势相关性研究/data/
 labs/03_板块周期轮动研究/data/
 *.csv
 *.xlsx
+!labs/00_金融数据获取/akshare_stock_api.xlsx
+labs/00_金融数据获取/health
 *.parquet
 *.feather
 
