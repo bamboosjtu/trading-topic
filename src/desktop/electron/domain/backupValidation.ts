@@ -1,7 +1,6 @@
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
 import type {
   AdjustedBar,
-  BacktestDataQuality,
   BacktestExperiment,
   BacktestResult,
   BacktestWorkspaceState,
@@ -11,6 +10,7 @@ import type {
   PendingDividend,
   ValidatedBackupPayload,
 } from "../../shared/contracts";
+import { assertBacktestDataQuality } from "./backtestDataQuality";
 import { assertBacktestRequest } from "./analysis";
 import { validDate } from "./dateUtils";
 import { reduceLedger } from "./ledgerReducer";
@@ -411,75 +411,8 @@ function assertBacktestResult(
       `备份回测权益曲线末日(${lastEquity.date})与 actualEndDate(${result.actualEndDate})不一致`,
     );
   }
-  // 数据质量结构校验（旧备份无 dataQuality 时跳过）
-  if (result.dataQuality !== undefined) {
-    assertBacktestDataQuality(result.dataQuality);
-  }
-}
-
-function assertBacktestDataQuality(
-  dq: BacktestDataQuality,
-): void {
-  if (!isObject(dq)) {
-    throw new Error("备份回测数据质量结构非法");
-  }
-  if (!["strict", "research", "degraded"].includes(dq.level)) {
-    throw new Error("备份回测数据质量等级非法");
-  }
-  const allowedReasons = [
-    "cross_provider_common_gap",
-    "calendar_coverage_partial",
-  ];
-  if (
-    !Array.isArray(dq.reasons) ||
-    dq.reasons.some((r) => !allowedReasons.includes(r))
-  ) {
-    throw new Error("备份回测数据质量降级原因非法");
-  }
-  if (
-    !Array.isArray(dq.officialCalendarYears) ||
-    !Array.isArray(dq.uncoveredCalendarYears)
-  ) {
-    throw new Error("备份回测数据质量年份字段非法");
-  }
-  for (const y of [...dq.officialCalendarYears, ...dq.uncoveredCalendarYears]) {
-    if (!Number.isInteger(y)) {
-      throw new Error("备份回测数据质量年份必须为整数");
-    }
-  }
-  // official 和 uncovered 不得相交
-  const officialSet = new Set(dq.officialCalendarYears);
-  if (dq.uncoveredCalendarYears.some((y) => officialSet.has(y))) {
-    throw new Error("备份回测数据质量年份不能同时属于已覆盖和未覆盖");
-  }
-  // strict 不应携带降级原因
-  if (dq.level === "strict" && dq.reasons.length > 0) {
-    throw new Error("备份回测数据质量 strict 等级不应有降级原因");
-  }
-  // calendar_coverage_partial 必须对应非空 uncovered 年份
-  const hasPartial = dq.reasons.includes("calendar_coverage_partial");
-  if (hasPartial && dq.uncoveredCalendarYears.length === 0) {
-    throw new Error(
-      "备份回测数据质量 calendar_coverage_partial 需要有未覆盖年份",
-    );
-  }
-  // research 级别必须由 calendar_coverage_partial 触发，且不能有 cross_provider_common_gap
-  if (dq.level === "research" && !hasPartial) {
-    throw new Error(
-      "备份回测数据质量 research 等级必须包含 calendar_coverage_partial",
-    );
-  }
-  if (dq.level === "research" && dq.reasons.includes("cross_provider_common_gap")) {
-    throw new Error(
-      "备份回测数据质量 research 等级不应包含 cross_provider_common_gap",
-    );
-  }
-  // degraded 级别必须由 cross_provider_common_gap 触发
-  if (dq.level === "degraded" && !dq.reasons.includes("cross_provider_common_gap")) {
-    throw new Error(
-      "备份回测数据质量 degraded 等级必须包含 cross_provider_common_gap",
-    );
-  }
+  // 当前 Schema 1 只接受结构化数据质量，不从旧状态字段或警告文案推断。
+  assertBacktestDataQuality(result.dataQuality, "备份回测数据质量");
 }
 
 function assertBacktestExperiments(

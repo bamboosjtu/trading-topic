@@ -132,7 +132,7 @@ describe("expectedTradingDatesWithCoverage", () => {
    * scripts/check-market-calendar.mjs 使用 `currentYearNum - maxBacktestYears`
    * 计算最小回测年度，本测试同时验证该算术结果与日历覆盖函数一致。
    */
-  it("P0 回归：2026 年最大 15 年回测起始年为 2011（不是 2012）", () => {
+  it("2026 年最大 15 年回测起始年为 2011（不是 2012）", () => {
     // 1. 直接验证脚本算术逻辑：currentYearNum - maxBacktestYears === 2011
     const currentYearNum = 2026;
     const maxBacktestYears = Math.max(...BACKTEST_RANGE_YEARS);

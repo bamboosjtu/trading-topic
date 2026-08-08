@@ -72,9 +72,9 @@ export function CurrentExperimentTable({
     ? formatYearRanges(experiment.dataQuality.uncoveredCalendarYears)
     : "";
   // 仅在 degraded 级别（cross_provider_common_gap）显示黄色大警告
-  const isExperimentDegraded = experiment?.dataQuality?.level === "degraded";
+  const isExperimentDegraded = experiment?.dataQuality.level === "degraded";
   const commonGapResults = results.filter((result) =>
-    (result.dataQuality?.reasons ?? []).includes("cross_provider_common_gap"),
+    result.dataQuality.reasons.includes("cross_provider_common_gap"),
   );
 
   return (
@@ -83,7 +83,7 @@ export function CurrentExperimentTable({
         <div>
           <strong>本次实验结果（按 XIRR 排序）</strong>
           <span>只比较同一请求、同一数据截止时间下的标的结果</span>
-          {experiment?.dataQuality?.level === "research" && (
+          {experiment?.dataQuality.level === "research" && (
             <Tooltip
               title={
                 uncoveredCalendarYearsText
@@ -96,11 +96,6 @@ export function CurrentExperimentTable({
               </Tag>
             </Tooltip>
           )}
-          {/* {isExperimentDegraded && (
-            <Tag color="warning" bordered={false} className="degraded-tag">
-              降级
-            </Tag>
-          )} */}
         </div>
         {experiment ? (
           <small className="tabular-nums">
@@ -187,10 +182,8 @@ export function CurrentExperimentTable({
                 <strong>{row.name}</strong>
                 <span className="tabular-nums">{row.symbol}</span>
                 <DataQualityTag
-                  level={row.dataQuality?.level ?? "strict"}
-                  uncoveredCalendarYears={
-                    row.dataQuality?.uncoveredCalendarYears ?? []
-                  }
+                  level={row.dataQuality.level}
+                  uncoveredCalendarYears={row.dataQuality.uncoveredCalendarYears}
                 />
               </div>
             ),

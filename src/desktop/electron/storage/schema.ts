@@ -6,7 +6,7 @@ import { rows } from "./dbUtil";
 
 export const SCHEMA_VERSION = 1;
 export const SCHEMA_FINGERPRINT =
-  "stock-income-r1-schema-1-2026-08-02-pending-dividends-listing-date-trading-interruptions";
+  "stock-income-r1-schema-1-2026-08-08-structured-data-quality";
 export const DEFAULT_SETTINGS: AppSettings = {
   priceSource: "tencent_sina",
   dividendSource: "eastmoney",

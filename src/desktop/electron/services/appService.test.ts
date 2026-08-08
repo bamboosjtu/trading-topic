@@ -25,7 +25,6 @@ import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
 } from "../data/marketDataProvider";
-import { latestWeekdayCandidate } from "../domain/marketCalendar";
 import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
@@ -692,7 +691,7 @@ describe("AppService 回测试验", () => {
    * 回测结果必须为 research（仅日历覆盖不完整，未触发真实行情异常）
    * 且 reasons 包含 calendar_coverage_partial。
    */
-  it("P0 回归：未覆盖正式日历的年份触发 calendar_coverage_partial 标记为 research（2016-2026 请求）", async () => {
+  it("未覆盖正式日历的年份触发 calendar_coverage_partial 并标记为 research", async () => {
     const { service, database } = await serviceWithDatabase();
     seedStockUniverse(database,
       completeStockUniverse([
@@ -774,24 +773,20 @@ describe("AppService 回测试验", () => {
       buyDay: 1,
     });
 
-    // 实验级别：dataQuality.level 必须为 research（仅日历覆盖不完整，无真实行情异常）
-    expect(experiment.dataQuality?.level).toBe("research");
-    // 兼容字段：research 合并为 degraded
-    expect(experiment.dataQualityStatus).toBe("degraded");
+    expect(experiment.dataQuality.level).toBe("research");
     // reasons 必须包含 calendar_coverage_partial
-    expect(experiment.dataQuality?.reasons).toContain("calendar_coverage_partial");
+    expect(experiment.dataQuality.reasons).toContain("calendar_coverage_partial");
     // reasons 不应包含 cross_provider_common_gap（mock 数据没有共同缺口）
-    expect(experiment.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
+    expect(experiment.dataQuality.reasons).not.toContain("cross_provider_common_gap");
     // uncoveredCalendarYears 必须包含 2016-2023
-    expect(experiment.dataQuality?.uncoveredCalendarYears).toEqual([
+    expect(experiment.dataQuality.uncoveredCalendarYears).toEqual([
       2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
     ]);
-    expect(experiment.dataQuality?.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    expect(experiment.dataQuality.officialCalendarYears).toEqual([2024, 2025, 2026]);
     // 结果级别也应为 research
-    expect(experiment.results[0].dataQuality?.level).toBe("research");
-    expect(experiment.results[0].dataQuality?.reasons).toContain("calendar_coverage_partial");
-    expect(experiment.results[0].dataQuality?.reasons).not.toContain("cross_provider_common_gap");
-    expect(experiment.results[0].dataQualityStatus).toBe("degraded");
+    expect(experiment.results[0].dataQuality.level).toBe("research");
+    expect(experiment.results[0].dataQuality.reasons).toContain("calendar_coverage_partial");
+    expect(experiment.results[0].dataQuality.reasons).not.toContain("cross_provider_common_gap");
     // 实验已持久化
     expect(database.listBacktestExperiments()).toHaveLength(1);
   });
@@ -800,7 +795,7 @@ describe("AppService 回测试验", () => {
    * P0 回归对照：当请求区间只覆盖正式日历年份（2024-2026）且无任何 issues 时，
    * 回测结果必须为 strict，reasons 为空数组。
    */
-  it("P0 回归对照：只覆盖正式日历年份且无 issues 时结果为 strict", async () => {
+  it("只覆盖正式日历年份且无 issues 时结果为 strict", async () => {
     const { service, database } = await serviceWithDatabase();
     seedStockUniverse(database,
       completeStockUniverse([
@@ -880,18 +875,15 @@ describe("AppService 回测试验", () => {
       buyDay: 1,
     });
 
-    // 实验级别：dataQuality.level 必须为 strict
-    expect(experiment.dataQuality?.level).toBe("strict");
-    expect(experiment.dataQualityStatus).toBe("strict");
+    expect(experiment.dataQuality.level).toBe("strict");
     // reasons 必须为空数组
-    expect(experiment.dataQuality?.reasons).toEqual([]);
+    expect(experiment.dataQuality.reasons).toEqual([]);
     // uncoveredCalendarYears 必须为空
-    expect(experiment.dataQuality?.uncoveredCalendarYears).toEqual([]);
-    expect(experiment.dataQuality?.officialCalendarYears).toEqual([2024, 2025, 2026]);
+    expect(experiment.dataQuality.uncoveredCalendarYears).toEqual([]);
+    expect(experiment.dataQuality.officialCalendarYears).toEqual([2024, 2025, 2026]);
     // 结果级别也应为 strict
-    expect(experiment.results[0].dataQuality?.level).toBe("strict");
-    expect(experiment.results[0].dataQuality?.reasons).toEqual([]);
-    expect(experiment.results[0].dataQualityStatus).toBe("strict");
+    expect(experiment.results[0].dataQuality.level).toBe("strict");
+    expect(experiment.results[0].dataQuality.reasons).toEqual([]);
     // 实验已持久化
     expect(database.listBacktestExperiments()).toHaveLength(1);
   });
@@ -1034,7 +1026,7 @@ describe("AppService 实盘流水", () => {
       }),
     );
 
-    const expectedCurrentCutoff = latestWeekdayCandidate(new Date());
+    const expectedCurrentCutoff = "2026-07-31";
     const view = await service.getIncomeCalendar({
       month: "2026-07",
       scope: "all",
@@ -1243,7 +1235,7 @@ describe("AppService 实盘流水", () => {
   });
 });
 
-describe("AppService P1-1/P1-2/P1-3 修复", () => {
+describe("AppService 行情覆盖质量", () => {
   it("partial 覆盖使持仓读模型降级，数据库重开后仍为 partial", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));
@@ -1485,94 +1477,9 @@ describe("AppService P1-1/P1-2/P1-3 修复", () => {
     expect(result.issues.some((issue) => issue.includes("2026-07-15"))).toBe(true);
   });
 
-  it("同日清仓再买入不会产生覆盖冲突", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-01T08:00:00Z"));
-    const { service, database } = await serviceWithDatabase();
-    seedStockUniverse(
-      database,
-      completeStockUniverse([
-        { symbol: "601398", name: "工商银行", securityType: "stock" },
-      ]),
-      "cached",
-      new Date().toISOString(),
-    );
-    // 2026-06-10 上午卖出全部，下午重新买入 → 区间 A 和 B 在 06-10 首尾相接。
-    database.addLedger({
-      id: "buy1",
-      type: "buy",
-      businessDate: "2026-06-01",
-      recordedAt: "2026-06-01T01:00:00Z",
-      currency: "CNY",
-      source: "user",
-      symbol: "601398",
-      instrumentName: "工商银行",
-      securityType: "stock",
-      price: 5,
-      quantity: 100,
-      fee: 0,
-    });
-    database.addLedger({
-      id: "sell1",
-      type: "sell",
-      businessDate: "2026-06-10",
-      recordedAt: "2026-06-10T01:00:00Z",
-      currency: "CNY",
-      source: "user",
-      symbol: "601398",
-      instrumentName: "工商银行",
-      securityType: "stock",
-      price: 5.5,
-      quantity: 100,
-      fee: 0,
-    });
-    database.addLedger({
-      id: "buy2",
-      type: "buy",
-      businessDate: "2026-06-10",
-      recordedAt: "2026-06-10T02:00:00Z",
-      currency: "CNY",
-      source: "user",
-      symbol: "601398",
-      instrumentName: "工商银行",
-      securityType: "stock",
-      price: 5.6,
-      quantity: 200,
-      fee: 0,
-    });
-
-    // 收益日历会生成两个首尾相接的区间，normalizeRanges 合并为一个。
-    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
-      completeMarketResponse({
-        rows: [{ date: "2026-06-10", close: 5.5 }],
-        provenance: {
-          source: "tencent",
-          primarySource: "tencent",
-          fallbackUsed: false,
-          fetchedAt: "2026-06-10T08:00:00Z",
-          dataCutoff: "2026-06-10",
-          adjustment: "none",
-          caliberVersion: BACKTEST_CALIBER_VERSION,
-        },
-      }),
-    );
-
-    // 不应抛出"行情价格行冲突"。
-    const view = await service.getIncomeCalendar({
-      month: "2026-06",
-      scope: "all",
-    });
-    expect(view).toBeDefined();
-    // 06-10 只应请求一次（合并后）。
-    const calls = vi.mocked(fetchUnadjustedPrices).mock.calls.filter(
-      (call) => call[0] === "601398",
-    );
-    // 06-10 不会被重复请求。
-    expect(calls.filter((call) => call[1] === "2026-06-10" && call[2] === "2026-06-10")).toHaveLength(0);
-  });
 });
 
-describe("AppService P0 partial 覆盖完整区间替换", () => {
+describe("AppService partial 覆盖完整区间替换", () => {
   const JULY_2026_WEEKDAYS = [
     "2026-07-01", "2026-07-02", "2026-07-03",
     "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10",

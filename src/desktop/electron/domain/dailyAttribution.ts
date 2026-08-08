@@ -82,7 +82,7 @@ export function buildDailyAttribution(
   valuationCutoff: string | null,
   names: Map<string, string>,
 ): DailyAttribution[] {
-  // P1-2：复用公共持仓区间函数，避免与 incomePriceRanges、positionsView 各写一套。
+  // 复用公共持仓区间函数，避免与 incomeCalendarPriceRanges、positionsView 各写一套。
   const intervalsBySymbol = holdingIntervals(entries, factAsOfDate);
 
   const dates = new Set<string>();

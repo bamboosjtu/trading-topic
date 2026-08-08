@@ -7,65 +7,18 @@ import type {
   BacktestWorkspaceState,
   MarketDataCacheEntry,
 } from "../../shared/contracts";
+import {
+  aggregateBacktestDataQuality,
+  assertBacktestDataQuality,
+} from "../domain/backtestDataQuality";
 import { rows } from "./dbUtil";
 import { insertMarketData } from "./marketRepository";
-
-/**
- * 为旧版本持久化的 BacktestResult 补充新增字段默认值。
- *
- * 兼容规则（按优先级）：
- * 1. 有 dataQuality → 直接使用
- * 2. 无 dataQuality，dataQualityStatus === "degraded_common_gap" → 旧两源缺口
- * 3. 无 dataQuality，dataQualityStatus === "degraded" → 降级但原因不明
- * 4. 无 dataQuality，dataQualityStatus === "strict" → strict
- * 5. 无 dataQualityStatus → 检查旧 warnings 文案推断
- * 不得把旧降级实验默认转换为 strict。
- */
-function normalizeBacktestResult(raw: unknown): BacktestResult {
-  const result = raw as BacktestResult;
-  if (!result.dataQualityStatus) {
-    const hasOldCommonGapWarning = result.warnings?.some(
-      (warning) =>
-        warning.includes("腾讯与新浪均未返回") ||
-        warning.includes("按证券不可交易区间处理"),
-    );
-    result.dataQualityStatus = hasOldCommonGapWarning
-      ? "degraded_common_gap"
-      : "strict";
-  }
-  if (!result.dataQuality) {
-    if (result.dataQualityStatus === "strict") {
-      result.dataQuality = {
-        level: "strict",
-        reasons: [],
-        officialCalendarYears: [],
-        uncoveredCalendarYears: [],
-      };
-    } else if (result.dataQualityStatus === "degraded_common_gap") {
-      // 旧值：明确是两源共同缺口
-      result.dataQuality = {
-        level: "degraded",
-        reasons: ["cross_provider_common_gap"],
-        officialCalendarYears: [],
-        uncoveredCalendarYears: [],
-      };
-    } else {
-      // "degraded" 或其他：降级但原因不明，不附加特定原因
-      result.dataQuality = {
-        level: "degraded",
-        reasons: [],
-        officialCalendarYears: [],
-        uncoveredCalendarYears: [],
-      };
-    }
-  }
-  return result;
-}
 
 export function insertExperiment(
   database: BetterSqlite3.Database,
   experiment: BacktestExperiment,
 ): void {
+  assertBacktestDataQuality(experiment.dataQuality, "回测试验数据质量");
   database
     .prepare(
       `INSERT INTO backtest_experiments(
@@ -86,6 +39,10 @@ export function insertExperiment(
      ) VALUES (?, ?, ?, ?, ?)`,
   );
   for (const result of experiment.results) {
+    assertBacktestDataQuality(
+      result.dataQuality,
+      `回测结果 ${result.id} 数据质量`,
+    );
     if (result.experimentId !== experiment.experimentId) {
       throw new Error("回测结果与实验编号不一致");
     }
@@ -120,7 +77,7 @@ function listExperimentResults(
      WHERE experiment_id = ?
      ORDER BY rowid`,
     [experimentId],
-  ).map((row) => normalizeBacktestResult(JSON.parse(row.result_json)));
+  ).map((row) => JSON.parse(row.result_json) as BacktestResult);
 }
 
 export function listBacktestExperiments(
@@ -144,6 +101,8 @@ export function listBacktestExperiments(
     has_calendar_partial: number | null;
     has_degraded_level: number | null;
     has_research_level: number | null;
+    official_calendar_years_json: string;
+    uncovered_calendar_years_json: string;
   }>(
     database,
     `SELECT
@@ -160,9 +119,7 @@ export function listBacktestExperiments(
          AS max_drawdown,
        MAX(CASE WHEN
             json_extract(r.result_json, '$.dataQuality.reasons')
-              LIKE '%cross_provider_common_gap%' OR
-            json_extract(r.result_json, '$.dataQualityStatus')
-              = 'degraded_common_gap'
+              LIKE '%cross_provider_common_gap%'
             THEN 1 ELSE 0 END)
          AS has_cross_provider_gap,
        MAX(CASE WHEN
@@ -171,22 +128,39 @@ export function listBacktestExperiments(
            THEN 1 ELSE 0 END)
          AS has_calendar_partial,
        MAX(CASE WHEN
-            -- 新数据：dataQuality.level 已存在
             json_extract(r.result_json, '$.dataQuality.level') = 'degraded'
-            OR (
-              -- 旧数据：dataQuality.level 不存在时回退到 dataQualityStatus
-              json_extract(r.result_json, '$.dataQuality.level') IS NULL
-              AND (
-                json_extract(r.result_json, '$.dataQualityStatus') = 'degraded'
-                OR json_extract(r.result_json, '$.dataQualityStatus') = 'degraded_common_gap'
-              )
-            )
            THEN 1 ELSE 0 END)
          AS has_degraded_level,
        MAX(CASE WHEN
             json_extract(r.result_json, '$.dataQuality.level') = 'research'
            THEN 1 ELSE 0 END)
-         AS has_research_level
+         AS has_research_level,
+       COALESCE((
+         SELECT json_group_array(year)
+         FROM (
+           SELECT DISTINCT CAST(calendar_year.value AS INTEGER) AS year
+           FROM backtest_results year_result,
+                json_each(
+                  year_result.result_json,
+                  '$.dataQuality.officialCalendarYears'
+                ) AS calendar_year
+           WHERE year_result.experiment_id = e.id
+           ORDER BY year
+         )
+       ), '[]') AS official_calendar_years_json,
+       COALESCE((
+         SELECT json_group_array(year)
+         FROM (
+           SELECT DISTINCT CAST(calendar_year.value AS INTEGER) AS year
+           FROM backtest_results year_result,
+                json_each(
+                  year_result.result_json,
+                  '$.dataQuality.uncoveredCalendarYears'
+                ) AS calendar_year
+           WHERE year_result.experiment_id = e.id
+           ORDER BY year
+         )
+       ), '[]') AS uncovered_calendar_years_json
      FROM backtest_experiments e
      LEFT JOIN backtest_results r ON r.experiment_id = e.id
      GROUP BY e.id
@@ -196,9 +170,6 @@ export function listBacktestExperiments(
   ).map((row) => {
       const hasCommonGap = row.has_cross_provider_gap === 1;
       const hasPartial = row.has_calendar_partial === 1;
-      // 实验级 level 按优先级 degraded > research > strict 判断。
-      // 优先读取 dataQuality.level；旧数据无 dataQuality 时回退到 dataQualityStatus。
-      // 这样旧版通用 degraded（level=degraded, reasons=[]）不会被错误聚合成 strict。
       const hasDegraded = row.has_degraded_level === 1;
       const hasResearchLevel = row.has_research_level === 1;
       const level: "strict" | "research" | "degraded" = hasDegraded
@@ -222,13 +193,15 @@ export function listBacktestExperiments(
         resultCount: row.result_count,
         bestXirr: row.best_xirr,
         maxDrawdown: row.max_drawdown ?? 0,
-        // 兼容字段：research 合并为 degraded
-        dataQualityStatus: level === "strict" ? "strict" : "degraded",
         dataQuality: {
           level,
           reasons,
-          officialCalendarYears: [],
-          uncoveredCalendarYears: [],
+          officialCalendarYears: JSON.parse(
+            row.official_calendar_years_json,
+          ) as number[],
+          uncoveredCalendarYears: JSON.parse(
+            row.uncovered_calendar_years_json,
+          ) as number[],
         },
       };
     });
@@ -253,19 +226,9 @@ export function getBacktestExperiment(
   )[0];
   if (!row) return null;
   const results = listExperimentResults(database, row.id);
-  // 实验级 level 按优先级 degraded > research > strict 判断，直接读取每个结果的实际 level。
-  // 这样旧版通用 degraded（level=degraded, reasons=[]）不会被错误聚合成 strict。
-  // reasons 单独合并：仅展示数据中实际出现的降级原因。
-  const experimentLevel: "strict" | "research" | "degraded" = results.some(
-    (r) => r.dataQuality?.level === "degraded",
-  )
-    ? "degraded"
-    : results.some((r) => r.dataQuality?.level === "research")
-      ? "research"
-      : "strict";
-  const experimentReasons = [
-    ...new Set(results.flatMap((r) => r.dataQuality?.reasons ?? [])),
-  ] as Array<"cross_provider_common_gap" | "calendar_coverage_partial">;
+  const dataQuality = aggregateBacktestDataQuality(
+    results.map((result) => result.dataQuality),
+  );
   return {
     experimentId: row.id,
     createdAt: row.created_at,
@@ -274,23 +237,7 @@ export function getBacktestExperiment(
     caliberVersion: row.caliber_version,
     status: row.status,
     results,
-    // 兼容字段：research 合并为 degraded
-    dataQualityStatus:
-      experimentLevel === "strict" ? "strict" : "degraded",
-    dataQuality: {
-      level: experimentLevel,
-      reasons: experimentReasons,
-      officialCalendarYears: [
-        ...new Set(
-          results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),
-        ),
-      ].sort((a, b) => a - b),
-      uncoveredCalendarYears: [
-        ...new Set(
-          results.flatMap((r) => r.dataQuality?.uncoveredCalendarYears ?? []),
-        ),
-      ].sort((a, b) => a - b),
-    },
+    dataQuality,
   };
 }
 
@@ -329,7 +276,7 @@ export function getBacktest(
     "SELECT result_json FROM backtest_results WHERE id = ?",
     [id],
   )[0];
-  return row ? normalizeBacktestResult(JSON.parse(row.result_json)) : null;
+  return row ? (JSON.parse(row.result_json) as BacktestResult) : null;
 }
 
 export function getBacktestWorkspace(

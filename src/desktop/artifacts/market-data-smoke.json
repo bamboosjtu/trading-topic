@@ -1,11 +1,11 @@
 {
-  "executedAt": "2026-08-02T09:23:08.457Z",
+  "executedAt": "2026-08-08T05:25:06.814Z",
   "requestRange": {
     "startDate": "2026-07-20",
     "endDate": "2026-07-24"
   },
   "instrumentCatalog": {
-    "etfCount": 1613,
+    "etfCount": 1624,
     "verifiedSymbols": [
       "510300",
       "159915"
@@ -15,7 +15,7 @@
       "primarySource": "eastmoney",
       "fallbackUsed": true,
       "fallbackReason": "fetch failed",
-      "fetchedAt": "2026-08-02T09:23:05.650Z"
+      "fetchedAt": "2026-08-08T05:25:04.037Z"
     }
   },
   "checks": [
@@ -96,8 +96,8 @@
       "label": "收盘后最新已完成交易日",
       "symbol": "600036",
       "source": "tencent",
-      "requestedCutoff": "2026-07-31",
-      "dataCutoff": "2026-07-31",
+      "requestedCutoff": "2026-08-07",
+      "dataCutoff": "2026-08-07",
       "fallbackUsed": false
     }
   ],

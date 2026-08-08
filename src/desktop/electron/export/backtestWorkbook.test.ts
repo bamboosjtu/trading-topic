@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import type { BacktestResult } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
+import { strictBacktestDataQuality } from "../domain/backtestDataQuality";
 import { buildBacktestWorkbook } from "./backtestWorkbook";
 
 function result(
@@ -72,7 +73,7 @@ function result(
     warnings: [],
     provenance: [],
     interruptionsUsed: [],
-    dataQualityStatus: "strict",
+    dataQuality: strictBacktestDataQuality(),
     createdAt: "2026-07-24T00:00:00Z",
   };
 }
@@ -97,7 +98,7 @@ describe("回测 XLSX 导出", () => {
       dataCutoff: "2026-07-24",
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
-      dataQualityStatus: "strict",
+      dataQuality: strictBacktestDataQuality(),
       results,
     });
     const workbook = new ExcelJS.Workbook();

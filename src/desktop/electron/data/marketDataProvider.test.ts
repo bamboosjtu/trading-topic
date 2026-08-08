@@ -467,7 +467,7 @@ describe("腾讯主源与新浪整段兜底", () => {
   });
 });
 
-/** P1-1：严格回测完整性检查升级测试 */
+/** 严格回测完整性检查 */
 function staticProvider(
   source: "tencent" | "sina",
   rows: { date: string; close: number }[],
@@ -500,7 +500,7 @@ const JULY_2026_WEEKDAYS = [
   "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31",
 ];
 
-describe("P1-1 严格回测行情完整性检查", () => {
+describe("严格回测行情完整性检查", () => {
   it("五年请求仅返回最后 2 行时主源产生头部截断 error 并请求备用源", async () => {
     // 上市日早于请求起点，说明这是接口截断而非新股未上市
     const truncatedRows = [
@@ -694,7 +694,7 @@ describe("P1-1 严格回测行情完整性检查", () => {
   });
 });
 
-describe("P1 证券级停复牌证据", () => {
+describe("证券级停复牌证据", () => {
   it("expandInterruptionDates 展开停牌区间为日期集合", () => {
     const interruptions: SecurityTradingInterruption[] = [
       {
@@ -774,7 +774,7 @@ describe("P1 证券级停复牌证据", () => {
     expect(errors.some((e) => e.date === "2026-07-06")).toBe(true);
   });
 
-  it("P1-5 连续缺口日期合并为单条区间 error，而非逐日输出", async () => {
+  it("连续缺口日期合并为单条区间 error，而非逐日输出", async () => {
     // 模拟 2026-07-06 至 2026-07-10 连续 5 个交易日缺失（无停牌证据）
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
@@ -805,7 +805,7 @@ describe("P1 证券级停复牌证据", () => {
     expect(errors[0].message).toContain("5");
   });
 
-  it("P1-5 不连续的缺口分别生成独立 error", async () => {
+  it("不连续的缺口分别生成独立 error", async () => {
     // 模拟两段独立缺口：07-06～07-07 和 07-13～07-14
     const rows = JULY_2026_WEEKDAYS
       .filter(
@@ -927,7 +927,7 @@ describe("P1 证券级停复牌证据", () => {
     ).toBe(true);
   });
 
-  it("P2-3：部分重合日期拆分为连续子区间", async () => {
+  it("部分重合日期拆分为连续子区间", async () => {
     // 腾讯缺少 07-06 至 07-10（5天），新浪有 07-07 但额外缺少 07-13、07-14
     // 腾讯行数 > 新浪行数 → 腾讯被选中
     // 选中腾讯后，其 07-06~07-10 缺口拆分：
@@ -1134,7 +1134,7 @@ describe("行情结果日历覆盖字段", () => {
 });
 
 /**
- * P2：fetchMarketPrices / fetchMarketAdjustedBars 包装层测试。
+ * fetchMarketPrices / fetchMarketAdjustedBars 包装层测试。
  *
  * 之前的测试名为"fetchMarketPrices 包装层转发..."但实际调用的是
  * fetchWithProviderFallback，并未真正驱动包装层。本测试通过 vi.spyOn
@@ -1160,13 +1160,13 @@ describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
     const result = await fetchMarketPrices(
       "601398",
       "2016-01-01",
-      "2026-12-31",
+      "2026-07-31",
       undefined,
       [],
     );
 
     // 关键：包装层必须真正被调用，而非绕过
-    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-12-31");
+    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-07-31");
     // 关键：两个日历字段必须同时存在于返回结果中
     expect(Array.isArray(result.officialCalendarYears)).toBe(true);
     expect(Array.isArray(result.uncoveredCalendarYears)).toBe(true);
@@ -1235,12 +1235,12 @@ describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
     const result = await fetchMarketAdjustedBars(
       "601398",
       "2016-01-01",
-      "2026-12-31",
+      "2026-07-31",
       undefined,
       [],
     );
 
-    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-12-31");
+    expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-07-31");
     expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
     expect(result.uncoveredCalendarYears).toEqual([
       2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,

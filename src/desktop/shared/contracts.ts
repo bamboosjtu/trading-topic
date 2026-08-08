@@ -255,21 +255,8 @@ export interface BacktestResult {
    * "交易所开市但该证券停牌"，不应被误判为行情缺失。
    */
   interruptionsUsed: SecurityTradingInterruption[];
-  /**
-   * 行情数据质量状态（兼容字段，新代码应使用 dataQuality.level）：
-   * - `strict`：所有交易日都有独立停牌证据或完整行情，且请求区间全部由正式交易日历覆盖；
-   * - `degraded`：存在降级原因（两源共同缺口或日历覆盖缺失），包括旧 `research` 状态；
-   * - `degraded_common_gap`：旧值，仅用于历史数据兼容。
-   *
-   * 注意：新数据使用 `dataQuality.level` 三级状态（strict/research/degraded），
-   * 此字段仅用于向后兼容，且 research 在此被合并为 degraded。
-   */
-  dataQualityStatus: "strict" | "degraded" | "degraded_common_gap";
-  /**
-   * 结构化数据质量模型，用于区分降级原因。
-   * 旧数据可能没有此字段，读取时通过 dataQualityStatus 和 warnings 推断。
-   */
-  dataQuality?: BacktestDataQuality;
+  /** 结构化数据质量模型；当前 Schema 1 不从旧字段或文案推断。 */
+  dataQuality: BacktestDataQuality;
   createdAt: string;
 }
 
@@ -923,15 +910,8 @@ export interface BacktestExperimentSummary {
   resultCount: number;
   bestXirr: number | null;
   maxDrawdown: number;
-  /**
-   * 实验中是否存在降级行情证据（兼容字段，新代码应使用 dataQuality）。
-   * - `strict`：所有结果均为严格回测；
-   * - `degraded`：至少一个结果存在降级原因；
-   * - `degraded_common_gap`：旧值，仅用于历史数据兼容。
-   */
-  dataQualityStatus: "strict" | "degraded" | "degraded_common_gap";
   /** 结构化数据质量模型，由所有标的结果汇总。 */
-  dataQuality?: BacktestDataQuality;
+  dataQuality: BacktestDataQuality;
 }
 
 export interface BacktestExperiment

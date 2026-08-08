@@ -96,11 +96,11 @@ function formatYearRanges(years: readonly number[]): string {
 function dataQualityLevelLabel(
   result: BacktestResult,
 ): "strict" | "research" | "degraded" {
-  return result.dataQuality?.level ?? "strict";
+  return result.dataQuality.level;
 }
 
 function dataQualityReasonsLabel(result: BacktestResult): string {
-  const reasons = result.dataQuality?.reasons ?? [];
+  const reasons = result.dataQuality.reasons;
   if (!reasons.length) return "";
   return reasons
     .map((reason) => {
@@ -112,8 +112,7 @@ function dataQualityReasonsLabel(result: BacktestResult): string {
 }
 
 function uncoveredCalendarYearsLabel(result: BacktestResult): string {
-  const years = result.dataQuality?.uncoveredCalendarYears ?? [];
-  return formatYearRanges(years);
+  return formatYearRanges(result.dataQuality.uncoveredCalendarYears);
 }
 
 function addSummarySheet(

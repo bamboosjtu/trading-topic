@@ -950,7 +950,7 @@ describe("投资收益视图", () => {
   });
 });
 
-describe("覆盖损伤合并（P1-1）", () => {
+describe("覆盖损伤合并", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-31T08:00:00Z"));

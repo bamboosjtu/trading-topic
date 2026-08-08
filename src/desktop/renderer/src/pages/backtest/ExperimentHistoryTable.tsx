@@ -117,10 +117,8 @@ export function ExperimentHistoryTable({
               <div className="history-created-cell">
                 <strong className="tabular-nums">{createdAtLabel(value)}</strong>
                 <HistoryDataQualityTag
-                  level={row.dataQuality?.level ?? "strict"}
-                  uncoveredCalendarYears={
-                    row.dataQuality?.uncoveredCalendarYears ?? []
-                  }
+                  level={row.dataQuality.level}
+                  uncoveredCalendarYears={row.dataQuality.uncoveredCalendarYears}
                 />
               </div>
             ),

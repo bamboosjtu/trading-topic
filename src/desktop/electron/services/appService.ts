@@ -25,7 +25,6 @@ import type {
   PositionsOverview,
   StockInfo,
   LedgerRecordView,
-  StoredMarketCoverage,
 } from "../../shared/contracts";
 import { buildBacktestStrategyKey } from "../../shared/backtestIdentity";
 import {
@@ -62,6 +61,10 @@ import {
 import { buildPositionsOverview } from "../domain/positionsView";
 import { buildIncomeCalendar } from "../domain/incomeCalendar";
 import {
+  aggregateBacktestDataQuality,
+  backtestDataQualityFromMarketEvidence,
+} from "../domain/backtestDataQuality";
+import {
   exportLedgerRecords,
   getLedgerRecordById,
   queryLedgerRecords,
@@ -75,17 +78,21 @@ import {
 } from "../domain/dateUtils";
 import {
   activeLedgerEntries,
-  holdingIntervals,
   reduceLedger,
 } from "../domain/ledgerReducer";
 import {
-  isConfirmedMarketClosureRange,
   latestCompletedTradingDate,
   latestTradingDateInMonth,
   latestWeekdayCandidate,
   marketCalendarDiagnostics,
   type TradeDateContext,
 } from "../domain/marketCalendar";
+import {
+  confirmedCoverageThrough,
+  incomeCalendarPriceRanges,
+  normalizeLivePriceRanges,
+  type LivePriceRange,
+} from "./livePriceRanges";
 
 function isCompleteAStockUniverse(stocks: readonly StockInfo[]): boolean {
   return (
@@ -174,110 +181,6 @@ function isFreshUniverseSnapshot(
     Number.isFinite(Date.parse(fetchedAt)) &&
     Date.now() - Date.parse(fetchedAt) < STOCK_UNIVERSE_CACHE_MAX_AGE_MS
   );
-}
-
-function confirmedCoverageThrough(
-  coverage: StoredMarketCoverage,
-): string | null {
-  if (coverage.resultStatus === "empty") {
-    return coverage.emptyEvidence ? coverage.requestedThrough : null;
-  }
-  // P0：partial 覆盖不确认任何覆盖区间，返回 null。
-  // 这使得 missingLivePriceRanges 会重新请求其完整原始请求区间，
-  // 避免只请求错误日期之后的区间导致旧 partial 覆盖被删除时
-  // 级联丢失错误日期之前的正常价格行。
-  // 尾部是否完整由 refreshPositionsMarket 中"endDate 是否有精确价格"单独判断。
-  if (coverage.resultStatus === "partial") {
-    return null;
-  }
-  if (!coverage.dataCutoff) return null;
-  if (coverage.dataCutoff >= coverage.requestedThrough) {
-    return coverage.requestedThrough;
-  }
-  return isConfirmedMarketClosureRange(
-    addDays(coverage.dataCutoff, 1),
-    coverage.requestedThrough,
-  )
-    ? coverage.requestedThrough
-    : coverage.dataCutoff;
-}
-
-interface LivePriceRange {
-  symbol: string;
-  startDate: string;
-  endDate: string;
-}
-
-/**
- * P1-3：按证券合并重叠或相邻的请求区间。
- * 同日清仓再买入会生成首尾相接的区间（A.end === B.start），
- * 不合并会导致两个快照都包含同一天价格，写入时触发价格行冲突。
- */
-function normalizeRanges(
-  ranges: readonly LivePriceRange[],
-): LivePriceRange[] {
-  const bySymbol = new Map<string, LivePriceRange[]>();
-  for (const range of ranges) {
-    const list = bySymbol.get(range.symbol) ?? [];
-    list.push(range);
-    bySymbol.set(range.symbol, list);
-  }
-  return [...bySymbol.entries()].flatMap(([symbol, list]) => {
-    const sorted = [...list].sort((a, b) =>
-      a.startDate.localeCompare(b.startDate),
-    );
-    type DateRange = { startDate: string; endDate: string };
-    const merged: DateRange[] = [];
-    for (const range of sorted) {
-      const last = merged.at(-1);
-      if (last && range.startDate <= last.endDate) {
-        // 重叠或相邻：扩展到更大的 endDate
-        last.endDate = range.endDate > last.endDate ? range.endDate : last.endDate;
-      } else {
-        merged.push({ startDate: range.startDate, endDate: range.endDate });
-      }
-    }
-    return merged.map((r) => ({ symbol, ...r }));
-  });
-}
-
-function incomePriceRanges(
-  entries: readonly LedgerEntry[],
-  query: IncomeCalendarQuery,
-  completedEndDate: string,
-): LivePriceRange[] {
-  const marketDate = currentMarketDate();
-  const endDate = [monthEnd(query.month), marketDate, completedEndDate].sort()[0];
-  const currentPositions = reduceLedger(entries, marketDate).positions;
-  const { effective } = activeLedgerEntries(entries, marketDate);
-  const currentSymbols = new Set(
-    [...currentPositions.entries()]
-      .filter(([, position]) => position.quantity > 1e-8)
-      .map(([symbol]) => symbol),
-  );
-  const symbols = query.symbol
-    ? [query.symbol]
-    : query.scope === "current"
-      ? [...currentSymbols]
-      : [
-          ...new Set(
-            effective
-              .filter((entry) => entry.businessDate <= endDate)
-              .flatMap((entry) => entry.symbol ?? []),
-          ),
-        ];
-
-  // P1-2：复用公共持仓区间函数，避免与 dailyAttribution、positionsView 各写一套。
-  const intervalsBySymbol = holdingIntervals(entries, endDate);
-  return symbols.flatMap((symbol) => {
-    const intervals = intervalsBySymbol.get(symbol) ?? [];
-    return intervals.map((interval) => ({
-      symbol,
-      startDate: interval.startDate,
-      // 持仓区间 endDate 可能是 asOfDate（当前持仓），截断到查询月份末尾
-      endDate: interval.endDate > endDate ? endDate : interval.endDate,
-    }));
-  });
 }
 
 export class AppService {
@@ -687,41 +590,11 @@ export class AppService {
       // P1：保存本次回测使用过的证券级停复牌证据，便于以后复现为什么
       // 某些交易日没有价格（属于"交易所开市但该证券停牌"的合法缺口）。
       result.interruptionsUsed = interruptions;
-      // 组装结构化数据质量模型（三级：strict / research / degraded）
-      // - cross_provider_common_gap：真实行情异常，触发 degraded
-      // - calendar_coverage_partial：仅日历覆盖不完整，触发 research
-      // - 同时存在两者时升级为 degraded
-      const reasons: Array<
-        "cross_provider_common_gap" | "calendar_coverage_partial"
-      > = [];
-      const hasCommonGap = prices.issues.some(
-        (issue) =>
-          issue.severity === "warning" &&
-          issue.classification === "cross_provider_common_gap",
+      result.dataQuality = backtestDataQualityFromMarketEvidence(
+        prices.issues,
+        prices.officialCalendarYears,
+        prices.uncoveredCalendarYears,
       );
-      if (hasCommonGap) {
-        reasons.push("cross_provider_common_gap");
-      }
-      const uncoveredCalendarYears = prices.uncoveredCalendarYears ?? [];
-      if (uncoveredCalendarYears.length > 0) {
-        reasons.push("calendar_coverage_partial");
-      }
-      const officialCalendarYears = prices.officialCalendarYears ?? [];
-      const level: "strict" | "research" | "degraded" = hasCommonGap
-        ? "degraded"
-        : uncoveredCalendarYears.length > 0
-          ? "research"
-          : "strict";
-      result.dataQuality = {
-        level,
-        reasons: [...new Set(reasons)],
-        officialCalendarYears,
-        uncoveredCalendarYears,
-      };
-      // 兼容字段：research 在旧字段中合并为 degraded（旧字段只有 strict/degraded）。
-      // degraded_common_gap 仅用于历史数据兼容。
-      result.dataQualityStatus =
-        level === "strict" ? "strict" : "degraded";
       results.push(result);
     }
     const actualStartDates = new Set(
@@ -749,22 +622,9 @@ export class AppService {
     dataCutoff: string,
     marketData: BacktestMarketDataBundle[],
   ): BacktestExperiment {
-    // 实验级数据质量聚合：按优先级 degraded > research > strict 判断。
-    // 直接读取每个结果的实际 dataQuality.level，避免旧版通用 degraded
-    // （level=degraded, reasons=[]）被错误聚合成 strict。
-    // reasons 单独合并：仅展示数据中实际出现的降级原因。
-    const experimentReasons = [
-      ...new Set(
-        results.flatMap((r) => r.dataQuality?.reasons ?? []),
-      ),
-    ] as Array<"cross_provider_common_gap" | "calendar_coverage_partial">;
-    const experimentLevel: "strict" | "research" | "degraded" = results.some(
-      (r) => r.dataQuality?.level === "degraded",
-    )
-      ? "degraded"
-      : results.some((r) => r.dataQuality?.level === "research")
-        ? "research"
-        : "strict";
+    const dataQuality = aggregateBacktestDataQuality(
+      results.map((result) => result.dataQuality),
+    );
     const experiment: BacktestExperiment = {
       experimentId,
       createdAt,
@@ -773,23 +633,7 @@ export class AppService {
       dataCutoff,
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
-      // 兼容字段：research 合并为 degraded
-      dataQualityStatus:
-        experimentLevel === "strict" ? "strict" : "degraded",
-      dataQuality: {
-        level: experimentLevel,
-        reasons: experimentReasons,
-        officialCalendarYears: [
-          ...new Set(
-            results.flatMap((r) => r.dataQuality?.officialCalendarYears ?? []),
-          ),
-        ].sort((a, b) => a - b),
-        uncoveredCalendarYears: [
-          ...new Set(
-            results.flatMap((r) => r.dataQuality?.uncoveredCalendarYears ?? []),
-          ),
-        ].sort((a, b) => a - b),
-      },
+      dataQuality,
     };
     this.database.saveBacktestExperimentWithMarketData(
       experiment,
@@ -924,7 +768,7 @@ export class AppService {
     ranges: readonly LivePriceRange[],
   ): Promise<{ issues: string[] }> {
     // P1-3：按证券合并重叠或相邻区间，避免同日清仓再买入产生价格行冲突。
-    const normalized = normalizeRanges(ranges);
+    const normalized = normalizeLivePriceRanges(ranges);
     const snapshots: MarketDataCacheEntry[] = [];
     const issues: string[] = [];
     // P1-1 修订：用上市日期区分新上市股票的预期前置缺口与接口截断。
@@ -1273,7 +1117,7 @@ export class AppService {
         ? this.completedMarketDate()
         : monthEnd(query.month);
     const entries = this.database.listLedger();
-    const coverage = incomePriceRanges(
+    const coverage = incomeCalendarPriceRanges(
       entries,
       query,
       requestedMonthEnd,

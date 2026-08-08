@@ -19,5 +19,11 @@
       "@/*": ["renderer/src/*"]
     }
   },
-  "include": ["renderer/src", "electron", "shared", "electron.vite.config.ts"]
+  "include": [
+    "renderer/src",
+    "electron",
+    "shared",
+    "electron.vite.config.ts",
+    "vitest.config.mts"
+  ]
 }

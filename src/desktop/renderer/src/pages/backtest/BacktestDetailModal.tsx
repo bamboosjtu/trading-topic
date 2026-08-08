@@ -114,10 +114,8 @@ export function BacktestDetailModal({
             <i />
             <span>回测明细</span>
             <DetailDataQualityTag
-              level={result.dataQuality?.level ?? "strict"}
-              uncoveredCalendarYears={
-                result.dataQuality?.uncoveredCalendarYears ?? []
-              }
+              level={result.dataQuality.level}
+              uncoveredCalendarYears={result.dataQuality.uncoveredCalendarYears}
             />
           </div>
         ) : (

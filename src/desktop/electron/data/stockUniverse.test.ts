@@ -130,7 +130,7 @@ describe("A 股代码表", () => {
     ).toThrow("A 股代码表不完整");
   });
 
-  it("按 AkShare 当前口径合并沪深京三家交易所的 A 股列表", async () => {
+  it("合并沪深京三家交易所的完整 A 股列表", async () => {
     const shenzhen = await shenzhenFixture();
     const shMain = Array.from({ length: STOCK_UNIVERSE_MIN_SIZE }, (_, index) => ({
       A_STOCK_CODE: String(600000 + index),

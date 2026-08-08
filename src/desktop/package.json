@@ -19,7 +19,10 @@
     "pack:portable": "npm run build && electron-builder --win portable --x64",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "npm run check:domain-boundaries",
-    "test": "vitest run",
+    "test": "vitest run --project=unit --project=contract --project=integration",
+    "test:unit": "vitest run --project=unit",
+    "test:contract": "vitest run --project=contract",
+    "test:integration": "vitest run --project=integration",
     "smoke:market-data": "node scripts/run-market-data-smoke.mjs",
     "release": "npm ci && npm run typecheck && npm test && npm run build && npm run smoke:market-data && npm run pack:portable",
     "preview": "electron-vite preview"

@@ -16,6 +16,7 @@ import type {
   SecurityTradingInterruption,
 } from "../../shared/contracts";
 import { BACKTEST_CALIBER_VERSION } from "../../shared/constants";
+import { strictBacktestDataQuality } from "../domain/backtestDataQuality";
 import { validateBackup } from "../domain/backupValidation";
 import { LocalDatabase } from "./database";
 
@@ -98,7 +99,7 @@ function result(
       },
     ],
     interruptionsUsed: [],
-    dataQualityStatus: "strict",
+    dataQuality: strictBacktestDataQuality(),
     createdAt: "2026-07-24T00:00:00Z",
   };
 }
@@ -115,7 +116,7 @@ function experiment(
     dataCutoff: "2026-07-24",
     caliberVersion: BACKTEST_CALIBER_VERSION,
     status: "completed",
-    dataQualityStatus: "strict",
+    dataQuality: strictBacktestDataQuality(),
     results: [result(id, `${id}-result`, endingAsset)],
   };
 }
@@ -142,6 +143,25 @@ afterEach(() => {
 });
 
 describe("LocalDatabase", () => {
+  it("持久化入口拒绝缺少结构化数据质量的回测试验", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "stock-income-invalid-quality-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "app.sqlite"));
+    const invalid = experiment(
+      "experiment-invalid-quality",
+      "2026-07-24T09:30:00Z",
+      150000,
+    );
+    invalid.results[0].dataQuality = undefined as never;
+
+    expect(() =>
+      database.saveBacktestExperimentWithMarketData(invalid, []),
+    ).toThrow("回测结果 experiment-invalid-quality-result 数据质量结构非法");
+    expect(database.listBacktestExperiments()).toEqual([]);
+  });
+
   it("组合投资事实任一写入失败时整体回滚", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-ledger-atomic-"));
     temporaryDirectories.push(directory);
@@ -216,7 +236,7 @@ describe("LocalDatabase", () => {
 
     const backup = database.exportBackup();
     expect(backup.schemaVersion).toBe(1);
-    expect(backup.schemaFingerprint).toContain("pending-dividends-listing-date");
+    expect(backup.schemaFingerprint).toContain("structured-data-quality");
     expect(backup.ledgerEntries).toHaveLength(1);
     expect(backup.backtestExperiments).toHaveLength(1);
     expect(backup.liveMarketCoverage).toHaveLength(1);
@@ -255,7 +275,7 @@ describe("LocalDatabase", () => {
    * 覆盖四种场景：单交易日、单调上涨、有回撤且已恢复、有回撤且截至期末未恢复。
    * 每个场景执行 exportBackup → validateBackup → restoreBackup 后结果完全一致。
    */
-  it("P1-2 回撤指标条件校验下的备份往返覆盖四种回撤场景", async () => {
+  it("回撤指标条件校验下的备份往返覆盖四种回撤场景", async () => {
     const directory = mkdtempSync(
       join(tmpdir(), "stock-income-drawdown-roundtrip-"),
     );
@@ -317,7 +337,7 @@ describe("LocalDatabase", () => {
         },
       ],
       interruptionsUsed: [],
-      dataQualityStatus: "strict",
+      dataQuality: strictBacktestDataQuality(),
       createdAt: "2024-04-01T00:00:00Z",
     });
 
@@ -433,7 +453,7 @@ describe("LocalDatabase", () => {
       dataCutoff: scenario.actualEndDate,
       caliberVersion: BACKTEST_CALIBER_VERSION,
       status: "completed",
-      dataQualityStatus: "strict",
+      dataQuality: strictBacktestDataQuality(),
       results: [
         buildResult(
           scenario.experimentId,
@@ -525,7 +545,7 @@ describe("LocalDatabase", () => {
   /**
    * P2-3 验收：备份校验必须验证核心财务恒等式，拒绝手工修改但结构合法的备份。
    */
-  it("P2-3 备份校验拒绝违反财务恒等式的手工修改", async () => {
+  it("备份校验拒绝违反财务恒等式的手工修改", async () => {
     const directory = mkdtempSync(
       join(tmpdir(), "stock-income-finance-invariants-"),
     );
@@ -663,7 +683,7 @@ describe("LocalDatabase", () => {
     ).toThrow("备份包含非法行情覆盖记录");
   });
 
-  it("P2-1/P2-2 partial 覆盖含 issues_json 随备份往返，且价格行区间校验生效", async () => {
+  it("partial 覆盖含 issues_json 随备份往返，且价格行区间校验生效", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-partial-backup-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -972,13 +992,7 @@ describe("LocalDatabase", () => {
       .toBe(160000);
   });
 
-  /**
-   * P0 回归：dataQuality.reasons 仅含 calendar_coverage_partial 的实验
-   * 必须在历史列表与详情中保持一致，不应被误判为包含 cross_provider_common_gap。
-   * 新数据写 dataQualityStatus = "degraded"（research 在兼容字段中合并为 degraded）。
-   * level 为 research（仅日历覆盖不完整，未触发真实行情异常）。
-   */
-  it("P0 回归：仅 calendar_coverage_partial 标记为 research 的历史列表与详情一致", async () => {
+  it("仅日历覆盖不完整时，历史列表与详情都保持 research", async () => {
     const directory = mkdtempSync(
       join(tmpdir(), "stock-income-calendar-partial-"),
     );
@@ -986,13 +1000,8 @@ describe("LocalDatabase", () => {
     const database = await openDatabase(join(directory, "app.sqlite"));
     const experimentId = "exp-calendar-partial";
     const resultId = "exp-calendar-partial-result";
-    // 构造一个仅含 calendar_coverage_partial 的 research 结果。
-    // 关键：dataQualityStatus 使用 "degraded"（research 在兼容字段中合并为 degraded）。
-    // dataQuality.reasons 只包含 "calendar_coverage_partial"，不含 "cross_provider_common_gap"。
-    // dataQuality.level 为 "research"（仅日历覆盖不完整，未触发真实行情异常）。
     const researchResult: BacktestResult = {
       ...result(experimentId, resultId, 150000),
-      dataQualityStatus: "degraded",
       dataQuality: {
         level: "research",
         reasons: ["calendar_coverage_partial"],
@@ -1008,7 +1017,6 @@ describe("LocalDatabase", () => {
         dataCutoff: "2026-07-24",
         caliberVersion: BACKTEST_CALIBER_VERSION,
         status: "completed",
-        dataQualityStatus: "degraded",
         dataQuality: {
           level: "research",
           reasons: ["calendar_coverage_partial"],
@@ -1024,18 +1032,20 @@ describe("LocalDatabase", () => {
     const summaries = database.listBacktestExperiments();
     expect(summaries).toHaveLength(1);
     const summary = summaries[0];
-    // 兼容字段：research 合并为 degraded
-    expect(summary?.dataQualityStatus).toBe("degraded");
-    // 新三级状态：level 为 research
     expect(summary?.dataQuality?.level).toBe("research");
     expect(summary?.dataQuality?.reasons).toEqual(["calendar_coverage_partial"]);
+    expect(summary?.dataQuality?.officialCalendarYears).toEqual([
+      2024, 2025, 2026,
+    ]);
+    expect(summary?.dataQuality?.uncoveredCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    ]);
     // 关键：summary 不应包含 cross_provider_common_gap
     expect(summary?.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
 
     // 详情：dataQuality.reasons 也只有 calendar_coverage_partial
     const detail = database.getBacktestExperiment(experimentId);
     expect(detail).not.toBeNull();
-    expect(detail?.dataQualityStatus).toBe("degraded");
     expect(detail?.dataQuality?.level).toBe("research");
     expect(detail?.dataQuality?.reasons).toEqual(["calendar_coverage_partial"]);
     // 关键：详情也不应包含 cross_provider_common_gap
@@ -1043,7 +1053,6 @@ describe("LocalDatabase", () => {
     // 结果级别的 dataQuality 也应保持一致
     expect(detail?.results[0]?.dataQuality?.reasons).toEqual(["calendar_coverage_partial"]);
     expect(detail?.results[0]?.dataQuality?.reasons).not.toContain("cross_provider_common_gap");
-    expect(detail?.results[0]?.dataQualityStatus).toBe("degraded");
     expect(detail?.results[0]?.dataQuality?.level).toBe("research");
   });
 
@@ -1413,7 +1422,7 @@ describe("LocalDatabase", () => {
     }
   });
 
-  it("P2 写入时拒绝 partial 覆盖缺少 error 级别 issues", async () => {
+  it("写入时拒绝 partial 覆盖缺少 error 级别 issues", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-write-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -1457,7 +1466,7 @@ describe("LocalDatabase", () => {
     ).toThrow("partial 覆盖必须至少包含一个 error 级别问题");
   });
 
-  it("P2 写入时拒绝非 partial 覆盖携带 issues", async () => {
+  it("写入时拒绝非 partial 覆盖携带 issues", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-non-partial-"));
     temporaryDirectories.push(directory);
     const database = await openDatabase(join(directory, "app.sqlite"));
@@ -1484,7 +1493,7 @@ describe("LocalDatabase", () => {
     ).toThrow("非 partial 覆盖禁止携带 issues");
   });
 
-  it("P2 读取损坏的 issues_json 时生成通用 error 并保持 partial", async () => {
+  it("读取损坏的 issues_json 时生成通用 error 并保持 partial", async () => {
     const directory = mkdtempSync(join(tmpdir(), "stock-income-p2-corrupt-"));
     temporaryDirectories.push(directory);
     const dbPath = join(directory, "app.sqlite");
@@ -1529,7 +1538,7 @@ describe("LocalDatabase", () => {
   });
 });
 
-describe("P1-2 停牌证据原子替换", () => {
+describe("停牌证据原子替换", () => {
   const AUTO_SOURCE = "eastmoney_datacenter_RPT_SUSPENDDATA";
   const MANUAL_SOURCE = "manual/company-announcement";
 
@@ -1629,186 +1638,5 @@ describe("P1-2 停牌证据原子替换", () => {
     );
     expect(inRange).toHaveLength(1);
     expect(inRange[0].startDate).toBe("2025-08-04");
-  });
-});
-
-/**
- * 旧版本持久化的 BacktestResult 兼容性验证。
- *
- * `normalizeBacktestResult` 在读取时为旧数据补充 `dataQuality` 字段：
- * 1. 有 dataQuality → 直接使用
- * 2. 无 dataQuality 但有 dataQualityStatus → 推断
- * 3. 无 dataQualityStatus → 检查旧 warnings 文案推断
- */
-describe("旧回测结果 dataQuality 推断", () => {
-  /** 构造一个仅含必要字段的旧 strict BacktestResult（无 dataQuality）。 */
-  function legacyStrictResult(
-    experimentId: string,
-    id: string,
-  ): BacktestResult {
-    return {
-      ...result(experimentId, id, 150000),
-      dataQualityStatus: "strict",
-      // 旧数据没有 dataQuality 字段
-    };
-  }
-
-  /** 构造一个旧 degraded BacktestResult（无 dataQuality，但有 dataQualityStatus）。 */
-  function legacyDegradedResult(
-    experimentId: string,
-    id: string,
-  ): BacktestResult {
-    return {
-      ...result(experimentId, id, 150000),
-      dataQualityStatus: "degraded_common_gap",
-    };
-  }
-
-  it("旧 strict 结果无 dataQuality 时推断为 strict level 且无 reasons", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "stock-income-legacy-strict-"),
-    );
-    temporaryDirectories.push(directory);
-    const database = await openDatabase(join(directory, "app.sqlite"));
-    const experimentId = "exp-legacy-strict";
-    const resultId = "exp-legacy-strict-result";
-    database.saveBacktestExperimentWithMarketData(
-      {
-        experimentId,
-        createdAt: "2026-07-24T09:30:00Z",
-        request: request(),
-        dataCutoff: "2026-07-24",
-        caliberVersion: BACKTEST_CALIBER_VERSION,
-        status: "completed",
-        dataQualityStatus: "strict",
-        results: [legacyStrictResult(experimentId, resultId)],
-      },
-      [],
-    );
-
-    const restored = database.getBacktest(resultId);
-    expect(restored).not.toBeNull();
-    expect(restored?.dataQuality).toEqual({
-      level: "strict",
-      reasons: [],
-      officialCalendarYears: [],
-      uncoveredCalendarYears: [],
-    });
-    expect(restored?.dataQualityStatus).toBe("strict");
-  });
-
-  it("旧 degraded 结果无 dataQuality 时推断为 degraded 且 reasons 含 cross_provider_common_gap", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "stock-income-legacy-degraded-"),
-    );
-    temporaryDirectories.push(directory);
-    const database = await openDatabase(join(directory, "app.sqlite"));
-    const experimentId = "exp-legacy-degraded";
-    const resultId = "exp-legacy-degraded-result";
-    database.saveBacktestExperimentWithMarketData(
-      {
-        experimentId,
-        createdAt: "2026-07-24T09:30:00Z",
-        request: request(),
-        dataCutoff: "2026-07-24",
-        caliberVersion: BACKTEST_CALIBER_VERSION,
-        status: "completed",
-        dataQualityStatus: "degraded_common_gap",
-        results: [legacyDegradedResult(experimentId, resultId)],
-      },
-      [],
-    );
-
-    const restored = database.getBacktest(resultId);
-    expect(restored).not.toBeNull();
-    expect(restored?.dataQuality).toEqual({
-      level: "degraded",
-      reasons: ["cross_provider_common_gap"],
-      officialCalendarYears: [],
-      uncoveredCalendarYears: [],
-    });
-    expect(restored?.dataQualityStatus).toBe("degraded_common_gap");
-  });
-
-  it("更旧结果无 dataQualityStatus 且 warnings 含旧降级文案时推断为 degraded", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "stock-income-legacy-warnings-"),
-    );
-    temporaryDirectories.push(directory);
-    const database = await openDatabase(join(directory, "app.sqlite"));
-    const experimentId = "exp-legacy-warnings";
-    const resultId = "exp-legacy-warnings-result";
-    // 构造一个连 dataQualityStatus 都没有的更旧结果
-    const legacyResult = {
-      ...result(experimentId, resultId, 150000),
-      dataQualityStatus: undefined,
-      dataQuality: undefined,
-      warnings: [
-        "回测行情完整性问题：2026-07-06 至 2026-07-10 共 5 个交易日腾讯与新浪均未返回行情",
-      ],
-    } as unknown as BacktestResult;
-    database.saveBacktestExperimentWithMarketData(
-      {
-        experimentId,
-        createdAt: "2026-07-24T09:30:00Z",
-        request: request(),
-        dataCutoff: "2026-07-24",
-        caliberVersion: BACKTEST_CALIBER_VERSION,
-        status: "completed",
-        dataQualityStatus: "strict",
-        results: [legacyResult],
-      },
-      [],
-    );
-
-    const restored = database.getBacktest(resultId);
-    expect(restored).not.toBeNull();
-    // warnings 文案匹配旧降级标记 → dataQualityStatus 推断为 degraded_common_gap
-    expect(restored?.dataQualityStatus).toBe("degraded_common_gap");
-    expect(restored?.dataQuality).toEqual({
-      level: "degraded",
-      reasons: ["cross_provider_common_gap"],
-      officialCalendarYears: [],
-      uncoveredCalendarYears: [],
-    });
-  });
-
-  it("更旧结果无 dataQualityStatus 且 warnings 不含降级文案时推断为 strict", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "stock-income-legacy-strict-warnings-"),
-    );
-    temporaryDirectories.push(directory);
-    const database = await openDatabase(join(directory, "app.sqlite"));
-    const experimentId = "exp-legacy-strict-warnings";
-    const resultId = "exp-legacy-strict-warnings-result";
-    const legacyResult = {
-      ...result(experimentId, resultId, 150000),
-      dataQualityStatus: undefined,
-      dataQuality: undefined,
-      warnings: ["其他与降级无关的警告"],
-    } as unknown as BacktestResult;
-    database.saveBacktestExperimentWithMarketData(
-      {
-        experimentId,
-        createdAt: "2026-07-24T09:30:00Z",
-        request: request(),
-        dataCutoff: "2026-07-24",
-        caliberVersion: BACKTEST_CALIBER_VERSION,
-        status: "completed",
-        dataQualityStatus: "strict",
-        results: [legacyResult],
-      },
-      [],
-    );
-
-    const restored = database.getBacktest(resultId);
-    expect(restored).not.toBeNull();
-    expect(restored?.dataQualityStatus).toBe("strict");
-    expect(restored?.dataQuality).toEqual({
-      level: "strict",
-      reasons: [],
-      officialCalendarYears: [],
-      uncoveredCalendarYears: [],
-    });
   });
 });

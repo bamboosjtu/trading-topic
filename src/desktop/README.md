@@ -16,6 +16,12 @@ R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见
 | 数据库 | SQLite（better-sqlite3，WAL，持久化到 userData） |
 | 测试 | Vitest |
 
+## 工程文档
+
+- [数据源](docs/数据源.md)：上游、端点、降级边界、缓存、验证证据与剩余风险；
+- [测试分层](tests/README.md)：unit / contract / integration / smoke 的职责与命令；
+- [当前评审](review.md)：本轮重构、测试清理、验证结果与未消除风险。
+
 产品不 import、执行或读取 `labs/`、`research/`。Lab 01 的研究结论在产品域重新实现；产品测试使用 `tests/fixtures/` 内自有验收向量。
 
 ## 开发命令

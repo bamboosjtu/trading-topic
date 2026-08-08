@@ -16,6 +16,7 @@ import type {
   SimpleBacktestResult,
   SimpleBacktestRow,
 } from "../../shared/contracts";
+import { strictBacktestDataQuality } from "./backtestDataQuality";
 import { drawdownProfile, roundMoney, xirr } from "./finance";
 
 /** 内部股数保留 6 位小数，界面按需显示 2 位，避免长期累计漂移。 */
@@ -386,8 +387,8 @@ export function simulateBacktest(
     // P1：simulateBacktest 不直接知道停复牌证据；由 appService 在调用后填充。
     // 这里给空数组作为默认值，避免回测结果对象缺少必要字段。
     interruptionsUsed: [],
-    // P1-2：默认 strict，由 appService 在检测到两源共同缺口降级时覆盖。
-    dataQualityStatus: "strict",
+    // 领域计算默认只描述计算本身；服务层会用本次行情证据覆盖该值。
+    dataQuality: strictBacktestDataQuality(),
     createdAt: experimentContext.createdAt,
   };
 }

@@ -9,7 +9,7 @@ const vitest = join(
 );
 const result = spawnSync(
   process.execPath,
-  [vitest, "run", "electron/data/marketData.smoke.test.ts"],
+  [vitest, "run", "--project=smoke"],
   {
     stdio: "inherit",
     env: { ...process.env, RUN_MARKET_SMOKE: "1" },

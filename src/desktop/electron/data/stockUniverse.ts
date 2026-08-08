@@ -539,10 +539,11 @@ export async function fetchDomesticEtfUniverse(): Promise<
 }
 
 /**
- * 获取与 AkShare `stock_info_a_code_name()` 相同范围的沪深京 A 股代码/名称目录。
+ * 获取沪深京交易所的全 A 股代码、名称与可用上市日期。
  *
- * 产品端保持纯 Node.js，直接调用三家交易所公开接口，不执行 Python/AkShare。
- * 只有三地合并后的目录通过完整性校验，服务层才会覆盖 SQLite 成功快照。
+ * 产品端保持纯 Node.js，直接调用三家交易所公开接口，不执行 Python 或
+ * AKShare。只有三地合并后的目录通过完整性校验，服务层才会覆盖 SQLite
+ * 成功快照。
  */
 export async function fetchAStockUniverse(): Promise<{
   rows: StockInfo[];
@@ -561,5 +562,4 @@ export async function fetchAStockUniverse(): Promise<{
     fallbackUsed: false,
   };
 }
-
 
