@@ -165,6 +165,7 @@ function registerIpc(): void {
     };
   });
   secureHandle("diagnostics:get", () => service.getDiagnostics());
+  secureHandle("data-sources:check", () => service.checkDataSources());
   secureHandle("backtest:run", (_event, request: BacktestRequest) =>
     service.runBacktest(request),
   );

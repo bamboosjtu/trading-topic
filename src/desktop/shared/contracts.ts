@@ -749,6 +749,41 @@ export interface DirectoryProvenance {
   fetchedAt: string;
 }
 
+export type DataSourceHealthStatus =
+  | "available"
+  | "degraded"
+  | "unavailable";
+
+export type DataSourceHealthId =
+  | "a_stock_directory"
+  | "etf_directory"
+  | "tencent_market"
+  | "sina_market"
+  | "eastmoney_corporate_actions"
+  | "eastmoney_suspensions"
+  | "baidu_suspensions";
+
+/** 设置页一次显式联网探测的单项结果，不作为业务数据或持久化证据。 */
+export interface DataSourceHealthItem {
+  id: DataSourceHealthId;
+  capability: string;
+  route: string;
+  status: DataSourceHealthStatus;
+  checkedAt: string;
+  latencyMs: number;
+  source: string;
+  detail: string;
+  dataCutoff?: string;
+  fallbackReason?: string;
+}
+
+/** 数据源健康检查只描述当次请求；不承诺后续请求持续可用。 */
+export interface DataSourceHealthReport {
+  checkedAt: string;
+  status: DataSourceHealthStatus;
+  items: DataSourceHealthItem[];
+}
+
 export interface StoredStockInfo extends StockInfo, DirectoryProvenance {}
 
 export interface MarketDataCacheEntry {
@@ -933,6 +968,8 @@ export interface BacktestWorkspaceState {
 
 export interface DesktopApi {
   health(): Promise<HealthResponse>;
+  /** 显式联网检查产品当前固定的数据源路由，不写入业务缓存。 */
+  checkDataSources(): Promise<DataSourceHealthReport>;
   listAStocks(): Promise<StockInfo[]>;
   listEtfs(): Promise<StockInfo[]>;
   runBacktest(request: BacktestRequest): Promise<BacktestExperiment>;

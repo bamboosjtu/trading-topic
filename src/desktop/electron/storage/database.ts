@@ -66,6 +66,7 @@ import {
   listTradingInterruptions as listTradingInterruptionsFrom,
   listTradingInterruptionsBySymbol as listTradingInterruptionsBySymbolFrom,
   listTradingInterruptionsInRange as listTradingInterruptionsInRangeFrom,
+  replaceTradingInterruptionsInRangeBySourcesAtomically as replaceTradingInterruptionsInRangeBySourcesAtomicallyFrom,
   replaceTradingInterruptionsBySourceAtomically as replaceTradingInterruptionsBySourceAtomicallyFrom,
 } from "./tradingInterruptionRepository";
 import {
@@ -473,6 +474,20 @@ export class LocalDatabase {
       symbol,
       source,
       interruptions,
+    );
+  }
+
+  /** 按已确认覆盖范围原子替换自动停复牌来源，保留范围外与人工证据。 */
+  replaceTradingInterruptionsInRangeBySourcesAtomically(params: {
+    symbol: string;
+    sources: readonly string[];
+    startDate: string;
+    endDate: string;
+    interruptions: readonly SecurityTradingInterruption[];
+  }): void {
+    replaceTradingInterruptionsInRangeBySourcesAtomicallyFrom(
+      this.database,
+      params,
     );
   }
 

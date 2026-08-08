@@ -11,6 +11,7 @@ import type {
 
 const api: DesktopApi = {
   health: () => ipcRenderer.invoke("app:health"),
+  checkDataSources: () => ipcRenderer.invoke("data-sources:check"),
   listAStocks: () => ipcRenderer.invoke("stocks:list"),
   listEtfs: () => ipcRenderer.invoke("etfs:list"),
   runBacktest: (request: BacktestRequest) =>

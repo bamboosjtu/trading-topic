@@ -4,17 +4,19 @@ import icbcFixture from "../../tests/fixtures/eastmoney-sharebonus-601398.json";
 import catlFixture from "../../tests/fixtures/eastmoney-sharebonus-300750.json";
 import allotmentFixture from "../../tests/fixtures/eastmoney-allotment-601916.json";
 import {
-  EASTMONEY_SUSPEND_SOURCE,
   fetchAdjustedBars,
   fetchCorporateActions,
-  fetchTradingSuspensions,
   fetchUnadjustedPrices,
   marketSymbol,
   parseCorporateActions,
   parseReportedCorporateActions,
+} from "./tencent";
+import {
+  EASTMONEY_SUSPEND_SOURCE,
+  fetchEastmoneyTradingSuspensions,
   parseSuspensionRow,
   parseTradingSuspensions,
-} from "./tencent";
+} from "./tradingSuspensions";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -430,7 +432,7 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
   const FETCHED_AT = "2025-08-20T00:00:00Z";
 
   it("解析东方财富真实字段 SUSPEND_START_DATE + SUSPEND_END_TIME", () => {
-    // 取自东方财富 datacenter RPT_SUSPENDDATA 报表的真实字段命名
+    // 取自东方财富新市场级停复牌报表的真实字段命名
     const row = {
       SECURITY_CODE: "601088",
       SUSPEND_START_DATE: "2025-08-04 00:00:00",
@@ -568,7 +570,7 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
     expect(parseTradingSuspensions([], "601088", FETCHED_AT)).toEqual([]);
   });
 
-  it("fetchTradingSuspensions 接口明确空结果返回空数组", async () => {
+  it("新东方财富停复牌接口明确空结果返回空数组", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -581,11 +583,16 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
         }),
       }),
     );
-    const result = await fetchTradingSuspensions("601088");
-    expect(result).toEqual([]);
+    const result = await fetchEastmoneyTradingSuspensions(
+      ["601088"],
+      "2025-08-01",
+      "2025-08-31",
+      { now: () => new Date("2025-09-01T00:00:00Z") },
+    );
+    expect(result.rows).toEqual([]);
   });
 
-  it("fetchTradingSuspensions 接口返回行但字段无法解析时抛错", async () => {
+  it("新东方财富停复牌接口返回行但字段无法解析时抛错", async () => {
     // 接口字段已变化但响应非空，应抛错而不是返回空数组
     vi.stubGlobal(
       "fetch",
@@ -596,6 +603,8 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
           code: 0,
           message: "ok",
           result: {
+            pages: 1,
+            count: 1,
             data: [
               {
                 SECURITY_CODE: "601088",
@@ -606,12 +615,17 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
         }),
       }),
     );
-    await expect(fetchTradingSuspensions("601088")).rejects.toThrow(
-      "未识别到有效日期字段",
-    );
+    await expect(
+      fetchEastmoneyTradingSuspensions(
+        ["601088"],
+        "2025-08-01",
+        "2025-08-31",
+        { now: () => new Date("2025-09-01T00:00:00Z") },
+      ),
+    ).rejects.toThrow("未识别到有效日期字段");
   });
 
-  it("fetchTradingSuspensions 成功解析真实字段并写入 EASTMONEY_SUSPEND_SOURCE", async () => {
+  it("新东方财富停复牌接口成功解析真实字段并写入来源", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -621,6 +635,8 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
           code: 0,
           message: "ok",
           result: {
+            pages: 1,
+            count: 1,
             data: [
               {
                 SECURITY_CODE: "601088",
@@ -635,9 +651,14 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
         }),
       }),
     );
-    const result = await fetchTradingSuspensions("601088");
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
+    const result = await fetchEastmoneyTradingSuspensions(
+      ["601088"],
+      "2025-08-01",
+      "2025-08-31",
+      { now: () => new Date("2025-09-01T00:00:00Z") },
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({
       symbol: "601088",
       startDate: "2025-08-04",
       endDate: "2025-08-15",

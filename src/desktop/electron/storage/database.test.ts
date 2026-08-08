@@ -1539,7 +1539,8 @@ describe("LocalDatabase", () => {
 });
 
 describe("停牌证据原子替换", () => {
-  const AUTO_SOURCE = "eastmoney_datacenter_RPT_SUSPENDDATA";
+  const AUTO_SOURCE =
+    "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE";
   const MANUAL_SOURCE = "manual/company-announcement";
 
   function makeInterruption(
@@ -1615,6 +1616,48 @@ describe("停牌证据原子替换", () => {
       [],
     );
     expect(database.listTradingInterruptionsBySymbol("601088")).toHaveLength(0);
+  });
+
+  it("范围替换只清理相交的自动主备来源，保留范围外与人工证据", async () => {
+    const directory = mkdtempSync(
+      join(tmpdir(), "trading-interruption-range-replace-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = await openDatabase(join(directory, "test.sqlite"));
+    const backupSource = "baidu_financecalendar_notify_suspend";
+    database.insertTradingInterruptions([
+      makeInterruption("601088", "2025-06-01", "2025-06-05", AUTO_SOURCE),
+      makeInterruption("601088", "2025-08-01", "2025-08-03", AUTO_SOURCE),
+      makeInterruption("601088", "2025-08-10", "2025-08-12", backupSource),
+      makeInterruption(
+        "601088",
+        "2025-08-20",
+        "2025-08-21",
+        MANUAL_SOURCE,
+      ),
+    ]);
+
+    database.replaceTradingInterruptionsInRangeBySourcesAtomically({
+      symbol: "601088",
+      sources: [AUTO_SOURCE, backupSource],
+      startDate: "2025-08-01",
+      endDate: "2025-08-31",
+      interruptions: [
+        makeInterruption(
+          "601088",
+          "2025-08-04",
+          "2025-08-15",
+          AUTO_SOURCE,
+        ),
+      ],
+    });
+
+    const result = database.listTradingInterruptionsBySymbol("601088");
+    expect(result.map((row) => [row.startDate, row.source])).toEqual([
+      ["2025-06-01", AUTO_SOURCE],
+      ["2025-08-04", AUTO_SOURCE],
+      ["2025-08-20", MANUAL_SOURCE],
+    ]);
   });
 
   it("listTradingInterruptionsInRange 按请求区间裁剪证据", async () => {

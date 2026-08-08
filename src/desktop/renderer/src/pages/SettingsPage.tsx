@@ -22,12 +22,15 @@ import {
   FileTextOutlined,
   PauseCircleOutlined,
   PlusOutlined,
+  ReloadOutlined,
   SafetyCertificateOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  type DataSourceHealthItem,
+  type DataSourceHealthStatus,
   type DirectoryProvenance,
   type MarketCalendarDiagnostic,
   type SecurityTradingInterruption,
@@ -78,6 +81,131 @@ function DirectoryDetails({
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
           description="首次加载证券目录后显示实际来源"
+        />
+      )}
+    </section>
+  );
+}
+
+const SOURCE_HEALTH_LABELS: Record<
+  DataSourceHealthStatus,
+  { color: "green" | "gold" | "red"; label: string }
+> = {
+  available: { color: "green", label: "可用" },
+  degraded: { color: "gold", label: "已降级" },
+  unavailable: { color: "red", label: "不可用" },
+};
+
+function DataSourceHealthSection() {
+  const sourceHealth = useQuery({
+    queryKey: ["data-source-health"],
+    queryFn: api.checkDataSources,
+    enabled: false,
+    retry: false,
+    staleTime: 5 * 60 * 1_000,
+  });
+  const report = sourceHealth.data;
+  const summary = report ? SOURCE_HEALTH_LABELS[report.status] : null;
+  const columns: ColumnsType<DataSourceHealthItem> = [
+    {
+      title: "能力",
+      dataIndex: "capability",
+      width: 150,
+    },
+    {
+      title: "固定路由",
+      dataIndex: "route",
+      width: 230,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 90,
+      render: (value: DataSourceHealthStatus) => {
+        const status = SOURCE_HEALTH_LABELS[value];
+        return <Tag color={status.color}>{status.label}</Tag>;
+      },
+    },
+    {
+      title: "本次来源",
+      dataIndex: "source",
+      width: 250,
+    },
+    {
+      title: "检查结果",
+      render: (_: unknown, value: DataSourceHealthItem) => (
+        <div>
+          <div>{value.detail}</div>
+          {value.fallbackReason ? (
+            <div>主源失败：{value.fallbackReason}</div>
+          ) : null}
+          <span className="tabular-nums">{value.latencyMs} ms</span>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <section className="workspace-panel settings-section">
+      <div className="settings-section-title">
+        <ReloadOutlined />
+        <div>
+          <h2>数据源实时可用性</h2>
+          <p>产品路由按业务语义固定，备用源自动整段切换；这里做一次性联网探测，不改写目录、行情或公司行动缓存。</p>
+        </div>
+      </div>
+      <Alert
+        className="mb-4"
+        type="info"
+        showIcon
+        message="不开放任意主备顺序切换"
+        description="ETF 目录固定使用新浪；停复牌分别检查东方财富市场级主源和百度独立备用源。设置页展示每个来源的当次健康、固定路由和兜底原因，不用手工开关绕过完整性门槛。"
+      />
+      <div className="settings-actions mb-4">
+        <Button
+          type="primary"
+          icon={<ReloadOutlined />}
+          loading={sourceHealth.isFetching}
+          onClick={() => void sourceHealth.refetch()}
+        >
+          检查全部数据源
+        </Button>
+      </div>
+      {sourceHealth.error ? (
+        <Alert
+          type="error"
+          showIcon
+          message="数据源检查未完成"
+          description={sourceHealth.error.message}
+        />
+      ) : report && summary ? (
+        <>
+          <Alert
+            className="mb-4"
+            type={
+              report.status === "available"
+                ? "success"
+                : report.status === "degraded"
+                  ? "warning"
+                  : "error"
+            }
+            showIcon
+            message={`当次检查：${summary.label}`}
+            description={`检查时间 ${fetchedAt(report.checkedAt)}；结果只代表这一次请求。`}
+          />
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={false}
+            scroll={{ x: 980 }}
+            columns={columns}
+            dataSource={report.items}
+          />
+        </>
+      ) : (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="尚未执行实时检查；本地最近成功来源仍显示在上方目录卡片中"
         />
       )}
     </section>
@@ -197,8 +325,7 @@ function TradingInterruptionSection() {
         <div>
           <h2>证券级停复牌证据</h2>
           <p>
-            录入公司公告披露的临时停牌、退市或未上市区间。行情完整性检查会排除这些日期，
-            避免把合法停牌误判为行情缺失。
+            回测和持仓行情刷新会先尝试自动同步停复牌；这里仅用于公司或交易所公告的人工补证与纠错，自动源状态请查看上方实时检查。
           </p>
         </div>
       </div>
@@ -208,7 +335,7 @@ function TradingInterruptionSection() {
           icon={<PlusOutlined />}
           onClick={() => setModalOpen(true)}
         >
-          添加停牌证据
+          添加人工补充证据
         </Button>
       </div>
       <Table
@@ -350,7 +477,7 @@ export function SettingsPage() {
     <div className="settings-page">
       <header className="page-heading">
         <h1>本地设置</h1>
-        <p>查看固定产品口径、数据来源与交易日历，并维护本机数据。</p>
+        <p>查看固定产品口径、数据源实时健康、交易日历，并维护本机数据。</p>
       </header>
 
       {queryError ? (
@@ -418,6 +545,8 @@ export function SettingsPage() {
               </Descriptions.Item>
             </Descriptions>
           </section>
+
+          <DataSourceHealthSection />
 
           <section className="workspace-panel settings-section">
             <div className="settings-section-title">

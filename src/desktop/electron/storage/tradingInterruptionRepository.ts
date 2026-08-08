@@ -203,6 +203,69 @@ export function deleteTradingInterruptionsBySymbolAndSource(
 }
 
 /**
+ * 在已确认覆盖的日期范围内原子替换一个或多个自动来源。
+ *
+ * 新停复牌接口按请求范围返回市场级结果，不能再清空该来源的全部历史。
+ * 本函数只删除与覆盖范围相交的自动证据，范围外历史和人工来源均保留。
+ */
+export function replaceTradingInterruptionsInRangeBySourcesAtomically(
+  database: BetterSqlite3.Database,
+  params: {
+    symbol: string;
+    sources: readonly string[];
+    startDate: string;
+    endDate: string;
+    interruptions: readonly SecurityTradingInterruption[];
+  },
+): void {
+  const sources = [...new Set(params.sources)];
+  if (!sources.length) throw new Error("停复牌范围替换必须至少指定一个来源");
+  if (params.startDate > params.endDate) {
+    throw new Error("停复牌范围替换起始日不能晚于结束日");
+  }
+  const sourceSet = new Set(sources);
+  if (
+    params.interruptions.some(
+      (row) => row.symbol !== params.symbol || !sourceSet.has(row.source),
+    )
+  ) {
+    throw new Error("停复牌范围替换包含了其他证券或未声明来源的数据");
+  }
+  const placeholders = sources.map(() => "?").join(", ");
+  const deleteStmt = database.prepare(
+    `DELETE FROM security_trading_interruptions
+      WHERE symbol = ?
+        AND source IN (${placeholders})
+        AND start_date <= ?
+        AND end_date >= ?`,
+  );
+  const insertStmt = database.prepare(
+    `INSERT OR IGNORE INTO security_trading_interruptions(
+       symbol, start_date, end_date, reason, source, source_id, fetched_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  database.transaction(() => {
+    deleteStmt.run(
+      params.symbol,
+      ...sources,
+      params.endDate,
+      params.startDate,
+    );
+    for (const item of params.interruptions) {
+      insertStmt.run(
+        item.symbol,
+        item.startDate,
+        item.endDate,
+        item.reason,
+        item.source,
+        item.sourceId ?? null,
+        item.fetchedAt,
+      );
+    }
+  })();
+}
+
+/**
  * 原子替换指定 symbol + source 的全部停复牌证据。
  *
  * P1-2：自动获取流程必须使用本函数，而不是先 delete 再 insert 的两步操作。

@@ -9,7 +9,6 @@ import {
   fetchDomesticEtfUniverse,
   mergeAStockUniverse,
   parseBeijingStockPage,
-  parseDomesticEtfs,
   parseSinaDomesticEtfs,
   parseShanghaiStocks,
   parseShenzhenStocks,
@@ -61,23 +60,7 @@ describe("A 股代码表", () => {
     });
   });
 
-  it("解析境内 ETF 目录并显式标记资产类型", () => {
-    expect(
-      parseDomesticEtfs({
-        data: {
-          diff: {
-            0: { f12: "510300", f14: "沪深300ETF" },
-            1: { f12: "159915", f14: "创业板ETF" },
-          },
-        },
-      }),
-    ).toEqual([
-      { symbol: "159915", name: "创业板ETF", securityType: "etf" },
-      { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
-    ]);
-  });
-
-  it("解析新浪 ETF 目录 JSONP 兜底并忽略非法行", () => {
+  it("解析新浪 ETF 目录 JSONP 并忽略非法行", () => {
     expect(
       parseSinaDomesticEtfs(
         `IO.XSRV2.CallbackList['test']([["sh510300","沪深300ETF"],["sz159915","创业板ETF"],["bad","-"]]);`,
@@ -88,7 +71,7 @@ describe("A 股代码表", () => {
     ]);
   });
 
-  it("东方财富目录失败时由新浪返回完整 ETF 目录", async () => {
+  it("只请求新浪并将其记录为 ETF 目录主源", async () => {
     const etfs = Array.from(
       { length: ETF_UNIVERSE_MIN_SIZE },
       (_, index) => [
@@ -98,9 +81,6 @@ describe("A 股代码表", () => {
     );
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(String(input));
-      if (url.hostname === "push2.eastmoney.com") {
-        return new Response("", { status: 503 });
-      }
       if (url.hostname === "vip.stock.finance.sina.com.cn") {
         return new Response(`callback(${JSON.stringify(etfs)});`);
       }
@@ -113,10 +93,10 @@ describe("A 股代码表", () => {
     expect(result.rows[0]).toMatchObject({ securityType: "etf" });
     expect(result).toMatchObject({
       source: "新浪财经境内交易所 ETF 代码表",
-      primarySource: "eastmoney",
-      fallbackUsed: true,
-      fallbackReason: expect.stringContaining("503"),
+      primarySource: "sina",
+      fallbackUsed: false,
     });
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
   });
 
   it("拒绝把少量标的误当成全 A 股目录", () => {

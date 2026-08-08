@@ -22,6 +22,11 @@ import {
   fetchCorporateActions,
 } from "../data/tencent";
 import {
+  BAIDU_SUSPEND_SOURCE,
+  EASTMONEY_SUSPEND_SOURCE,
+  fetchTradingSuspensions,
+} from "../data/tradingSuspensions";
+import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
 } from "../data/marketDataProvider";
@@ -34,6 +39,31 @@ vi.mock("../data/stockUniverse", () => ({
 }));
 vi.mock("../data/tencent", () => ({
   fetchCorporateActions: vi.fn(),
+}));
+vi.mock("../data/tradingSuspensions", () => ({
+  EASTMONEY_SUSPEND_SOURCE:
+    "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+  BAIDU_SUSPEND_SOURCE: "baidu_financecalendar_notify_suspend",
+  AUTOMATIC_SUSPEND_SOURCES: [
+    "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+    "baidu_financecalendar_notify_suspend",
+  ],
+  fetchTradingSuspensions: vi.fn(
+    async (_symbols: readonly string[], startDate: string, endDate: string) => ({
+      rows: [],
+      source: "东方财富停复牌",
+      sourceKey:
+        "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+      fetchedAt: "2026-08-08T00:00:00.000Z",
+      coverageStart: startDate,
+      coverageEnd: endDate,
+      partialCoverage: false,
+      unresolvedOpenIntervals: 0,
+      primarySource:
+        "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+      fallbackUsed: false,
+    }),
+  ),
 }));
 vi.mock("../data/marketDataProvider", () => ({
   fetchMarketAdjustedBars: vi.fn(),
@@ -118,6 +148,92 @@ function completeMarketResponse<
     uncoveredCalendarYears: [],
   };
 }
+
+describe("AppService 停复牌自动同步", () => {
+  it("按请求范围批量抓取，主源恢复后清理范围内旧备用证据并保留人工证据", async () => {
+    const { service, database } = await serviceWithDatabase();
+    database.insertTradingInterruptions([
+      {
+        symbol: "601088",
+        startDate: "2025-06-01",
+        endDate: "2025-06-05",
+        reason: "suspension",
+        source: EASTMONEY_SUSPEND_SOURCE,
+        fetchedAt: "2025-06-06T00:00:00Z",
+      },
+      {
+        symbol: "601088",
+        startDate: "2025-08-10",
+        endDate: "2025-08-12",
+        reason: "suspension",
+        source: BAIDU_SUSPEND_SOURCE,
+        fetchedAt: "2025-08-13T00:00:00Z",
+      },
+      {
+        symbol: "601088",
+        startDate: "2025-08-20",
+        endDate: "2025-08-21",
+        reason: "suspension",
+        source: "manual/company-announcement",
+        fetchedAt: "2025-08-22T00:00:00Z",
+      },
+    ]);
+    vi.mocked(fetchTradingSuspensions).mockResolvedValueOnce({
+      rows: [
+        {
+          symbol: "601088",
+          startDate: "2025-08-04",
+          endDate: "2025-08-15",
+          reason: "suspension",
+          source: EASTMONEY_SUSPEND_SOURCE,
+          fetchedAt: "2025-09-01T00:00:00Z",
+        },
+      ],
+      source: "东方财富停复牌",
+      sourceKey: EASTMONEY_SUSPEND_SOURCE,
+      fetchedAt: "2025-09-01T00:00:00Z",
+      coverageStart: "2025-08-01",
+      coverageEnd: "2025-08-31",
+      partialCoverage: false,
+      unresolvedOpenIntervals: 0,
+      primarySource: EASTMONEY_SUSPEND_SOURCE,
+      fallbackUsed: false,
+    });
+
+    await service.refreshTradingInterruptions(
+      ["601088", "300750"],
+      "2025-08-01",
+      "2025-08-31",
+    );
+
+    expect(fetchTradingSuspensions).toHaveBeenCalledWith(
+      ["601088", "300750"],
+      "2025-08-01",
+      "2025-08-31",
+    );
+    expect(database.listTradingInterruptionsBySymbol("601088")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          startDate: "2025-06-01",
+          source: EASTMONEY_SUSPEND_SOURCE,
+        }),
+        expect.objectContaining({
+          startDate: "2025-08-04",
+          source: EASTMONEY_SUSPEND_SOURCE,
+        }),
+        expect.objectContaining({
+          startDate: "2025-08-20",
+          source: "manual/company-announcement",
+        }),
+      ]),
+    );
+    expect(
+      database
+        .listTradingInterruptionsBySymbol("601088")
+        .some((row) => row.source === BAIDU_SUSPEND_SOURCE),
+    ).toBe(false);
+  });
+});
 
 describe("AppService 股票目录", () => {
   it("七天内直接使用完整 A 股 SQLite 快照，不重复联网", async () => {

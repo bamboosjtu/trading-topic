@@ -176,7 +176,7 @@ export function CurrentExperimentTable({
           },
           {
             title: "标的",
-            width: 160,
+            width: 180,
             render: (_, row) => (
               <div className="symbol-cell">
                 <strong>{row.name}</strong>

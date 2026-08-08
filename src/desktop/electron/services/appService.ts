@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AppDiagnostics,
+  DataSourceHealthReport,
   BacktestExperiment,
   BacktestExperimentSummary,
   BacktestRequest,
@@ -39,11 +40,13 @@ import {
   fetchAStockUniverse,
   fetchDomesticEtfUniverse,
 } from "../data/stockUniverse";
+import { checkDataSourceHealth } from "../data/dataSourceHealth";
+import { fetchCorporateActions } from "../data/tencent";
 import {
-  EASTMONEY_SUSPEND_SOURCE,
-  fetchCorporateActions,
+  AUTOMATIC_SUSPEND_SOURCES,
+  BAIDU_SUSPEND_SOURCE,
   fetchTradingSuspensions,
-} from "../data/tencent";
+} from "../data/tradingSuspensions";
 import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
@@ -193,6 +196,11 @@ export class AppService {
       etfDirectory: this.database.getDirectoryProvenance("etf"),
       marketCalendars: marketCalendarDiagnostics(),
     };
+  }
+
+  /** 显式联网检查固定数据源路由；不覆盖任何业务缓存。 */
+  async checkDataSources(): Promise<DataSourceHealthReport> {
+    return checkDataSourceHealth();
   }
 
   async listAStocks(): Promise<StockInfo[]> {
@@ -347,7 +355,11 @@ export class AppService {
       stocks.map((instrument) => [instrument.symbol, instrument]),
     );
     // 自动获取停牌证据，避免合法停牌被误判为行情缺失
-    await this.refreshTradingInterruptions(canonicalRequest.symbols);
+    await this.refreshTradingInterruptions(
+      canonicalRequest.symbols,
+      canonicalRequest.startDate,
+      canonicalRequest.endDate,
+    );
     for (const symbol of canonicalRequest.symbols) {
       const instrument = instrumentMap.get(symbol);
       if (!instrument || instrument.securityType !== "stock") {
@@ -868,13 +880,9 @@ export class AppService {
    * 删除已有证据却不写入新数据，让一个原本可运行的历史回测在刷新后
    * 突然失败。
    *
-   * 当前实现：
-   * 1. fetchTradingSuspensions 内部已完成 fetch + parse + 结构校验
-   *    （rawRows 非空但零行解析成功时抛错，不会返回空数组）；
-   * 2. 拿到 interruptions 后调用 replaceTradingInterruptionsBySourceAtomically
-   *    在同一事务内 delete + insert，任一步失败整体回滚，旧证据保留；
-   * 3. interruptions 为空数组属于合法的"该证券无停牌记录"，仍会原子清空
-   *    同源旧证据。
+   * 当前实现按请求范围一次批量抓取市场级结果，东方财富新报表失败后整段切换
+   * 到百度独立备用源。完整分页、解析和覆盖校验都成功后，才在已确认覆盖范围
+   * 内原子替换自动证据；范围外历史与人工公告证据保持不变。
    *
    * API 失败或结构错误时记录 warn 日志并跳过该 symbol，不阻断行情刷新
    * 主流程——完整性检查会按"无停牌证据"处理。但已存在的旧证据保留，
@@ -882,28 +890,51 @@ export class AppService {
    */
   async refreshTradingInterruptions(
     symbols: readonly string[],
+    startDate: string,
+    endDate: string,
   ): Promise<void> {
-    for (const symbol of symbols) {
-      try {
-        const interruptions = await fetchTradingSuspensions(symbol);
-        // 原子替换：fetch+parse 成功后才进入此事务；任一步失败整体回滚
-        this.database.replaceTradingInterruptionsBySourceAtomically(
-          symbol,
-          EASTMONEY_SUSPEND_SOURCE,
-          interruptions,
+    if (!symbols.length) return;
+    try {
+      const result = await fetchTradingSuspensions(
+        symbols,
+        startDate,
+        endDate,
+      );
+      const sourcesToReplace = result.fallbackUsed
+        ? [BAIDU_SUSPEND_SOURCE]
+        : AUTOMATIC_SUSPEND_SOURCES;
+      for (const symbol of [...new Set(symbols)]) {
+        const interruptions = result.rows.filter(
+          (row) => row.symbol === symbol,
         );
+        this.database.replaceTradingInterruptionsInRangeBySourcesAtomically({
+          symbol,
+          sources: sourcesToReplace,
+          startDate: result.coverageStart,
+          endDate: result.coverageEnd,
+          interruptions,
+        });
         this.database.log(
           "info",
-          `自动获取停牌证据：${symbol} ${interruptions.length} 条`,
-        );
-      } catch (error) {
-        // 停牌证据获取失败不阻断行情刷新——完整性检查会按"无停牌证据"处理
-        // 旧的同源证据保留（未进入原子替换事务），不会被清空
-        this.database.log(
-          "warn",
-          `停牌证据获取失败(${symbol})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
+          `自动获取停牌证据：${symbol} ${interruptions.length} 条，来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}`,
         );
       }
+      if (
+        result.fallbackUsed ||
+        result.partialCoverage ||
+        result.unresolvedOpenIntervals > 0
+      ) {
+        this.database.log(
+          "warn",
+          `停牌证据自动同步降级：来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}，未闭合区间=${result.unresolvedOpenIntervals}${result.fallbackReason ? `，主源失败=${result.fallbackReason}` : ""}`,
+        );
+      }
+    } catch (error) {
+      // 主备源均失败或结构不完整时不进入替换事务，全部旧证据保留。
+      this.database.log(
+        "warn",
+        `停牌证据获取失败(${[...new Set(symbols)].join(",")})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -920,19 +951,19 @@ export class AppService {
         issues: [],
       };
     }
+    const endDate = this.completedMarketDate();
+    const startDate = addMonths(
+      endDate,
+      -LIVE_PRICE_REFRESH_LOOKBACK_MONTHS,
+    );
     // 自动获取停牌证据和分红候选——不阻断行情刷新主流程
-    await this.refreshTradingInterruptions(symbols);
+    await this.refreshTradingInterruptions(symbols, startDate, endDate);
     await this.discoverPendingDividends().catch((error) => {
       this.database.log(
         "warn",
         `分红候选自动发现失败：${error instanceof Error ? error.message : String(error)}`,
       );
     });
-    const endDate = this.completedMarketDate();
-    const startDate = addMonths(
-      endDate,
-      -LIVE_PRICE_REFRESH_LOOKBACK_MONTHS,
-    );
     const requested = symbols.map((symbol) => ({
       symbol,
       startDate,

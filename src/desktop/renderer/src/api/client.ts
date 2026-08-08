@@ -17,6 +17,7 @@ function bridge(): DesktopApi {
 
 export const api = {
   health: () => bridge().health(),
+  checkDataSources: () => bridge().checkDataSources(),
   listAStocks: () => bridge().listAStocks(),
   listEtfs: () => bridge().listEtfs(),
   runBacktest: (request: BacktestRequest) => bridge().runBacktest(request),
@@ -81,6 +82,9 @@ export type {
   ChartDataState,
   EntryType,
   DirectoryProvenance,
+  DataSourceHealthItem,
+  DataSourceHealthReport,
+  DataSourceHealthStatus,
   ConfirmPendingDividendInput,
   IncomeCalendarQuery,
   IncomeCalendarScope,
