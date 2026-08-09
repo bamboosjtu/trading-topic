@@ -10,7 +10,8 @@ import { fetchWithTimeout } from "./_internal/httpClient";
 
 const EASTMONEY_URL =
   "https://datacenter-web.eastmoney.com/api/data/v1/get";
-const EASTMONEY_REPORT_NAME = "RPT_CUSTOM_SUSPEND_DATA_INTERFACE";
+const EASTMONEY_REPORT_NAME = "RPT_STOCKCALENDAR";
+const EASTMONEY_SUSPEND_EVENT_TYPE = "023";
 const EASTMONEY_PAGE_SIZE = 500;
 const EASTMONEY_EMPTY_RESULT_CODE = 9201;
 const BAIDU_URL =
@@ -20,12 +21,15 @@ const BAIDU_CHUNK_DAYS = 31;
 const BAIDU_CHUNK_THROTTLE_MS = 100;
 const REQUEST_TIMEOUT_MS = 20_000;
 
-export const EASTMONEY_SUSPEND_SOURCE =
+export const LEGACY_EASTMONEY_SUSPEND_SOURCE =
   "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE";
+export const EASTMONEY_SUSPEND_SOURCE =
+  "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023";
 export const BAIDU_SUSPEND_SOURCE =
   "baidu_financecalendar_notify_suspend";
 export const BAIDU_SUSPEND_COVERAGE_START = "2023-01-01";
 export const AUTOMATIC_SUSPEND_SOURCES = [
+  LEGACY_EASTMONEY_SUSPEND_SOURCE,
   EASTMONEY_SUSPEND_SOURCE,
   BAIDU_SUSPEND_SOURCE,
 ] as const;
@@ -79,20 +83,11 @@ function dateValue(value: unknown): string {
   return validDate(valueText) ? valueText : "";
 }
 
-function clockValue(value: unknown): string | null {
-  const match = textValue(value).match(/\b(\d{2}):(\d{2})(?::(\d{2}))?\b/);
-  return match ? `${match[1]}:${match[2]}:${match[3] ?? "00"}` : null;
-}
-
-function firstValue(
-  row: Record<string, unknown>,
-  fields: readonly string[],
-): string {
-  for (const field of fields) {
-    const value = textValue(row[field]);
-    if (value && value !== "-") return value;
-  }
-  return "";
+function normalizedClock(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] ?? "00"}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -151,12 +146,79 @@ function deduplicateInterruptions(
   );
 }
 
+interface ParsedStockCalendarInterval {
+  recognized: boolean;
+  open: boolean;
+  startDate?: string;
+  endDate?: string;
+}
+
+function calendarDate(
+  year: string,
+  month: string,
+  day: string,
+): string {
+  const result = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  return validDate(result) ? result : "";
+}
+
+/** 解析东财个股日历 `停牌日期` 事件中的显式全天区间或未闭合起点。 */
+function parseStockCalendarInterval(
+  content: string,
+  observedThroughDate?: string,
+): ParsedStockCalendarInterval {
+  const range = content.match(
+    /(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*-\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*停牌/,
+  );
+  if (range) {
+    let startDate = calendarDate(range[1], range[2], range[3]);
+    let endDate = calendarDate(range[5], range[6], range[7]);
+    if (!startDate || !endDate) {
+      return { recognized: false, open: false };
+    }
+    const startClock = normalizedClock(range[4]);
+    const endClock = normalizedClock(range[8]);
+    const hasFullDayWording = /全天|停牌一天|连续停牌/.test(content);
+    if ((!startClock || !endClock) && !hasFullDayWording) {
+      return { recognized: false, open: false };
+    }
+    if (startClock && startClock > "09:30:00" && startClock <= "15:00:00") {
+      startDate = addDays(startDate, 1);
+    }
+    if (endClock && endClock >= "09:30:00" && endClock < "15:00:00") {
+      endDate = addDays(endDate, -1);
+    }
+    return endDate < startDate
+      ? { recognized: true, open: false }
+      : { recognized: true, open: false, startDate, endDate };
+  }
+
+  const open = content.match(
+    /(?:从|自)\s*(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}:\d{2}(?::\d{2})?)?\s*(?:开始|起)停牌/,
+  );
+  if (!open) return { recognized: false, open: false };
+  let startDate = calendarDate(open[1], open[2], open[3]);
+  if (!startDate) return { recognized: false, open: true };
+  const startClock = normalizedClock(open[4]);
+  if (startClock && startClock > "09:30:00" && startClock <= "15:00:00") {
+    startDate = addDays(startDate, 1);
+  }
+  if (!observedThroughDate || observedThroughDate < startDate) {
+    return { recognized: true, open: true, startDate };
+  }
+  return {
+    recognized: true,
+    open: true,
+    startDate,
+    endDate: observedThroughDate,
+  };
+}
+
 /**
- * 解析东方财富新停复牌报表的一行。
+ * 解析东方财富个股日历的一条 `停牌日期` 事件。
  *
- * 新报表的 SUSPEND_END_TIME 是最后停牌日，PREDICT_RESUME_DATE 是复牌日；
- * 对当前仍开放的区间，仅在调用方提供已观察截止日时保存到该日，不凭空推断
- * 最终复牌日。
+ * 事件正文包含证券级停牌的明确起止日期与日内时段；盘中停牌不会被压成
+ * 整日证据。仍开放的事件只保存到本次已观察截止日，不宣称最终复牌日。
  */
 export function parseSuspensionRow(
   row: Record<string, unknown>,
@@ -164,64 +226,26 @@ export function parseSuspensionRow(
   fetchedAt: string,
   observedThroughDate?: string,
 ): SecurityTradingInterruption | null {
-  let startDate = dateValue(
-    firstValue(row, [
-      "SUSPEND_START_DATE",
-      "SUSPEND_START_TIME",
-      "SUSPEND_DATE",
-    ]),
-  );
-  if (!startDate) return null;
-
-  const explicitEndDate = dateValue(
-    firstValue(row, [
-      "SUSPEND_END_TIME",
-      "SUSPEND_END_DATE",
-      "SUSPEND_EXPIRE",
-    ]),
-  );
-  const resumeDate = dateValue(
-    firstValue(row, ["RESUME_DATE", "PREDICT_RESUME_DATE"]),
-  );
-  let endDate =
-    explicitEndDate ||
-    (resumeDate ? addDays(resumeDate, -1) : observedThroughDate ?? "");
-  if (!endDate || endDate < startDate) return null;
-
-  // 日线完整性只能使用覆盖完整交易日的证据。盘中停牌若被压成日期区间，
-  // 会错误地掩盖当天本应存在的收盘行情；边界日未覆盖全天时将其移出区间。
-  const startClock = clockValue(row["SUSPEND_START_TIME"]);
-  const endClock = clockValue(row["SUSPEND_END_TIME"]);
-  if (startClock && startClock > "09:30:00" && startClock <= "15:00:00") {
-    startDate = addDays(startDate, 1);
-  }
-  if (endClock && endClock >= "09:30:00" && endClock < "15:00:00") {
-    endDate = addDays(endDate, -1);
-  }
   if (
-    !startClock &&
-    !endClock &&
-    /半天|小时/.test(textValue(row["SUSPEND_EXPIRE"]))
+    textValue(row["SECURITY_CODE"]) !== symbol ||
+    textValue(row["EVENT_TYPE_CODE"]) !== EASTMONEY_SUSPEND_EVENT_TYPE
   ) {
     return null;
   }
-  if (endDate < startDate) return null;
-
-  const sourceId =
-    firstValue(row, ["NOTICE_DATE", "ANNOUNCE_DATE"]) ||
-    [
-      firstValue(row, ["SECUCODE", "SECURITY_CODE"]) || symbol,
-      startDate,
-      explicitEndDate || resumeDate || `observed-through-${endDate}`,
-    ].join(":");
+  const interval = parseStockCalendarInterval(
+    textValue(row["LEVEL1_CONTENT"]),
+    observedThroughDate,
+  );
+  if (!interval.startDate || !interval.endDate) return null;
+  const noticeDate = dateValue(row["NOTICE_DATE"]);
 
   return {
     symbol,
-    startDate,
-    endDate,
+    startDate: interval.startDate,
+    endDate: interval.endDate,
     reason: "suspension",
     source: EASTMONEY_SUSPEND_SOURCE,
-    sourceId,
+    sourceId: `https://data.eastmoney.com/stockcalendar/${symbol}.html${noticeDate ? `?date=${noticeDate}` : ""}`,
     fetchedAt,
   };
 }
@@ -232,31 +256,28 @@ export function parseTradingSuspensions(
   fetchedAt: string,
   observedThroughDate?: string,
 ): SecurityTradingInterruption[] {
+  const unrecognizedRows = rawRows.filter((row) => {
+    if (
+      textValue(row["SECURITY_CODE"]) !== symbol ||
+      textValue(row["EVENT_TYPE_CODE"]) !== EASTMONEY_SUSPEND_EVENT_TYPE
+    ) {
+      return true;
+    }
+    return !parseStockCalendarInterval(
+      textValue(row["LEVEL1_CONTENT"]),
+      observedThroughDate,
+    ).recognized;
+  });
+  if (unrecognizedRows.length > 0) {
+    throw new Error(
+      `停复牌响应存在 ${rawRows.length} 行数据，但有 ${unrecognizedRows.length} 行未识别到有效个股日历区间（可能正文结构已变化）`,
+    );
+  }
   const interruptions = rawRows
     .map((row) =>
       parseSuspensionRow(row, symbol, fetchedAt, observedThroughDate),
     )
     .filter((row): row is SecurityTradingInterruption => row !== null);
-  const recognizedStartFields = rawRows.some((row) =>
-    Boolean(
-      dateValue(
-        firstValue(row, [
-          "SUSPEND_START_DATE",
-          "SUSPEND_START_TIME",
-          "SUSPEND_DATE",
-        ]),
-      ),
-    ),
-  );
-  if (
-    rawRows.length > 0 &&
-    interruptions.length === 0 &&
-    !recognizedStartFields
-  ) {
-    throw new Error(
-      `停复牌响应存在 ${rawRows.length} 行数据，但未识别到有效日期字段（可能字段命名已变化）`,
-    );
-  }
   return deduplicateInterruptions(interruptions);
 }
 
@@ -311,12 +332,12 @@ function parseEastmoneyPage(payload: unknown): EastmoneyPage {
 }
 
 async function fetchEastmoneyPage(
-  queryDate: string,
+  symbol: string,
   pageNumber: number,
 ): Promise<EastmoneyPage> {
   const url = new URL(EASTMONEY_URL);
   const parameters: Record<string, string> = {
-    sortColumns: "SUSPEND_START_DATE",
+    sortColumns: "NOTICE_DATE",
     sortTypes: "-1",
     pageSize: String(EASTMONEY_PAGE_SIZE),
     pageNumber: String(pageNumber),
@@ -324,7 +345,7 @@ async function fetchEastmoneyPage(
     columns: "ALL",
     source: "WEB",
     client: "WEB",
-    filter: `(MARKET="全部")(DATETIME='${queryDate}')`,
+    filter: `(SECURITY_CODE="${symbol}")(EVENT_TYPE_CODE="${EASTMONEY_SUSPEND_EVENT_TYPE}")`,
   };
   Object.entries(parameters).forEach(([key, value]) =>
     url.searchParams.set(key, value),
@@ -332,7 +353,9 @@ async function fetchEastmoneyPage(
   const response = await fetchWithTimeout(url, {
     timeoutMs: REQUEST_TIMEOUT_MS,
     label: "东方财富停复牌",
-    headers: { Referer: "https://data.eastmoney.com/tfpxx/" },
+    headers: {
+      Referer: `https://data.eastmoney.com/stockcalendar/${symbol}.html`,
+    },
   });
   if (!response.ok) {
     throw new Error(`东方财富停复牌请求失败：HTTP ${response.status}`);
@@ -357,7 +380,7 @@ export async function fetchEastmoneyTradingSuspensions(
   if (!normalizedSymbols.length) {
     return {
       rows: [],
-      source: "东方财富停复牌信息（新市场级报表）",
+      source: "东方财富个股日历（历史停牌事件）",
       sourceKey: EASTMONEY_SUSPEND_SOURCE,
       fetchedAt,
       coverageStart: startDate,
@@ -367,58 +390,56 @@ export async function fetchEastmoneyTradingSuspensions(
     };
   }
 
-  const firstPage = await fetchEastmoneyPage(startDate, 1);
-  const rawRows = [...firstPage.rows];
-  for (let page = 2; page <= firstPage.pages; page += 1) {
-    await sleep(DATA_SOURCE_THROTTLE_MS);
-    const nextPage = await fetchEastmoneyPage(startDate, page);
-    if (
-      nextPage.pages !== firstPage.pages ||
-      nextPage.count !== firstPage.count
-    ) {
-      throw new Error("东方财富停复牌分页期间总页数或总数发生变化");
+  const parsedRows: SecurityTradingInterruption[] = [];
+  let observedOpenIntervals = 0;
+  let requestCount = 0;
+  const requestPage = async (symbol: string, page: number) => {
+    if (requestCount > 0) await sleep(DATA_SOURCE_THROTTLE_MS);
+    requestCount += 1;
+    return fetchEastmoneyPage(symbol, page);
+  };
+  for (const symbol of normalizedSymbols) {
+    const firstPage = await requestPage(symbol, 1);
+    const rawRows = [...firstPage.rows];
+    for (let page = 2; page <= firstPage.pages; page += 1) {
+      const nextPage = await requestPage(symbol, page);
+      if (
+        nextPage.pages !== firstPage.pages ||
+        nextPage.count !== firstPage.count
+      ) {
+        throw new Error(
+          `东方财富停复牌 ${symbol} 分页期间总页数或总数发生变化`,
+        );
+      }
+      rawRows.push(...nextPage.rows);
     }
-    rawRows.push(...nextPage.rows);
-  }
-  if (rawRows.length !== firstPage.count) {
-    throw new Error(
-      `东方财富停复牌分页不完整：期望 ${firstPage.count} 行，实际 ${rawRows.length} 行`,
-    );
-  }
-
-  const symbolSet = new Set(normalizedSymbols);
-  const relevantRows = rawRows.filter((row) => {
-    const symbol = textValue(row["SECURITY_CODE"]);
-    const rowStart = dateValue(
-      firstValue(row, [
-        "SUSPEND_START_DATE",
-        "SUSPEND_START_TIME",
-        "SUSPEND_DATE",
-      ]),
-    );
-    return symbolSet.has(symbol) && (!rowStart || rowStart <= endDate);
-  });
-  const observedOpenIntervals = relevantRows.filter(
-    (row) =>
-      !dateValue(firstValue(row, ["SUSPEND_END_TIME", "SUSPEND_END_DATE"])) &&
-      !dateValue(firstValue(row, ["RESUME_DATE", "PREDICT_RESUME_DATE"])),
-  ).length;
-  const parsedRows = normalizedSymbols.flatMap((symbol) =>
-    parseTradingSuspensions(
-      relevantRows.filter(
-        (row) => textValue(row["SECURITY_CODE"]) === symbol,
+    if (rawRows.length !== firstPage.count) {
+      throw new Error(
+        `东方财富停复牌 ${symbol} 分页不完整：期望 ${firstPage.count} 行，实际 ${rawRows.length} 行`,
+      );
+    }
+    observedOpenIntervals += rawRows.filter((row) => {
+      const interval = parseStockCalendarInterval(
+        textValue(row["LEVEL1_CONTENT"]),
+        endDate,
+      );
+      return Boolean(
+        interval.open &&
+          interval.startDate &&
+          interval.startDate <= endDate &&
+          (interval.endDate ?? endDate) >= startDate,
+      );
+    }).length;
+    parsedRows.push(
+      ...parseTradingSuspensions(rawRows, symbol, fetchedAt, endDate).filter(
+        (row) => row.startDate <= endDate && row.endDate >= startDate,
       ),
-      symbol,
-      fetchedAt,
-      endDate,
-    ).filter(
-      (row) => row.startDate <= endDate && row.endDate >= startDate,
-    ),
-  );
+    );
+  }
 
   return {
     rows: deduplicateInterruptions(parsedRows),
-    source: "东方财富停复牌信息（新市场级报表）",
+    source: "东方财富个股日历（历史停牌事件）",
     sourceKey: EASTMONEY_SUSPEND_SOURCE,
     fetchedAt,
     coverageStart: startDate,
@@ -696,13 +717,24 @@ export async function fetchTradingSuspensions(
   } catch (primaryError) {
     const primaryMessage = errorMessage(primaryError);
     try {
+      const fallback = await fetchBaiduTradingSuspensions(
+        symbols,
+        startDate,
+        endDate,
+        options,
+      );
+      if (fallback.partialCoverage) {
+        throw new Error(
+          `请求区间 ${startDate}..${endDate} 早于百度可验证覆盖起点 ${fallback.coverageStart}`,
+        );
+      }
+      if (fallback.unresolvedOpenIntervals > 0) {
+        throw new Error(
+          `存在 ${fallback.unresolvedOpenIntervals} 条未闭合记录，不能证明最终复牌日`,
+        );
+      }
       return {
-        ...(await fetchBaiduTradingSuspensions(
-          symbols,
-          startDate,
-          endDate,
-          options,
-        )),
+        ...fallback,
         primarySource: EASTMONEY_SUSPEND_SOURCE,
         fallbackUsed: true,
         fallbackReason: primaryMessage,

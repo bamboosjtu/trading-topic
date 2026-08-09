@@ -1,0 +1,14 @@
+{
+  "year": 2019,
+  "status": "official",
+  "source": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20181220_4696473.shtml | https://www.sse.com.cn/disclosure/announcement/general/c/c_20190418_4771364.shtml",
+  "closures": [
+    ["2019-01-01", "2019-01-01"],
+    ["2019-02-04", "2019-02-10"],
+    ["2019-04-05", "2019-04-07"],
+    ["2019-05-01", "2019-05-04"],
+    ["2019-06-07", "2019-06-09"],
+    ["2019-09-13", "2019-09-15"],
+    ["2019-10-01", "2019-10-07"]
+  ]
+}

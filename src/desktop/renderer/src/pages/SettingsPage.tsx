@@ -160,7 +160,7 @@ function DataSourceHealthSection() {
         type="info"
         showIcon
         message="不开放任意主备顺序切换"
-        description="ETF 目录固定使用新浪；停复牌分别检查东方财富市场级主源和百度独立备用源。设置页展示每个来源的当次健康、固定路由和兜底原因，不用手工开关绕过完整性门槛。"
+        description="ETF 目录由新浪提供名称并接受沪深交易所官方目录校验与整段备用；股票公司行动由东方财富和同花顺交叉核验，ETF 分红由新浪和东方财富基金 F10 交叉核验；停复牌分别检查东方财富按证券历史事件主源和百度独立备用源。设置页展示每个来源的当次健康、固定路由和兜底原因，不用手工开关绕过完整性门槛。"
       />
       <div className="settings-actions mb-4">
         <Button
@@ -532,7 +532,7 @@ export function SettingsPage() {
                 腾讯主源 / 新浪整段兜底
               </Descriptions.Item>
               <Descriptions.Item label="分红来源">
-                东方财富公司行动
+                股票：东方财富 / 同花顺；ETF：新浪 / 东方财富基金 F10
               </Descriptions.Item>
               <Descriptions.Item label="佣金率">
                 {settings.data?.commissionRate === 0

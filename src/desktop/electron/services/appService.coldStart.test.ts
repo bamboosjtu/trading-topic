@@ -8,9 +8,7 @@ import {
   ETF_UNIVERSE_MIN_SIZE,
   STOCK_UNIVERSE_MIN_SIZE,
 } from "../../shared/constants";
-import {
-  fetchCorporateActions,
-} from "../data/tencent";
+import { fetchVerifiedCorporateActions } from "../data/corporateActions";
 import {
   fetchMarketAdjustedBars,
   fetchMarketPrices,
@@ -18,8 +16,8 @@ import {
 import { LocalDatabase } from "../storage/database";
 import { AppService } from "./appService";
 
-vi.mock("../data/tencent", () => ({
-  fetchCorporateActions: vi.fn(),
+vi.mock("../data/corporateActions", () => ({
+  fetchVerifiedCorporateActions: vi.fn(),
 }));
 vi.mock("../data/marketDataProvider", () => ({
   fetchMarketAdjustedBars: vi.fn(),
@@ -165,7 +163,7 @@ describe("AppService 冷启动恢复", () => {
         uncoveredCalendarYears: [],
       };
     });
-    vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => ({
+    vi.mocked(fetchVerifiedCorporateActions).mockImplementation(async (symbol) => ({
       rows: [
         {
           date: "2024-02-01",

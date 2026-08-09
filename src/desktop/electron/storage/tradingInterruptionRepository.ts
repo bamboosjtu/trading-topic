@@ -205,8 +205,8 @@ export function deleteTradingInterruptionsBySymbolAndSource(
 /**
  * 在已确认覆盖的日期范围内原子替换一个或多个自动来源。
  *
- * 新停复牌接口按请求范围返回市场级结果，不能再清空该来源的全部历史。
- * 本函数只删除与覆盖范围相交的自动证据，范围外历史和人工来源均保留。
+ * 自动停复牌同步只确认本次请求范围，不能清空来源的全部历史。本函数只删除
+ * 与覆盖范围相交的自动证据，范围外历史和人工来源均保留。
  */
 export function replaceTradingInterruptionsInRangeBySourcesAtomically(
   database: BetterSqlite3.Database,

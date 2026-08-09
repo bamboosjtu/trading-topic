@@ -18,9 +18,9 @@ import {
 import { addDays, currentMarketDate } from "../domain/dateUtils";
 import {
   fetchAdjustedBars,
-  fetchCorporateActions,
   fetchUnadjustedPrices,
 } from "./tencent";
+import { fetchVerifiedCorporateActions } from "./corporateActions";
 import {
   fetchBaiduTradingSuspensions,
   fetchEastmoneyTradingSuspensions,
@@ -38,6 +38,8 @@ import {
 interface Provenance {
   source: string;
   dataCutoff: string;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
 }
 
 interface ProviderResult<T> {
@@ -82,6 +84,7 @@ export interface DataSourceHealthDependencies {
   ): Promise<ProviderResult<AdjustedBar>>;
   fetchCorporateActions(
     symbol: string,
+    securityType: "stock" | "etf",
     startDate: string,
     endDate: string,
   ): Promise<CorporateActionResult>;
@@ -108,7 +111,7 @@ function defaultDependencies(): DataSourceHealthDependencies {
     fetchTencentBars: fetchAdjustedBars,
     fetchSinaPrices: fetchSinaUnadjustedPrices,
     fetchSinaBars: fetchSinaAdjustedBars,
-    fetchCorporateActions,
+    fetchCorporateActions: fetchVerifiedCorporateActions,
     fetchEastmoneyTradingSuspensions,
     fetchBaiduTradingSuspensions,
   };
@@ -139,8 +142,8 @@ const definitions = {
   etfDirectory: {
     id: "etf_directory",
     capability: "境内 ETF 目录",
-    route: "新浪财经单一主源",
-    source: "新浪财经",
+    route: "新浪主源 + 沪深交易所官方校验 / 整段备用",
+    source: "新浪财经、上交所、深交所",
   },
   tencentMarket: {
     id: "tencent_market",
@@ -155,16 +158,22 @@ const definitions = {
     source: "新浪财经",
   },
   corporateActions: {
-    id: "eastmoney_corporate_actions",
+    id: "stock_corporate_actions",
     capability: "分红送转 / 配股",
-    route: "东方财富单源",
-    source: "东方财富数据中心",
+    route: "东方财富 + 同花顺已实施记录合并 / 互为整段备用",
+    source: "东方财富数据中心、同花顺 F10",
+  },
+  etfCorporateActions: {
+    id: "etf_corporate_actions",
+    capability: "ETF 现金分红",
+    route: "新浪累计分红 + 东方财富基金 F10 记录合并 / 互为整段备用",
+    source: "新浪财经、东方财富基金 F10",
   },
   suspensions: {
     id: "eastmoney_suspensions",
     capability: "证券停复牌",
-    route: "东方财富市场级主源",
-    source: "东方财富新停复牌报表",
+    route: "东方财富按证券历史事件主源",
+    source: "东方财富个股日历停牌事件",
   },
   suspensionFallback: {
     id: "baidu_suspensions",
@@ -320,9 +329,12 @@ export async function checkDataSourceHealth(
         );
       }
       return {
-        status: "available",
+        status: result.fallbackUsed ? "degraded" : "available",
         source: result.source,
-        detail: `${result.rows.length} 只，新浪目录通过完整性门槛`,
+        detail: result.fallbackUsed
+          ? `${result.rows.length} 只，新浪失败后使用沪深交易所官方完整目录`
+          : `${result.rows.length} 只，新浪主目录与沪深交易所官方目录校验通过`,
+        fallbackReason: result.fallbackReason,
       };
     },
   );
@@ -334,19 +346,53 @@ export async function checkDataSourceHealth(
     async () => {
       const result = await dependencies.fetchCorporateActions(
         marketSymbol,
+        "stock",
         actionStartDate,
         priceEndDate,
       );
       const rowCount = result.rows.length + result.reportedActions.length;
       if (!rowCount) {
         throw new Error(
-          `东方财富公司行动未返回 ${marketSymbol} 的三年稳定样本`,
+          `股票公司行动双源未返回 ${marketSymbol} 的三年稳定样本`,
         );
       }
       return {
+        status:
+          result.provenance.fallbackUsed || result.provenance.fallbackReason
+            ? "degraded"
+            : "available",
         source: result.provenance.source,
         detail: `${marketSymbol} ${actionStartDate}..${priceEndDate}：分红送转 ${result.rows.length} 条，配股 ${result.reportedActions.length} 条`,
         dataCutoff: result.provenance.dataCutoff,
+        fallbackReason: result.provenance.fallbackReason,
+      };
+    },
+  );
+
+  await dependencies.sleep(DATA_SOURCE_THROTTLE_MS);
+  const etfCorporateActions = await runProbe(
+    definitions.etfCorporateActions,
+    dependencies.now,
+    async () => {
+      const symbol = "510050";
+      const result = await dependencies.fetchCorporateActions(
+        symbol,
+        "etf",
+        actionStartDate,
+        priceEndDate,
+      );
+      if (!result.rows.length) {
+        throw new Error(`ETF 分红双源未返回 ${symbol} 的三年稳定样本`);
+      }
+      return {
+        status:
+          result.provenance.fallbackUsed || result.provenance.fallbackReason
+            ? "degraded"
+            : "available",
+        source: result.provenance.source,
+        detail: `${symbol} ${actionStartDate}..${priceEndDate}：现金分红 ${result.rows.length} 条`,
+        dataCutoff: result.provenance.dataCutoff,
+        fallbackReason: result.provenance.fallbackReason,
       };
     },
   );
@@ -365,7 +411,7 @@ export async function checkDataSourceHealth(
       assertRows("东方财富停复牌稳定样本", result.rows);
       return {
         source: result.source,
-        detail: `${suspensionSymbol} ${suspensionStartDate}..${suspensionEndDate}：${result.rows.length} 条，市场级全分页和日期解析通过`,
+        detail: `${suspensionSymbol} ${suspensionStartDate}..${suspensionEndDate}：${result.rows.length} 条，证券级历史全分页、事件类型和全天时段解析通过`,
         dataCutoff: result.coverageEnd,
       };
     }),
@@ -391,6 +437,7 @@ export async function checkDataSourceHealth(
     tencentMarket,
     sinaMarket,
     corporateActions,
+    etfCorporateActions,
     suspensions,
     suspensionFallback,
   ];

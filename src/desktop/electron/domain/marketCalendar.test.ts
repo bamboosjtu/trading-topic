@@ -68,11 +68,25 @@ describe("正式收盘日边界", () => {
     );
   });
 
-  it("识别 2024 至 2026 年官方法定休市日", () => {
+  it("识别 2011 至 2026 年官方法定休市日及后续调整", () => {
+    expect(isConfirmedMarketClosureDate("2011-02-02")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2015-09-03")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2018-12-31")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2019-05-03")).toBe(true);
+    expect(isConfirmedMarketClosureDate("2020-01-31")).toBe(true);
     expect(isConfirmedMarketClosureDate("2024-02-09")).toBe(true);
     expect(isConfirmedMarketClosureDate("2025-02-03")).toBe(true);
     expect(isConfirmedMarketClosureDate("2026-10-07")).toBe(true);
     expect(isConfirmedMarketClosureDate("2025-02-05")).toBe(false);
+  });
+
+  it("2018 年诊断同时公开年度安排与跨年元旦补充公告", () => {
+    expect(
+      marketCalendarDiagnostics().find((item) => item.year === 2018)?.source,
+    ).toContain("c_20171222_4438363.shtml");
+    expect(
+      marketCalendarDiagnostics().find((item) => item.year === 2018)?.source,
+    ).toContain("c_20181220_4696473.shtml");
   });
 
   it("官方安排未发布前不猜测 2027 年工作日休市", () => {
@@ -115,14 +129,12 @@ describe("正式收盘日边界", () => {
 });
 
 describe("expectedTradingDatesWithCoverage", () => {
-  // 当前仓库 market-calendar 仅 2024-2026 为 official，
-  // 2027.json 状态为 pending_official_schedule，不计入 officialYears。
-  it("2016—2026 请求返回 officialYears 包含 2024-2026，uncoveredYears 包含 2016-2023", () => {
+  it("2016—2026 请求由逐年官方日历完整覆盖", () => {
     const coverage = expectedTradingDatesWithCoverage("2016-01-01", "2026-12-31");
-    expect(coverage.officialYears).toEqual([2024, 2025, 2026]);
-    expect(coverage.uncoveredYears).toEqual([
-      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    expect(coverage.officialYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
+    expect(coverage.uncoveredYears).toEqual([]);
   });
 
   /**
@@ -140,16 +152,13 @@ describe("expectedTradingDatesWithCoverage", () => {
     const minBacktestYear = currentYearNum - maxBacktestYears;
     expect(minBacktestYear).toBe(2011);
 
-    // 2. 验证日历覆盖函数：2011-01-01 至 2026-12-31 的请求中
-    //    uncoveredYears 必须包含 2011（证明起始年是 2011 而非 2012）。
+    // 2. 验证日历覆盖函数：2011-01-01 至 2026-12-31 全部 official。
     const coverage = expectedTradingDatesWithCoverage("2011-01-01", "2026-12-31");
-    expect(coverage.uncoveredYears).toContain(2011);
-    // 完整未覆盖年份范围应为 2011-2023（正式日历仅 2024/2025/2026）
-    expect(coverage.uncoveredYears).toEqual([
+    expect(coverage.uncoveredYears).toEqual([]);
+    expect(coverage.officialYears).toEqual([
       2011, 2012, 2013, 2014, 2015,
-      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
-    expect(coverage.officialYears).toEqual([2024, 2025, 2026]);
   });
 
   it("只覆盖正式日历年份时 uncoveredYears 为空", () => {
@@ -158,20 +167,18 @@ describe("expectedTradingDatesWithCoverage", () => {
     expect(coverage.officialYears).toEqual([2024, 2025, 2026]);
   });
 
-  it("expectedTradingDates 只包含正式日历年份的交易日", () => {
+  it("expectedTradingDates 包含所有正式日历年份的交易日", () => {
     const coverage = expectedTradingDatesWithCoverage("2023-06-01", "2024-01-31");
-    // 2023 没有 official 日历，不生成 expectedTradingDates
-    // 2024-01 的交易日应包含
-    expect(coverage.uncoveredYears).toContain(2023);
-    expect(coverage.officialYears).toEqual([2024]);
-    expect(coverage.expectedTradingDates.some((d) => d.startsWith("2023"))).toBe(false);
+    expect(coverage.uncoveredYears).toEqual([]);
+    expect(coverage.officialYears).toEqual([2023, 2024]);
+    expect(coverage.expectedTradingDates.some((d) => d.startsWith("2023"))).toBe(true);
     expect(coverage.expectedTradingDates.some((d) => d.startsWith("2024"))).toBe(true);
   });
 
-  it("请求区间仅含未覆盖年份时 officialYears 与 expectedTradingDates 均为空", () => {
-    const coverage = expectedTradingDatesWithCoverage("2018-01-01", "2018-12-31");
+  it("产品支持范围以前的请求仍明确报告未覆盖年份", () => {
+    const coverage = expectedTradingDatesWithCoverage("2010-01-01", "2010-12-31");
     expect(coverage.officialYears).toEqual([]);
-    expect(coverage.uncoveredYears).toEqual([2018]);
+    expect(coverage.uncoveredYears).toEqual([2010]);
     expect(coverage.expectedTradingDates).toEqual([]);
   });
 

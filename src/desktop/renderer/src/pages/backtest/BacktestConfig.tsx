@@ -22,9 +22,10 @@ import {
   type BacktestRangePreset,
 } from "./dateUtils";
 
-interface StockOption {
+interface InstrumentOption {
   value: string;
   label: string;
+  securityType: "stock" | "etf";
   searchText: string;
 }
 
@@ -33,15 +34,15 @@ interface BacktestConfigProps {
   disabled: boolean;
   rangePreset: BacktestRangePreset;
   rulesExpanded: boolean;
-  stockOptions: StockOption[];
-  stocksLoading: boolean;
-  stocksError: boolean;
+  instrumentOptions: InstrumentOption[];
+  catalogsLoading: boolean;
+  catalogsError: boolean;
   symbolPickerOpen: boolean;
   submitting: boolean;
   onPickerOpenChange: (open: boolean) => void;
   onBeginDraft: () => void;
   onRangePresetChange: (preset: BacktestRangePreset) => void;
-  onRetryStocks: () => void;
+  onRetryCatalogs: () => void;
   onSubmit: (request: BacktestRequest) => void;
 }
 
@@ -50,15 +51,15 @@ export function BacktestConfig({
   disabled,
   rangePreset,
   rulesExpanded,
-  stockOptions,
-  stocksLoading,
-  stocksError,
+  instrumentOptions,
+  catalogsLoading,
+  catalogsError,
   symbolPickerOpen,
   submitting,
   onPickerOpenChange,
   onBeginDraft,
   onRangePresetChange,
-  onRetryStocks,
+  onRetryCatalogs,
   onSubmit,
 }: BacktestConfigProps) {
   const buyDay = Form.useWatch("buyDay", form) ?? 1;
@@ -129,9 +130,9 @@ export function BacktestConfig({
                   mode="multiple"
                   maxCount={BACKTEST_MAX_SYMBOLS}
                   maxTagCount="responsive"
-                  options={stockOptions}
+                  options={instrumentOptions}
                   placeholder={
-                    stocksLoading ? "正在加载 A 股列表…" : "输入名称或代码搜索"
+                    catalogsLoading ? "正在加载 A 股与 ETF 目录…" : "输入名称或代码搜索"
                   }
                   className="backtest-symbol-select"
                   open={symbolPickerOpen}
@@ -144,22 +145,25 @@ export function BacktestConfig({
                   }
                   optionRender={(option) => (
                     <div className="stock-option">
-                      <span>{option.data.label}</span>
+                      <span>
+                        {option.data.label}
+                        <em>{option.data.securityType === "etf" ? "ETF" : "A股"}</em>
+                      </span>
                       <small className="tabular-nums">{option.value}</small>
                     </div>
                   )}
                   notFoundContent={
-                    stocksLoading ? (
+                    catalogsLoading ? (
                       <Skeleton active paragraph={{ rows: 2 }} title={false} />
-                    ) : stocksError ? (
+                    ) : catalogsError ? (
                       <div className="stock-universe-error">
-                        <span>全 A 股目录加载失败</span>
-                        <Button type="link" size="small" onClick={onRetryStocks}>
+                        <span>A 股或 ETF 目录加载失败</span>
+                        <Button type="link" size="small" onClick={onRetryCatalogs}>
                           重试
                         </Button>
                       </div>
                     ) : (
-                      "未找到匹配的 A 股"
+                      "未找到匹配的 A 股或 ETF"
                     )
                   }
                 />

@@ -18,12 +18,11 @@ import {
   fetchAStockUniverse,
   fetchDomesticEtfUniverse,
 } from "../data/stockUniverse";
-import {
-  fetchCorporateActions,
-} from "../data/tencent";
+import { fetchVerifiedCorporateActions } from "../data/corporateActions";
 import {
   BAIDU_SUSPEND_SOURCE,
   EASTMONEY_SUSPEND_SOURCE,
+  LEGACY_EASTMONEY_SUSPEND_SOURCE,
   fetchTradingSuspensions,
 } from "../data/tradingSuspensions";
 import {
@@ -37,15 +36,18 @@ vi.mock("../data/stockUniverse", () => ({
   fetchAStockUniverse: vi.fn(),
   fetchDomesticEtfUniverse: vi.fn(),
 }));
-vi.mock("../data/tencent", () => ({
-  fetchCorporateActions: vi.fn(),
+vi.mock("../data/corporateActions", () => ({
+  fetchVerifiedCorporateActions: vi.fn(),
 }));
 vi.mock("../data/tradingSuspensions", () => ({
   EASTMONEY_SUSPEND_SOURCE:
+    "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
+  LEGACY_EASTMONEY_SUSPEND_SOURCE:
     "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
   BAIDU_SUSPEND_SOURCE: "baidu_financecalendar_notify_suspend",
   AUTOMATIC_SUSPEND_SOURCES: [
     "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+    "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
     "baidu_financecalendar_notify_suspend",
   ],
   fetchTradingSuspensions: vi.fn(
@@ -53,14 +55,14 @@ vi.mock("../data/tradingSuspensions", () => ({
       rows: [],
       source: "东方财富停复牌",
       sourceKey:
-        "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+        "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
       fetchedAt: "2026-08-08T00:00:00.000Z",
       coverageStart: startDate,
       coverageEnd: endDate,
       partialCoverage: false,
       unresolvedOpenIntervals: 0,
       primarySource:
-        "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+        "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
       fallbackUsed: false,
     }),
   ),
@@ -158,8 +160,16 @@ describe("AppService 停复牌自动同步", () => {
         startDate: "2025-06-01",
         endDate: "2025-06-05",
         reason: "suspension",
-        source: EASTMONEY_SUSPEND_SOURCE,
+        source: LEGACY_EASTMONEY_SUSPEND_SOURCE,
         fetchedAt: "2025-06-06T00:00:00Z",
+      },
+      {
+        symbol: "601088",
+        startDate: "2025-08-05",
+        endDate: "2025-08-07",
+        reason: "suspension",
+        source: LEGACY_EASTMONEY_SUSPEND_SOURCE,
+        fetchedAt: "2025-08-08T00:00:00Z",
       },
       {
         symbol: "601088",
@@ -215,7 +225,7 @@ describe("AppService 停复牌自动同步", () => {
       expect.arrayContaining([
         expect.objectContaining({
           startDate: "2025-06-01",
-          source: EASTMONEY_SUSPEND_SOURCE,
+          source: LEGACY_EASTMONEY_SUSPEND_SOURCE,
         }),
         expect.objectContaining({
           startDate: "2025-08-04",
@@ -231,6 +241,15 @@ describe("AppService 停复牌自动同步", () => {
       database
         .listTradingInterruptionsBySymbol("601088")
         .some((row) => row.source === BAIDU_SUSPEND_SOURCE),
+    ).toBe(false);
+    expect(
+      database
+        .listTradingInterruptionsBySymbol("601088")
+        .some(
+          (row) =>
+            row.source === LEGACY_EASTMONEY_SUSPEND_SOURCE &&
+            row.startDate === "2025-08-05",
+        ),
     ).toBe(false);
   });
 });
@@ -437,7 +456,7 @@ describe("AppService 回测试验", () => {
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     }));
-    vi.mocked(fetchCorporateActions).mockResolvedValue({
+    vi.mocked(fetchVerifiedCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
       provenance: {
@@ -510,22 +529,110 @@ describe("AppService 回测试验", () => {
     expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
   });
 
-  it("在获取回测行情前拒绝 ETF 标的", async () => {
-    const { service } = await serviceWithDatabase();
-
-    await expect(
-      service.runBacktest({
-        symbols: ["510300"],
-        startDate: "2024-01-01",
-        endDate: "2024-02-01",
-        monthlyAmount: 3000,
-        buyDay: 1,
+  it("ETF 标的使用 ETF 目录、双源行情与 ETF 分红完成回测", async () => {
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      completeStockUniverse([
+        { symbol: "510300", name: "沪深300ETF", securityType: "etf" },
+      ]),
+      "cached",
+      new Date().toISOString(),
+    );
+    vi.mocked(fetchUnadjustedPrices).mockResolvedValue(
+      completeMarketResponse({
+        rows: [
+          { date: "2024-01-02", close: 3.5 },
+          { date: "2024-02-01", close: 3.6 },
+        ],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-26T00:00:00Z",
+          dataCutoff: "2024-02-01",
+          adjustment: "none",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
       }),
-    ).rejects.toThrow("历史回测只支持A股股票");
-    expect(fetchAStockUniverse).toHaveBeenCalledOnce();
-    expect(fetchUnadjustedPrices).not.toHaveBeenCalled();
-    expect(fetchAdjustedBars).not.toHaveBeenCalled();
-    expect(fetchCorporateActions).not.toHaveBeenCalled();
+    );
+    vi.mocked(fetchAdjustedBars).mockResolvedValue(
+      completeMarketResponse({
+        rows: [
+          {
+            date: "2024-01-02",
+            open: 3.5,
+            high: 3.5,
+            low: 3.5,
+            close: 3.5,
+            volume: 1_000,
+            adjustment: "qfq",
+          },
+          {
+            date: "2024-02-01",
+            open: 3.6,
+            high: 3.6,
+            low: 3.6,
+            close: 3.6,
+            volume: 1_200,
+            adjustment: "qfq",
+          },
+        ],
+        provenance: {
+          source: "tencent",
+          primarySource: "tencent",
+          fallbackUsed: false,
+          fetchedAt: "2026-07-26T00:00:00Z",
+          dataCutoff: "2024-02-01",
+          adjustment: "qfq",
+          caliberVersion: BACKTEST_CALIBER_VERSION,
+        },
+      }),
+    );
+    vi.mocked(fetchVerifiedCorporateActions).mockResolvedValue({
+      rows: [
+        {
+          date: "2024-01-15",
+          recordDate: "2024-01-12",
+          paymentDate: "2024-01-18",
+          perShare: 0.05,
+          transferRatio: 0,
+          bonusRatio: 0,
+          status: "实施",
+        },
+      ],
+      reportedActions: [],
+      provenance: {
+        source: "新浪 ETF 累计分红；东方财富基金 F10 独立校验通过",
+        primarySource: "sina",
+        fallbackUsed: false,
+        fetchedAt: "2026-07-26T00:00:00Z",
+        dataCutoff: "2024-01-15",
+        adjustment: "none",
+        caliberVersion: BACKTEST_CALIBER_VERSION,
+      },
+    });
+
+    const experiment = await service.runBacktest({
+      symbols: ["510300"],
+      startDate: "2024-01-01",
+      endDate: "2024-02-01",
+      monthlyAmount: 3000,
+      buyDay: 1,
+    });
+
+    expect(experiment.results[0]).toMatchObject({
+      symbol: "510300",
+      name: "沪深300ETF",
+    });
+    expect(fetchVerifiedCorporateActions).toHaveBeenCalledWith(
+      "510300",
+      "etf",
+      "2024-01-01",
+      "2024-02-01",
+    );
+    expect(fetchAStockUniverse).not.toHaveBeenCalled();
+    expect(fetchDomesticEtfUniverse).not.toHaveBeenCalled();
   });
 
   const invalidRuntimeRequests: Array<
@@ -626,7 +733,7 @@ describe("AppService 回测试验", () => {
         },
       });
     });
-    vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => ({
+    vi.mocked(fetchVerifiedCorporateActions).mockImplementation(async (symbol) => ({
       rows: [],
       reportedActions:
         symbol === "601916"
@@ -733,7 +840,7 @@ describe("AppService 回测试验", () => {
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     }));
-    vi.mocked(fetchCorporateActions).mockResolvedValue({
+    vi.mocked(fetchVerifiedCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
       provenance: {
@@ -825,7 +932,7 @@ describe("AppService 回测试验", () => {
     ).rejects.toThrow(
       "601398 严格回测行情尾部不完整：腾讯尾部不完整；新浪兜底失败",
     );
-    expect(fetchCorporateActions).not.toHaveBeenCalled();
+    expect(fetchVerifiedCorporateActions).not.toHaveBeenCalled();
     expect(database.listBacktestExperiments()).toEqual([]);
     expect(database.listLiveMarketPrices()).toHaveLength(0);
   });
@@ -899,7 +1006,7 @@ describe("AppService 回测试验", () => {
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     }));
-    vi.mocked(fetchCorporateActions).mockResolvedValue({
+    vi.mocked(fetchVerifiedCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
       provenance: {
@@ -1001,7 +1108,7 @@ describe("AppService 回测试验", () => {
         caliberVersion: BACKTEST_CALIBER_VERSION,
       },
     }));
-    vi.mocked(fetchCorporateActions).mockResolvedValue({
+    vi.mocked(fetchVerifiedCorporateActions).mockResolvedValue({
       rows: [],
       reportedActions: [],
       provenance: {
@@ -2011,7 +2118,7 @@ describe("AppService 分红候选确认与发现", () => {
       instrumentName: "建设银行",
     });
 
-    vi.mocked(fetchCorporateActions).mockImplementation(async (symbol) => {
+    vi.mocked(fetchVerifiedCorporateActions).mockImplementation(async (symbol) => {
       if (symbol === "601939") throw new Error("数据源访问失败");
       return {
         rows: [],

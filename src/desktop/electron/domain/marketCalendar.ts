@@ -4,6 +4,19 @@ import {
   currentMarketDate,
 } from "../../shared/marketDate";
 import type { MarketCalendarDiagnostic } from "../../shared/contracts";
+import calendar2011 from "../data/market-calendar/2011.json";
+import calendar2012 from "../data/market-calendar/2012.json";
+import calendar2013 from "../data/market-calendar/2013.json";
+import calendar2014 from "../data/market-calendar/2014.json";
+import calendar2015 from "../data/market-calendar/2015.json";
+import calendar2016 from "../data/market-calendar/2016.json";
+import calendar2017 from "../data/market-calendar/2017.json";
+import calendar2018 from "../data/market-calendar/2018.json";
+import calendar2019 from "../data/market-calendar/2019.json";
+import calendar2020 from "../data/market-calendar/2020.json";
+import calendar2021 from "../data/market-calendar/2021.json";
+import calendar2022 from "../data/market-calendar/2022.json";
+import calendar2023 from "../data/market-calendar/2023.json";
 import calendar2024 from "../data/market-calendar/2024.json";
 import calendar2025 from "../data/market-calendar/2025.json";
 import calendar2026 from "../data/market-calendar/2026.json";
@@ -17,6 +30,7 @@ interface AnnualMarketCalendar {
   year: number;
   status: "official" | "pending_official_schedule";
   source: string | null;
+  sources?: string[];
   closures: Array<[string, string]>;
 }
 
@@ -25,6 +39,19 @@ interface AnnualMarketCalendar {
  * 状态，不猜测工作日休市。周末由独立规则处理。
  */
 const ANNUAL_MARKET_CALENDARS = [
+  calendar2011,
+  calendar2012,
+  calendar2013,
+  calendar2014,
+  calendar2015,
+  calendar2016,
+  calendar2017,
+  calendar2018,
+  calendar2019,
+  calendar2020,
+  calendar2021,
+  calendar2022,
+  calendar2023,
   calendar2024,
   calendar2025,
   calendar2026,
@@ -37,11 +64,13 @@ const CONFIRMED_MARKET_CLOSURES = ANNUAL_MARKET_CALENDARS
 export function marketCalendarDiagnostics(
   now = new Date(),
 ): MarketCalendarDiagnostic[] {
-  const diagnostics = ANNUAL_MARKET_CALENDARS.map(({ year, status, source }) => ({
-    year,
-    status,
-    source,
-  }));
+  const diagnostics = ANNUAL_MARKET_CALENDARS.map(
+    ({ year, status, source, sources }) => ({
+      year,
+      status,
+      source: sources?.join(" | ") ?? source,
+    }),
+  );
   const currentYear = Number(currentMarketDate(now).slice(0, 4));
   if (!diagnostics.some((item) => item.year === currentYear)) {
     diagnostics.push({

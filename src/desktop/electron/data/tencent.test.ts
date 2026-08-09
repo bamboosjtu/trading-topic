@@ -431,115 +431,84 @@ describe("fetchUnadjustedPrices", () => {
 describe("parseSuspensionRow / parseTradingSuspensions", () => {
   const FETCHED_AT = "2025-08-20T00:00:00Z";
 
-  it("解析东方财富真实字段 SUSPEND_START_DATE + SUSPEND_END_TIME", () => {
-    // 取自东方财富新市场级停复牌报表的真实字段命名
+  it("解析东方财富个股日历真实的全天停牌正文", () => {
     const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-04 00:00:00",
-      SUSPEND_END_TIME: "2025-08-15 15:00:00",
-      PREDICT_RESUME_DATE: "2025-08-18 00:00:00",
-      SUSPEND_EXPIRE: "2025-08-15",
-      SUSPEND_REASON: "重大事项",
-      NOTICE_DATE: "2025-08-01",
+      SECURITY_CODE: "601398",
+      NOTICE_DATE: "2012-02-23 00:00:00",
+      EVENT_TYPE: "停牌日期",
+      EVENT_TYPE_CODE: "023",
+      LEVEL1_CONTENT:
+        "因召开股东大会停牌一天，2012年02月23日  9:30-2012年02月23日  15:00停牌",
     };
-    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
+    const interruption = parseSuspensionRow(row, "601398", FETCHED_AT);
     expect(interruption).toEqual({
-      symbol: "601088",
-      startDate: "2025-08-04",
-      // 优先使用 SUSPEND_END_TIME，不依赖复牌日前一天推导
-      endDate: "2025-08-15",
+      symbol: "601398",
+      startDate: "2012-02-23",
+      endDate: "2012-02-23",
       reason: "suspension",
       source: EASTMONEY_SUSPEND_SOURCE,
-      sourceId: "2025-08-01",
+      sourceId:
+        "https://data.eastmoney.com/stockcalendar/601398.html?date=2012-02-23",
       fetchedAt: FETCHED_AT,
     });
   });
 
-  it("仅有 SUSPEND_START_DATE + RESUME_DATE 时按复牌日前一天推导 endDate", () => {
-    // 历史字段命名或简化响应：复牌日 2025-08-18 → endDate 2025-08-17
+  it("解析连续多日停牌的显式闭合区间", () => {
     const row = {
       SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-04",
-      RESUME_DATE: "2025-08-18",
+      NOTICE_DATE: "2010-11-16 00:00:00",
+      EVENT_TYPE_CODE: "023",
+      LEVEL1_CONTENT:
+        "因刊登重要公告连续停牌，2010年11月16日  9:30-2010年11月23日  15:00停牌",
     };
     const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
-    expect(interruption?.startDate).toBe("2025-08-04");
-    expect(interruption?.endDate).toBe("2025-08-17");
+    expect(interruption?.startDate).toBe("2010-11-16");
+    expect(interruption?.endDate).toBe("2010-11-23");
   });
 
-  it("仅有 PREDICT_RESUME_DATE 时按预计复牌日前一天推导 endDate", () => {
-    // 尚未实际复牌、仅有预计复牌日：证据等级较低但仍可用
+  it("盘中停牌不伪装成整日行情缺口证据", () => {
     const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-04",
-      PREDICT_RESUME_DATE: "2025-08-18",
+      SECURITY_CODE: "601857",
+      NOTICE_DATE: "2013-09-09 00:00:00",
+      EVENT_TYPE_CODE: "023",
+      LEVEL1_CONTENT:
+        "因刊登重要公告停牌半天，2013年09月09日  9:30-2013年09月09日  11:30停牌",
     };
-    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
-    expect(interruption?.endDate).toBe("2025-08-17");
+    expect(parseSuspensionRow(row, "601857", FETCHED_AT)).toBeNull();
   });
 
-  it("兼容历史字段命名 SUSPEND_DATE + RESUME_DATE", () => {
-    // 旧字段命名兼容
+  it("未闭合事件只延伸到本次已观察截止日", () => {
     const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_DATE: "2025-08-04",
-      RESUME_DATE: "2025-08-18",
+      SECURITY_CODE: "300246",
+      NOTICE_DATE: "2026-08-03 00:00:00",
+      EVENT_TYPE_CODE: "023",
+      LEVEL1_CONTENT:
+        "因刊登重要公告连续停牌，从2026年08月03日  9:30开始停牌",
     };
-    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
-    expect(interruption?.startDate).toBe("2025-08-04");
-    expect(interruption?.endDate).toBe("2025-08-17");
-  });
-
-  it("无任何截止/复牌日时返回 null，不自行延伸到今天", () => {
-    // P1 边界修复：历史记录字段缺失时不能假设从开始日一直停牌到现在
-    const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-04",
-      SUSPEND_REASON: "重大事项",
-    };
-    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
-    expect(interruption).toBeNull();
-  });
-
-  it("SUSPEND_EXPIRE 作为明确截止日候选", () => {
-    const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-04",
-      SUSPEND_EXPIRE: "2025-08-15",
-    };
-    const interruption = parseSuspensionRow(row, "601088", FETCHED_AT);
-    expect(interruption?.startDate).toBe("2025-08-04");
-    expect(interruption?.endDate).toBe("2025-08-15");
-  });
-
-  it("缺少有效开始日时返回 null", () => {
-    const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_END_TIME: "2025-08-15",
-    };
-    expect(parseSuspensionRow(row, "601088", FETCHED_AT)).toBeNull();
-  });
-
-  it("endDate 早于 startDate 时返回 null", () => {
-    const row = {
-      SECURITY_CODE: "601088",
-      SUSPEND_START_DATE: "2025-08-20",
-      SUSPEND_END_TIME: "2025-08-15",
-    };
-    expect(parseSuspensionRow(row, "601088", FETCHED_AT)).toBeNull();
+    expect(
+      parseSuspensionRow(row, "300246", FETCHED_AT, "2026-08-08"),
+    ).toMatchObject({
+      startDate: "2026-08-03",
+      endDate: "2026-08-08",
+    });
+    expect(parseSuspensionRow(row, "300246", FETCHED_AT)).toBeNull();
   });
 
   it("parseTradingSuspensions 解析多行并按 startDate 升序返回", () => {
     const rawRows = [
       {
         SECURITY_CODE: "601088",
-        SUSPEND_START_DATE: "2025-09-01",
-        SUSPEND_END_TIME: "2025-09-05",
+        NOTICE_DATE: "2025-09-01 00:00:00",
+        EVENT_TYPE_CODE: "023",
+        LEVEL1_CONTENT:
+          "因刊登重要公告停牌一天，2025年09月01日  9:30-2025年09月01日  15:00停牌",
       },
       {
         SECURITY_CODE: "601088",
-        SUSPEND_START_DATE: "2025-08-04",
-        SUSPEND_END_TIME: "2025-08-15",
+        NOTICE_DATE: "2025-08-04 00:00:00",
+        EVENT_TYPE_CODE: "023",
+        LEVEL1_CONTENT:
+          "因刊登重要公告连续停牌，2025年08月04日  9:30-2025年08月15日  15:00停牌",
       },
     ];
     const interruptions = parseTradingSuspensions(
@@ -553,24 +522,23 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
   });
 
   it("parseTradingSuspensions 原始行非空但全部无法解析时抛结构错误", () => {
-    // 字段命名已变化：接口返回了若干行，但没有一行能识别有效日期
     const rawRows = [
       {
         SECURITY_CODE: "601088",
-        NEW_SUSPEND_FIELD: "2025-08-04",
-        NEW_RESUME_FIELD: "2025-08-18",
+        EVENT_TYPE_CODE: "023",
+        LEVEL1_CONTENT: "正文格式已经变化",
       },
     ];
     expect(() =>
       parseTradingSuspensions(rawRows, "601088", FETCHED_AT),
-    ).toThrow("未识别到有效日期字段");
+    ).toThrow("未识别到有效个股日历区间");
   });
 
   it("parseTradingSuspensions 空行数组返回空数组（合法无停牌记录）", () => {
     expect(parseTradingSuspensions([], "601088", FETCHED_AT)).toEqual([]);
   });
 
-  it("新东方财富停复牌接口明确空结果返回空数组", async () => {
+  it("东方财富个股日历明确空结果返回空数组", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -592,8 +560,7 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
     expect(result.rows).toEqual([]);
   });
 
-  it("新东方财富停复牌接口返回行但字段无法解析时抛错", async () => {
-    // 接口字段已变化但响应非空，应抛错而不是返回空数组
+  it("东方财富个股日历返回行但正文无法解析时抛错", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -608,7 +575,8 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
             data: [
               {
                 SECURITY_CODE: "601088",
-                UNKNOWN_NEW_FIELD: "2025-08-04",
+                EVENT_TYPE_CODE: "023",
+                LEVEL1_CONTENT: "正文格式已经变化",
               },
             ],
           },
@@ -622,13 +590,11 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
         "2025-08-31",
         { now: () => new Date("2025-09-01T00:00:00Z") },
       ),
-    ).rejects.toThrow("未识别到有效日期字段");
+    ).rejects.toThrow("未识别到有效个股日历区间");
   });
 
-  it("新东方财富停复牌接口成功解析真实字段并写入来源", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
+  it("东方财富个股日历成功解析真实字段并写入来源", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({
           success: true,
@@ -640,17 +606,16 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
             data: [
               {
                 SECURITY_CODE: "601088",
-                SUSPEND_START_DATE: "2025-08-04 00:00:00",
-                SUSPEND_END_TIME: "2025-08-15 15:00:00",
-                PREDICT_RESUME_DATE: "2025-08-18 00:00:00",
-                SUSPEND_REASON: "重大事项",
-                NOTICE_DATE: "2025-08-01",
+                NOTICE_DATE: "2025-08-04 00:00:00",
+                EVENT_TYPE_CODE: "023",
+                LEVEL1_CONTENT:
+                  "因刊登重要公告连续停牌，2025年08月04日  9:30-2025年08月15日  15:00停牌",
               },
             ],
           },
         }),
-      }),
-    );
+      });
+    vi.stubGlobal("fetch", fetchMock);
     const result = await fetchEastmoneyTradingSuspensions(
       ["601088"],
       "2025-08-01",
@@ -665,5 +630,13 @@ describe("parseSuspensionRow / parseTradingSuspensions", () => {
       reason: "suspension",
       source: EASTMONEY_SUSPEND_SOURCE,
     });
+    const requestedUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requestedUrl.searchParams.get("reportName")).toBe(
+      "RPT_STOCKCALENDAR",
+    );
+    expect(requestedUrl.searchParams.get("sortColumns")).toBe("NOTICE_DATE");
+    expect(requestedUrl.searchParams.get("filter")).toBe(
+      '(SECURITY_CODE="601088")(EVENT_TYPE_CODE="023")',
+    );
   });
 });

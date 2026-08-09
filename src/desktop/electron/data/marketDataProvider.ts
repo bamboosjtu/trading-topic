@@ -119,7 +119,7 @@ function assertDates(
     // 不再对行间间隔做 120 天硬检查：15 年回测中合法的长停牌、
     // 数据源分页限制等都会产生 >120 天的间隔。完整性检查
     // detectDateCompletenessIssues 会按正式交易日历逐日核对，
-    // 生成精确的 error/warning，并由两源共同缺口降级逻辑处理。
+    // 生成精确的 error/warning，并由两源共同缺口归类逻辑处理。
     previous = row.date;
   }
 }
@@ -136,7 +136,7 @@ function assertDates(
  *
  * 没有正式日历的区间仍检查极端截断，仅生成 warning。
  *
- * P1-1 修订：上市日期 listingDate 用于区分"新上市股票的预期前置缺口"与
+ * P1-1 修订：上市日期 listingDate 用于区分"新上市证券的预期前置缺口"与
  * "接口截断"。
  * - 提供 listingDate 且晚于 startDate：仅检查 [listingDate, endDate] 完整性。
  *   若首条行情等于或早于 listingDate，前置缺口属于未上市期，不生成 error。
@@ -200,7 +200,7 @@ function detectDateCompletenessIssues(
   );
 
   // P1-1 修订：只有在拥有 listingDate 这一独立证据时才能判定头部截断。
-  // 没有 listingDate 时，头部缺口可能是新上市股票的预期前置缺口，
+  // 没有 listingDate 时，头部缺口可能是新上市证券的预期前置缺口，
   // 不能贸然升级为 error。
   if (listingDate && headMissing.length) {
     // 仅当首条行情晚于 listingDate 时才能确认接口截断了已上市期间的数据
@@ -436,7 +436,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
         );
       }
     }
-    // P2-1：在正式日历年度内逐交易日核对完整性，产出 warning 级别问题。
+    // P2-1：在正式日历年度内逐交易日核对完整性，产出结构化 gap issue。
     const dateIssues = detectDateCompletenessIssues(
       completed,
       label,
@@ -471,16 +471,16 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     candidate?.rowIssues.some((issue) => issue.severity === "error") ?? false;
 
   /**
-   * 两源共同缺口兜底：当腾讯和新浪都缺少相同日期，且缺口前后两源都有
-   * 正常行情（不是头部或尾部截断）时，将 error 降级为 warning。
+   * 两源共同缺口分类：当腾讯和新浪都缺少相同日期，且缺口前后两源都有
+   * 正常行情（不是头部或尾部截断）时，保留 error 并标记为共同缺口。
    *
    * P1-1 严格化：旧实现只检查 issue.date（区间起始日），无法证明另一个
    * 来源也缺少整个区间。现在使用 missingDates 精确计算交集：
-   * - 整个缺口区间的日期都属于两源共同缺失 → 整体降级为 warning
-   * - 只有部分日期属于共同缺失 → 拆分为：共同缺口部分 warning + 单源缺口部分 error
-   * - 仅对 type === "gap" 执行降级，invalid_ohlcv/invalid_date/duplicate 不受影响
+   * - 整个缺口区间的日期都属于两源共同缺失 → 标记共同缺口 error
+   * - 只有部分日期属于共同缺失 → 拆分为共同缺口 error 与单源缺口 error
+   * - 仅对 type === "gap" 执行共同缺口归类，invalid_ohlcv/invalid_date/duplicate 不受影响
    *
-   * P2-2：降级 issue 携带 classification: "cross_provider_common_gap"，
+   * P2-2：共同缺口 issue 携带 classification: "cross_provider_common_gap"，
    * 单源缺口携带 classification: "single_provider_gap"，
    * 业务状态判断不再依赖中文文案。
    *
@@ -493,7 +493,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
    * - 定投计划顺延到下一条真实行情；
    * - 单一来源缺口、头部缺口、尾部缺口仍保持 error。
    */
-  const downgradeCrossProviderCommonGaps = (
+  const classifyCrossProviderCommonGaps = (
     issues: MarketDataIssue[],
     selectedRows: readonly { date: string }[],
     otherRows: readonly { date: string }[],
@@ -548,7 +548,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
 
     const result: MarketDataIssue[] = [];
     for (const issue of issues) {
-      // 仅对 type === "gap" 的 error 执行降级判断
+      // 仅对 type === "gap" 的 error 执行双源分类
       if (issue.type !== "gap" || issue.severity !== "error" || !issue.date) {
         result.push(issue);
         continue;
@@ -577,8 +577,8 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
             missingDates: dates,
             classification: "cross_provider_common_gap",
             type: "gap",
-            severity: "warning",
-            message: `${issue.message}（${cMessage}，缺少独立停牌证据，本次按降级数据继续计算）`,
+            severity: "error",
+            message: `${issue.message}（${cMessage}，缺少独立停牌证据，严格回测拒绝继续）`,
           });
         } else {
           const sMessage =
@@ -746,12 +746,12 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
     if (primaryIssueMessage) issues.push(providerIssue(primaryIssueMessage));
     if (fallbackIssueMessage) issues.push(providerIssue(fallbackIssueMessage));
     issues.push(...selected.candidate.rowIssues);
-    // 两源共同缺口兜底：腾讯和新浪都缺少相同日期且前后有正常行情时，
-    // 将 error 降级为 warning，避免停牌接口不可用时回测完全阻断。
+    // 两源共同缺口只能说明两个网页行情后端一致缺数，不能证明证券停牌；
+    // 保留 error，只有独立停复牌证据才能排除缺口。
     const otherCandidate =
       selected.source === "tencent" ? fallbackCandidate : primaryCandidate;
-    const downgradedIssues = otherCandidate
-      ? downgradeCrossProviderCommonGaps(
+    const classifiedIssues = otherCandidate
+      ? classifyCrossProviderCommonGaps(
           issues,
           selected.candidate.rows,
           otherCandidate.rows,
@@ -765,7 +765,7 @@ export async function fetchWithProviderFallback<T extends { date: string }>(
       requestedThrough: endDate,
       dataCutoff: selected.candidate.rows.at(-1)?.date ?? null,
       tailStatus,
-      issues: downgradedIssues,
+      issues: classifiedIssues,
       provenance: provenance(
         selected.source,
         selected.candidate.rows,

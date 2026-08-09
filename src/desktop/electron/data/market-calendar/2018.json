@@ -1,0 +1,19 @@
+{
+  "year": 2018,
+  "status": "official",
+  "source": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20171222_4438363.shtml",
+  "sources": [
+    "https://www.sse.com.cn/disclosure/announcement/general/c/c_20171222_4438363.shtml",
+    "https://www.sse.com.cn/disclosure/announcement/general/c/c_20181220_4696473.shtml"
+  ],
+  "closures": [
+    ["2018-01-01", "2018-01-01"],
+    ["2018-02-15", "2018-02-21"],
+    ["2018-04-05", "2018-04-07"],
+    ["2018-04-29", "2018-05-01"],
+    ["2018-06-16", "2018-06-18"],
+    ["2018-09-22", "2018-09-24"],
+    ["2018-10-01", "2018-10-07"],
+    ["2018-12-30", "2018-12-31"]
+  ]
+}

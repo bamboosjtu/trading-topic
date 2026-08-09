@@ -71,7 +71,7 @@ export function CurrentExperimentTable({
   const uncoveredCalendarYearsText = experiment?.dataQuality
     ? formatYearRanges(experiment.dataQuality.uncoveredCalendarYears)
     : "";
-  // 仅在 degraded 级别（cross_provider_common_gap）显示黄色大警告
+  // Schema 1 历史 degraded 结果仍可只读展示；新回测会在共同缺口处直接阻断。
   const isExperimentDegraded = experiment?.dataQuality.level === "degraded";
   const commonGapResults = results.filter((result) =>
     result.dataQuality.reasons.includes("cross_provider_common_gap"),

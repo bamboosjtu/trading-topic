@@ -75,18 +75,9 @@ if (uncoveredYears.length > 0) {
     return ranges.join("、");
   };
 
-  console.warn(
-    `警告：最大回测年限 ${maxBacktestYears}，` +
-      `当前严格日历覆盖 ${officialYears[0]}—${officialYears.at(-1)}，` +
-      `未覆盖 ${formatRanges(uncoveredYears)}`,
+  throw new Error(
+    `产品支持 ${minBacktestYear}—${currentYearNum} 回测，但正式日历仅覆盖 ${formatRanges(officialYears)}，缺失 ${formatRanges(uncoveredYears)}`,
   );
-
-  // 严格模式：要求全区间覆盖
-  if (process.argv.includes("--require-full-range")) {
-    throw new Error(
-      `严格模式：产品支持 ${minBacktestYear}—${currentYearNum} 回测，` +
-        `但正式日历仅覆盖 ${formatRanges(officialYears)}，` +
-        `缺失 ${formatRanges(uncoveredYears)}`,
-    );
-  }
 }
+
+console.log(`${minBacktestYear}—${currentYearNum} 最大回测区间官方交易日历覆盖门禁通过`);

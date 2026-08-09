@@ -16,6 +16,8 @@ const BSE_STOCK_LIST_URL =
   "https://www.bse.cn/nqxxController/nqxxCnzq.do";
 const SINA_ETF_LIST_URL =
   "https://vip.stock.finance.sina.com.cn/quotes_service/api/jsonp.php/IO.XSRV2.CallbackList['da_yPT46_Ll7K6WD']/Market_Center.getHQNodeDataSimple";
+const SSE_ETF_LIST_URL = "https://query.sse.com.cn/commonSoaQuery.do";
+const SZSE_ETF_LIST_URL = "https://www.szse.cn/api/report/ShowReport";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 interface ShanghaiStockListResponse {
@@ -24,6 +26,22 @@ interface ShanghaiStockListResponse {
     SEC_NAME_CN?: string;
     LISTING_DATE?: string;
   }>;
+}
+
+interface ShanghaiEtfListResponse {
+  result?: Array<{
+    fundCode?: string | number;
+    secNameFull?: string;
+    listingDate?: string;
+  }>;
+  pageHelp?: {
+    total?: number | string;
+    data?: Array<{
+      fundCode?: string | number;
+      secNameFull?: string;
+      listingDate?: string;
+    }>;
+  };
 }
 
 interface BeijingStockListPage {
@@ -49,7 +67,7 @@ function normalizeStockCode(value: string | number | undefined): string {
  *
  * 上交所返回 "2025-06-01" 或 "20250601"；深交所 Excel 单元格可能是
  * Date 对象或字符串。空字符串/非法值统一返回 undefined，
- * 让上游按"无上市日证据"处理（不阻断新上市股票回测）。
+ * 让上游按"无上市日证据"处理（不阻断新上市证券回测）。
  */
 function parseListingDate(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -276,6 +294,96 @@ export function parseSinaDomesticEtfs(payload: string): StockInfo[] {
   );
 }
 
+export function parseShanghaiEtfs(payload: unknown): StockInfo[] {
+  const response = payload as ShanghaiEtfListResponse | null;
+  const sourceRows = Array.isArray(response?.result)
+    ? response.result
+    : response?.pageHelp?.data;
+  if (!Array.isArray(sourceRows)) {
+    throw new Error("上交所 ETF 代码表响应格式已变化");
+  }
+  const total = Number(response?.pageHelp?.total ?? sourceRows.length);
+  if (!Number.isInteger(total) || total !== sourceRows.length) {
+    throw new Error(
+      `上交所 ETF 代码表分页不完整：声明 ${String(response?.pageHelp?.total)} 行，实际 ${sourceRows.length} 行`,
+    );
+  }
+  const unique = new Map<string, StockInfo>();
+  for (const row of sourceRows) {
+    const symbol = normalizeStockCode(row.fundCode);
+    const name = String(row.secNameFull ?? "").trim();
+    const listingDate = parseListingDate(row.listingDate);
+    if (!/^5\d{5}$/.test(symbol) || !name || name === "-") continue;
+    unique.set(symbol, {
+      symbol,
+      name,
+      securityType: "etf",
+      ...(listingDate ? { listingDate } : {}),
+    });
+  }
+  if (sourceRows.length && unique.size === 0) {
+    throw new Error("上交所 ETF 代码表未识别到有效代码和名称字段");
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+}
+
+export async function parseShenzhenEtfs(
+  payload: ArrayBuffer,
+): Promise<StockInfo[]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(payload);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) throw new Error("深交所 ETF 代码表工作簿为空");
+  let headerRow = 0;
+  let codeColumn = 0;
+  let nameColumn = 0;
+  let listingDateColumn = 0;
+  worksheet.eachRow((row, rowNumber) => {
+    if (headerRow) return;
+    row.eachCell((cell, columnNumber) => {
+      const value = cell.text.trim();
+      if (value === "证券代码") codeColumn = columnNumber;
+      if (value === "证券简称") nameColumn = columnNumber;
+      if (value === "上市日期") listingDateColumn = columnNumber;
+    });
+    if (codeColumn && nameColumn) headerRow = rowNumber;
+  });
+  if (!headerRow || !codeColumn || !nameColumn) {
+    throw new Error("深交所 ETF 代码表缺少证券代码或证券简称列");
+  }
+  const unique = new Map<string, StockInfo>();
+  for (
+    let rowNumber = headerRow + 1;
+    rowNumber <= worksheet.rowCount;
+    rowNumber += 1
+  ) {
+    const symbol = normalizeStockCode(
+      worksheet.getCell(rowNumber, codeColumn).text,
+    );
+    const name = worksheet.getCell(rowNumber, nameColumn).text.trim();
+    const listingDate = listingDateColumn
+      ? parseListingDate(
+          worksheet.getCell(rowNumber, listingDateColumn).text.trim(),
+        )
+      : undefined;
+    if (!/^1\d{5}$/.test(symbol) || !name || name === "-") continue;
+    unique.set(symbol, {
+      symbol,
+      name,
+      securityType: "etf",
+      ...(listingDate ? { listingDate } : {}),
+    });
+  }
+  if (worksheet.rowCount > headerRow && unique.size === 0) {
+    throw new Error("深交所 ETF 代码表未识别到有效代码和名称字段");
+  }
+  return [...unique.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+}
+
 async function fetchShanghaiStocks(stockType: "1" | "8"): Promise<StockInfo[]> {
   const url = new URL(SSE_STOCK_LIST_URL);
   const parameters: Record<string, string> = {
@@ -399,15 +507,128 @@ async function fetchSinaDomesticEtfs(): Promise<StockInfo[]> {
   return rows;
 }
 
+async function fetchShanghaiEtfs(): Promise<StockInfo[]> {
+  const url = new URL(SSE_ETF_LIST_URL);
+  const parameters: Record<string, string> = {
+    isPagination: "true",
+    sqlId: "FUND_LIST",
+    "pageHelp.pageSize": "10000",
+    "pageHelp.pageNo": "1",
+    "pageHelp.beginPage": "1",
+    "pageHelp.endPage": "1",
+    pagecache: "false",
+    fundType: "00",
+    subClass: "01,02,03,04,06,08,09,31,32,33,34,35,36,37,38",
+    order: "",
+  };
+  Object.entries(parameters).forEach(([key, value]) =>
+    url.searchParams.set(key, value),
+  );
+  const response = await request(url, "上交所 ETF 代码表", {
+    headers: {
+      Referer: "https://www.sse.com.cn/assortment/fund/etf/list/",
+    },
+  });
+  return parseShanghaiEtfs(await response.json());
+}
+
+async function fetchShenzhenEtfs(): Promise<StockInfo[]> {
+  const url = new URL(SZSE_ETF_LIST_URL);
+  url.searchParams.set("SHOWTYPE", "xlsx");
+  url.searchParams.set("CATALOGID", "1945");
+  url.searchParams.set("TABKEY", "tab1");
+  url.searchParams.set("random", String(Math.random()));
+  const response = await request(url, "深交所 ETF 代码表", {
+    headers: {
+      Referer: "https://www.szse.cn/market/product/list/etfList/",
+    },
+  });
+  return parseShenzhenEtfs(await response.arrayBuffer());
+}
+
+function mergeOfficialEtfs(groups: readonly StockInfo[][]): StockInfo[] {
+  const official = new Map<string, StockInfo>();
+  for (const row of groups.flat()) {
+    if (row.securityType !== "etf") continue;
+    const existing = official.get(row.symbol);
+    if (!existing || (!existing.listingDate && row.listingDate)) {
+      official.set(row.symbol, row);
+    }
+  }
+  const rows = [...official.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  );
+  if (rows.length < ETF_UNIVERSE_MIN_SIZE) {
+    throw new Error(
+      `沪深交易所官方 ETF 代码表不完整：仅返回 ${rows.length} 个标的`,
+    );
+  }
+  return rows;
+}
+
+async function fetchOfficialDomesticEtfs(): Promise<StockInfo[]> {
+  const [shanghai, shenzhen] = await Promise.all([
+    fetchShanghaiEtfs(),
+    fetchShenzhenEtfs(),
+  ]);
+  return mergeOfficialEtfs([shanghai, shenzhen]);
+}
+
 export async function fetchDomesticEtfUniverse(): Promise<
   { rows: StockInfo[] } & DirectoryProvenance
 > {
+  const [sinaResult, officialResult] = await Promise.allSettled([
+    fetchSinaDomesticEtfs(),
+    fetchOfficialDomesticEtfs(),
+  ]);
+  if (officialResult.status === "rejected") {
+    const reason =
+      officialResult.reason instanceof Error
+        ? officialResult.reason.message
+        : String(officialResult.reason);
+    throw new Error(`ETF 官方目录校验失败：${reason}`);
+  }
+  const officialRows = officialResult.value;
+  const fetchedAt = new Date().toISOString();
+  if (sinaResult.status === "rejected") {
+    const reason =
+      sinaResult.reason instanceof Error
+        ? sinaResult.reason.message
+        : String(sinaResult.reason);
+    return {
+      rows: officialRows,
+      source: "上交所、深交所官方 ETF 代码表（新浪失败后的整段备用）",
+      primarySource: "sina",
+      fallbackUsed: true,
+      fallbackReason: reason,
+      fetchedAt,
+    };
+  }
+  const sinaBySymbol = new Map(
+    sinaResult.value.map((row) => [row.symbol, row]),
+  );
+  const matched = officialRows.filter((row) =>
+    sinaBySymbol.has(row.symbol),
+  ).length;
+  const matchRatio = matched / officialRows.length;
+  if (matchRatio < 0.95) {
+    throw new Error(
+      `新浪 ETF 目录与沪深交易所官方目录重合率过低：${matched}/${officialRows.length}`,
+    );
+  }
+  const rows = officialRows.map((official) => {
+    const sina = sinaBySymbol.get(official.symbol);
+    return {
+      ...official,
+      ...(sina ? { name: sina.name } : {}),
+    };
+  });
   return {
-    rows: await fetchSinaDomesticEtfs(),
-    source: "新浪财经境内交易所 ETF 代码表",
+    rows,
+    source: `新浪财经 ETF 主目录；沪深交易所官方目录校验并补全（重合 ${matched}/${officialRows.length}）`,
     primarySource: "sina",
     fallbackUsed: false,
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
   };
 }
 

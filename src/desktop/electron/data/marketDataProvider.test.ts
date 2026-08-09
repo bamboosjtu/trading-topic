@@ -754,7 +754,7 @@ describe("证券级停复牌证据", () => {
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
     // fallback 不可用，隔离测试主源完整性检查本身的行为
-    // （两源都缺同一区间时会触发共同缺口降级，此处不测那个路径）
+    // （两源都缺同一区间时会触发共同缺口严格阻断，此处不测那个路径）
     const primary = staticProvider("tencent", rows);
     const fallback = failingProvider("sina");
 
@@ -838,9 +838,9 @@ describe("证券级停复牌证据", () => {
     ]);
   });
 
-  it("两源共同缺口降级为 warning，不阻断回测", async () => {
+  it("两源共同缺口缺少独立停牌证据时保持 error", async () => {
     // 模拟腾讯和新浪都缺少 07-06 至 07-10（无停牌证据）
-    // 两源在缺口前后都有正常行情 → 共同缺口 → 降级为 warning
+    // 两源在缺口前后都有正常行情，但两个网页行情后端不能替代停牌证据。
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
@@ -859,13 +859,10 @@ describe("证券级停复牌证据", () => {
     );
 
     const errors = result.issues.filter((i) => i.severity === "error");
-    const warnings = result.issues.filter((i) => i.severity === "warning");
-    // 共同缺口应降级为 warning，不再有 error
-    expect(errors).toHaveLength(0);
-    expect(warnings.length).toBeGreaterThan(0);
+    expect(errors.length).toBeGreaterThan(0);
     expect(
-      warnings.some((w) =>
-        w.message.includes("腾讯与新浪均未返回行情"),
+      errors.some((item) =>
+        item.message.includes("腾讯与新浪均未返回行情"),
       ),
     ).toBe(true);
   });
@@ -900,7 +897,7 @@ describe("证券级停复牌证据", () => {
     expect(result.provenance.source).toBe("sina");
   });
 
-  it("两源共同缺口在头部时不降级（保持 error）", async () => {
+  it("两源共同缺口在头部时保持 head_truncation error", async () => {
     // 腾讯和新浪都缺少 07-01 至 07-03（头部缺口）
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d > "2026-07-03")
@@ -919,7 +916,7 @@ describe("证券级停复牌证据", () => {
       new Date("2026-07-31T08:00:00Z"),
     );
 
-    // 头部缺口不降级，保持 error
+    // 头部缺口保持 error，不改写为内部共同缺口。
     const errors = result.issues.filter((i) => i.severity === "error");
     expect(errors.length).toBeGreaterThan(0);
     expect(
@@ -963,7 +960,7 @@ describe("证券级停复牌证据", () => {
       new Date("2026-07-31T08:00:00Z"),
     );
 
-    const warnings = result.issues.filter(
+    const commonGaps = result.issues.filter(
       (i) => i.classification === "cross_provider_common_gap",
     );
     const errors = result.issues.filter(
@@ -971,9 +968,9 @@ describe("证券级停复牌证据", () => {
     );
 
     // 共同缺口应拆分为两段：07-06 和 07-08至07-10
-    expect(warnings.length).toBe(2);
-    expect(warnings[0].missingDates).toEqual(["2026-07-06"]);
-    expect(warnings[1].missingDates).toEqual([
+    expect(commonGaps.length).toBe(2);
+    expect(commonGaps[0].missingDates).toEqual(["2026-07-06"]);
+    expect(commonGaps[1].missingDates).toEqual([
       "2026-07-08",
       "2026-07-09",
       "2026-07-10",
@@ -1017,10 +1014,9 @@ describe("行情结果日历覆盖字段", () => {
     expect(result.officialCalendarYears).toEqual([2026]);
   });
 
-  it("请求包含 2018 年但数据无显式缺口时 uncoveredCalendarYears 包含 2018-2023", async () => {
+  it("请求包含 2018 年且数据无显式缺口时官方日历完整覆盖", async () => {
     // 仅返回 2026-07 完整交易日。由于未提供 listingDate，
-    // 2024-01 至 2026-06 之间缺失的预期交易日不计为头部截断 error，
-    // 仅 uncoveredCalendarYears 字段反映 2018-2023 缺少正式日历。
+    // 未提供 listingDate 时，首条行情以前不计为头部截断 error。
     const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
       date,
       close: 5 + i * 0.01,
@@ -1039,18 +1035,18 @@ describe("行情结果日历覆盖字段", () => {
       new Date("2026-07-31T08:00:00Z"),
     );
 
-    expect(result.uncoveredCalendarYears).toEqual([
-      2018, 2019, 2020, 2021, 2022, 2023,
+    expect(result.uncoveredCalendarYears).toEqual([]);
+    expect(result.officialCalendarYears).toEqual([
+      2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
-    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
     // 主源完整无 error，应直接接受
     expect(result.provenance.source).toBe("tencent");
     expect(result.provenance.fallbackUsed).toBe(false);
   });
 
-  it("混合请求中两源共同内部缺口降级且 uncoveredCalendarYears 仍包含 2018-2023", async () => {
+  it("长区间两源共同内部缺口保持 error 且日历完整覆盖", async () => {
     // 腾讯和新浪都缺少 2026-07-06 到 2026-07-10（无停牌证据）
-    // 两源在缺口前后都有正常行情 → 共同缺口 → 降级为 warning
+    // 两源在缺口前后都有正常行情，但仍缺少独立停牌证据。
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
       .map((date, i) => ({ date, close: 5 + i * 0.01 }));
@@ -1068,21 +1064,20 @@ describe("行情结果日历覆盖字段", () => {
       new Date("2026-07-31T08:00:00Z"),
     );
 
-    // 共同缺口应降级为 warning，不再有 error
     const errors = result.issues.filter((i) => i.severity === "error");
-    expect(errors).toHaveLength(0);
+    expect(errors.length).toBeGreaterThan(0);
     const commonGaps = result.issues.filter(
       (i) => i.classification === "cross_provider_common_gap",
     );
     expect(commonGaps.length).toBeGreaterThan(0);
     // 日历覆盖字段不受数据质量影响
-    expect(result.uncoveredCalendarYears).toEqual([
-      2018, 2019, 2020, 2021, 2022, 2023,
+    expect(result.uncoveredCalendarYears).toEqual([]);
+    expect(result.officialCalendarYears).toEqual([
+      2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
-    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
   });
 
-  it("正式日历年份两源共同内部缺口降级时 uncoveredCalendarYears 为空", async () => {
+  it("正式日历年份两源共同内部缺口阻断时 uncoveredCalendarYears 为空", async () => {
     // 请求区间只覆盖 2026-07，两源共同缺少 07-06 至 07-10
     const rows = JULY_2026_WEEKDAYS
       .filter((d) => d < "2026-07-06" || d > "2026-07-10")
@@ -1143,8 +1138,7 @@ describe("行情结果日历覆盖字段", () => {
  * officialCalendarYears / uncoveredCalendarYears / caliberVersion）。
  */
 describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
-  it("fetchMarketPrices 转发 officialCalendarYears 与 uncoveredCalendarYears（2016-2026 请求）", async () => {
-    // 2016-2023 没有正式交易日历，必须出现在 uncoveredCalendarYears 中
+  it("fetchMarketPrices 转发 2016—2026 完整官方日历覆盖", async () => {
     const rows = JULY_2026_WEEKDAYS.map((date, i) => ({
       date,
       close: 5 + i * 0.01,
@@ -1170,10 +1164,10 @@ describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
     // 关键：两个日历字段必须同时存在于返回结果中
     expect(Array.isArray(result.officialCalendarYears)).toBe(true);
     expect(Array.isArray(result.uncoveredCalendarYears)).toBe(true);
-    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
-    expect(result.uncoveredCalendarYears).toEqual([
-      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    expect(result.officialCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
+    expect(result.uncoveredCalendarYears).toEqual([]);
     // 包装层必须附加 caliberVersion
     expect(result.provenance.caliberVersion).toBeTruthy();
     expect(result.provenance.source).toBe("tencent");
@@ -1204,13 +1198,13 @@ describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
       [],
     );
 
-    // 共同缺口应降级为 warning，且 classification 必须被转发
+    // 共同缺口 classification 必须被转发且保持 error。
     const commonGaps = result.issues.filter(
       (i) => i.classification === "cross_provider_common_gap",
     );
     expect(commonGaps.length).toBeGreaterThan(0);
     expect(
-      commonGaps.every((i) => i.severity === "warning"),
+      commonGaps.every((i) => i.severity === "error"),
     ).toBe(true);
   });
 
@@ -1241,10 +1235,10 @@ describe("fetchMarketPrices / fetchMarketAdjustedBars 包装层", () => {
     );
 
     expect(spyTencent).toHaveBeenCalledWith("601398", "2016-01-01", "2026-07-31");
-    expect(result.officialCalendarYears).toEqual([2024, 2025, 2026]);
-    expect(result.uncoveredCalendarYears).toEqual([
-      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023,
+    expect(result.officialCalendarYears).toEqual([
+      2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026,
     ]);
+    expect(result.uncoveredCalendarYears).toEqual([]);
     expect(result.provenance.caliberVersion).toBeTruthy();
     expect(result.provenance.adjustment).toBe("qfq");
     expect(spySina).not.toHaveBeenCalled();

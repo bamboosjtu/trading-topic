@@ -42,7 +42,7 @@ import {
   fetchDomesticEtfUniverse,
 } from "../data/stockUniverse";
 import { checkDataSourceHealth } from "../data/dataSourceHealth";
-import { fetchCorporateActions } from "../data/tencent";
+import { fetchVerifiedCorporateActions } from "../data/corporateActions";
 import {
   AUTOMATIC_SUSPEND_SOURCES,
   BAIDU_SUSPEND_SOURCE,
@@ -158,7 +158,7 @@ interface BacktestMarketDataBundle {
   symbol: string;
   name: string;
   prices: Awaited<ReturnType<typeof fetchMarketPrices>>;
-  dividends: Awaited<ReturnType<typeof fetchCorporateActions>>;
+  dividends: Awaited<ReturnType<typeof fetchVerifiedCorporateActions>>;
   chartData: BacktestResult["chartData"];
   chartProvenance:
     | Awaited<ReturnType<typeof fetchMarketAdjustedBars>>["provenance"]
@@ -269,7 +269,7 @@ export class AppService {
         "info",
         `已刷新境内 ETF 代码表：${response.rows.length} 个标的；实际来源 ${response.source}${
           response.fallbackUsed
-            ? `；东方财富失败：${response.fallbackReason ?? "未知原因"}`
+            ? `；新浪失败：${response.fallbackReason ?? "未知原因"}`
             : ""
         }`,
       );
@@ -312,10 +312,7 @@ export class AppService {
     );
   }
 
-  /**
-   * 校验回测请求的口径版本与领域规则，并确认所有标的都是 A 股股票。
-   * 在任何外部请求或缓存写入之前完成，避免无效请求消耗数据源配额。
-   */
+  /** 校验回测请求的口径版本与领域规则；标的身份由刷新后的股票与 ETF 目录确认。 */
   private validateBacktestRequest(request: BacktestRequest): BacktestRequest {
     const canonicalRequest: BacktestRequest = {
       ...request,
@@ -325,18 +322,6 @@ export class AppService {
       throw new Error("回测请求的计算口径版本与当前应用不一致");
     }
     assertBacktestRequest(canonicalRequest);
-    const cachedInstrumentMap = new Map(
-      this.localStockUniverse().map((instrument) => [
-        instrument.symbol,
-        instrument,
-      ]),
-    );
-    for (const symbol of canonicalRequest.symbols) {
-      const cachedInstrument = cachedInstrumentMap.get(symbol);
-      if (cachedInstrument && cachedInstrument.securityType !== "stock") {
-        throw new Error("历史回测只支持A股股票");
-      }
-    }
     return canonicalRequest;
   }
 
@@ -351,9 +336,30 @@ export class AppService {
   private async fetchBacktestMarketData(
     canonicalRequest: BacktestRequest,
   ): Promise<BacktestMarketDataBundle[]> {
-    const stocks = await this.listAStocks();
+    const cachedBySymbol = new Map(
+      this.localStockUniverse().map((instrument) => [
+        instrument.symbol,
+        instrument,
+      ]),
+    );
+    const requestedTypes = new Set(
+      canonicalRequest.symbols
+        .map((symbol) => cachedBySymbol.get(symbol)?.securityType)
+        .filter((value): value is StockInfo["securityType"] => Boolean(value)),
+    );
+    const hasUnknownType = canonicalRequest.symbols.some(
+      (symbol) => !cachedBySymbol.has(symbol),
+    );
+    const directoryGroups = hasUnknownType || requestedTypes.size !== 1
+      ? await Promise.all([this.listAStocks(), this.listEtfs()])
+      : requestedTypes.has("etf")
+        ? [await this.listEtfs()]
+        : [await this.listAStocks()];
     const instrumentMap = new Map(
-      stocks.map((instrument) => [instrument.symbol, instrument]),
+      directoryGroups.flat().map((instrument) => [
+        instrument.symbol,
+        instrument,
+      ]),
     );
     // 自动获取停牌证据，避免合法停牌被误判为行情缺失
     await this.refreshTradingInterruptions(
@@ -363,13 +369,13 @@ export class AppService {
     );
     for (const symbol of canonicalRequest.symbols) {
       const instrument = instrumentMap.get(symbol);
-      if (!instrument || instrument.securityType !== "stock") {
-        throw new Error("历史回测只支持A股股票");
+      if (!instrument) {
+        throw new Error(`回测标的 ${symbol} 不在当前 A 股或境内 ETF 官方校验目录中`);
       }
     }
     const marketData: BacktestMarketDataBundle[] = [];
     for (const [index, symbol] of canonicalRequest.symbols.entries()) {
-      // P1-1 修订：传入上市日期，让完整性检查区分新上市股票的预期前置缺口
+      // P1-1 修订：传入上市日期，让完整性检查区分新上市证券的预期前置缺口
       // 与接口截断。listingDate 缺省时按"无上市日证据"处理（不阻断）。
       const listingDate = instrumentMap.get(symbol)?.listingDate;
       // P1：加载证券级停复牌证据，让完整性检查排除"交易所开市但该证券停牌"
@@ -476,8 +482,10 @@ export class AppService {
           setTimeout(resolve, DATA_SOURCE_THROTTLE_MS),
         );
       }
-      const dividends = await fetchCorporateActions(
+      const securityType = instrumentMap.get(symbol)!.securityType;
+      const dividends = await fetchVerifiedCorporateActions(
         symbol,
+        securityType,
         canonicalRequest.startDate,
         canonicalRequest.endDate,
       );
@@ -784,7 +792,7 @@ export class AppService {
     const normalized = normalizeLivePriceRanges(ranges);
     const snapshots: MarketDataCacheEntry[] = [];
     const issues: string[] = [];
-    // P1-1 修订：用上市日期区分新上市股票的预期前置缺口与接口截断。
+    // P1-1 修订：用上市日期区分新上市证券的预期前置缺口与接口截断。
     const stockLookup = new Map(
       this.localStockUniverse().map((stock) => [stock.symbol, stock.listingDate]),
     );
@@ -881,9 +889,9 @@ export class AppService {
    * 删除已有证据却不写入新数据，让一个原本可运行的历史回测在刷新后
    * 突然失败。
    *
-   * 当前实现按请求范围一次批量抓取市场级结果，东方财富新报表失败后整段切换
-   * 到百度独立备用源。完整分页、解析和覆盖校验都成功后，才在已确认覆盖范围
-   * 内原子替换自动证据；范围外历史与人工公告证据保持不变。
+   * 当前实现按证券逐一抓取东方财富历史停牌事件，主源失败后整段切换到百度
+   * 独立备用源。完整分页、事件正文和覆盖校验都成功后，才在已确认覆盖范围内
+   * 原子替换自动证据；范围外历史与人工公告证据保持不变。
    *
    * API 失败或结构错误时记录 warn 日志并跳过该 symbol，不阻断行情刷新
    * 主流程——完整性检查会按"无停牌证据"处理。但已存在的旧证据保留，
@@ -974,7 +982,7 @@ export class AppService {
     const snapshots: MarketDataCacheEntry[] = [];
     const fetchIssues: string[] = [];
     let hasDataQualityError = false;
-    // P1-1 修订：用上市日期区分新上市股票的预期前置缺口与接口截断。
+    // P1-1 修订：用上市日期区分新上市证券的预期前置缺口与接口截断。
     const stockLookup = new Map(
       this.localStockUniverse().map((stock) => [stock.symbol, stock.listingDate]),
     );
@@ -1311,7 +1319,7 @@ export class AppService {
     // Fetch corporate actions for each symbol
     const corporateActions = new Map<
       string,
-      { dividends: Awaited<ReturnType<typeof fetchCorporateActions>>["rows"]; fetchedAt: string }
+      { dividends: Awaited<ReturnType<typeof fetchVerifiedCorporateActions>>["rows"]; fetchedAt: string }
     >();
     const endDate = currentMarketDate();
     const issues: PendingDividendDiscoveryIssue[] = [];
@@ -1326,7 +1334,12 @@ export class AppService {
       }
       checked += 1;
       try {
-        const result = await fetchCorporateActions(symbol, earliest, endDate);
+        const result = await fetchVerifiedCorporateActions(
+          symbol,
+          stockLookup.get(symbol)?.securityType ?? "stock",
+          earliest,
+          endDate,
+        );
         if (result.rows.length) {
           corporateActions.set(symbol, {
             dividends: result.rows,

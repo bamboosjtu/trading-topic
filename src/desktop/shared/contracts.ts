@@ -43,19 +43,19 @@ export interface MarketDataIssue {
   date?: string;
   /**
    * 区间问题的结束日（含）；单日问题时省略。
-   * 与 date 配合表示 [date, endDate] 区间，用于两源共同缺口降级时
+   * 与 date 配合表示 [date, endDate] 区间，用于两源共同缺口核验时
    * 计算交集，而非只检查起始日。
    */
   endDate?: string;
   /**
    * 该缺口覆盖的具体缺失日期集合（含 date 和 endDate）。
    * detectDateCompletenessIssues 合并连续缺口时填充，
-   * 用于两源共同缺口降级时精确计算交集，避免只检查起始日导致误判。
+   * 用于两源共同缺口核验时精确计算交集，避免只检查起始日导致误判。
    */
   missingDates?: string[];
   /**
    * 结构化分类，用于业务状态判断不依赖中文文案。
-   * - `cross_provider_common_gap`：两源共同缺口降级为 warning；
+   * - `cross_provider_common_gap`：两源共同缺口且无独立停牌证据，严格回测按 error 阻断；
    * - `single_provider_gap`：仅单源缺口的 error；
    * - `head_truncation`：头部截断；
    * - `tail_incomplete`：尾部不完整。
@@ -82,7 +82,7 @@ export interface MarketFetchResult<
   provenance: P;
   /** 请求区间内拥有正式日历的年份。 */
   officialCalendarYears: number[];
-  /** 请求区间内未覆盖正式日历的年份，回测须标记为降级。 */
+  /** 请求区间内未覆盖正式日历的年份；快捷最大区间必须为空，自定义更早区间会标记 research。 */
   uncoveredCalendarYears: number[];
 }
 
@@ -263,20 +263,19 @@ export interface BacktestResult {
 /**
  * 回测数据质量模型。
  *
- * 采用三级质量状态，避免把"日历覆盖不完整"与"真实行情异常"放在同一等级：
+ * 当前快捷回测只会生成 strict；更早的自定义区间仍可生成 research，degraded 仅为 Schema 1 已保存结果的只读兼容：
  * - `strict`：请求区间全部由正式交易日历覆盖，且无两源共同缺口、无来源冲突、
  *   首尾完整。独立日历验证完整。
- * - `research`：部分年份没有正式交易日历（`calendar_coverage_partial`），但行情
- *   结构检查通过、首尾覆盖正常、回测只使用实际返回价格。这是 2011—2023 年长期
- *   回测的默认状态，属于"未完成官方交易日历的独立逐日核验"，而非数据质量降级。
- * - `degraded`：已观察到真实行情异常（如两源共同缺口且无独立停牌证据），或
- *   图表/行情使用降级路径。允许继续计算但需显著告警。
+ * - `research`：自定义请求包含尚无官方日历覆盖的年份时使用；当前 2011—2026
+ *   已具备官方日历，3/5/10/15 年快捷请求不再生成该状态。
+ * - `degraded`：旧结果存在两源共同缺口时的历史状态；当前严格获取链路会在计算前
+ *   阻断这类缺口，不再保存新的 degraded 结果。
  *
  * reasons 说明：
  * - `cross_provider_common_gap`：腾讯与新浪均缺少同一内部行情区间，且无独立
- *   停牌证据，触发 degraded。
+ *   停牌证据；当前新回测直接阻断，旧结果仍可按 degraded 读取。
  * - `calendar_coverage_partial`：请求区间内存在未覆盖正式交易日历的年份，
- *   仅触发 research（除非同时存在 cross_provider_common_gap，则升级为 degraded）。
+ *   自定义更早区间按 research 记录；快捷回测区间不会产生该原因。
  */
 export interface BacktestDataQuality {
   level: "strict" | "research" | "degraded";
@@ -742,7 +741,7 @@ export interface StockInfo {
   /**
    * 上市日期（YYYY-MM-DD）。
    * 仅在交易所目录接口返回该字段时填充；缺省时表示数据源未提供。
-   * 用于行情完整性检查区分"新上市股票的预期前置缺口"与"接口截断"。
+   * 用于行情完整性检查区分"新上市证券的预期前置缺口"与"接口截断"。
    */
   listingDate?: string;
 }
@@ -765,7 +764,8 @@ export type DataSourceHealthId =
   | "etf_directory"
   | "tencent_market"
   | "sina_market"
-  | "eastmoney_corporate_actions"
+  | "stock_corporate_actions"
+  | "etf_corporate_actions"
   | "eastmoney_suspensions"
   | "baidu_suspensions";
 

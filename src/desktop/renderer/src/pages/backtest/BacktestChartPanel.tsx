@@ -1,6 +1,14 @@
 import { DownloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Skeleton, Tooltip } from "antd";
-import ReactECharts from "echarts-for-react";
+import ReactEChartsCore from "echarts-for-react/lib/core";
+import * as echarts from "echarts/core";
+import { CandlestickChart, LineChart } from "echarts/charts";
+import {
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import type {
   BacktestCandlePeriod,
   BacktestChartMetric,
@@ -11,6 +19,15 @@ import {
   buildKlineOption,
   buildPerformanceOption,
 } from "./marketChartModel";
+
+echarts.use([
+  CandlestickChart,
+  LineChart,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 interface BacktestChartPanelProps {
   results: BacktestResult[];
@@ -133,7 +150,8 @@ export function BacktestChartPanel({
           className="chart-empty"
         />
       ) : (
-        <ReactECharts
+        <ReactEChartsCore
+          echarts={echarts}
           notMerge
           option={option}
           className="backtest-chart"

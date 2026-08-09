@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, App, Button, Form, Space } from "antd";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, App, Button, Form, Skeleton, Space } from "antd";
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,7 +12,6 @@ import {
   type BacktestResult,
   type BacktestWorkspaceState,
 } from "../api/client";
-import { BacktestChartPanel } from "./backtest/BacktestChartPanel";
 import { BacktestConfig } from "./backtest/BacktestConfig";
 import { BacktestDetailModal } from "./backtest/BacktestDetailModal";
 import { BacktestMetrics } from "./backtest/BacktestMetrics";
@@ -25,6 +24,12 @@ import { useBacktestWorkspace } from "./backtest/useBacktestWorkspace";
 import { useMarketBars } from "./backtest/useMarketBars";
 import { securityTypeForInstrument } from "../../../shared/instruments";
 import { beijingTimestamp } from "./_shared/format";
+
+const BacktestChartPanel = lazy(() =>
+  import("./backtest/BacktestChartPanel").then((module) => ({
+    default: module.BacktestChartPanel,
+  })),
+);
 
 export function BacktestPage() {
   const { message } = App.useApp();
@@ -52,6 +57,11 @@ export function BacktestPage() {
   const stocks = useQuery({
     queryKey: ["stocks"],
     queryFn: api.listAStocks,
+    staleTime: 60 * 60 * 1_000,
+  });
+  const etfs = useQuery({
+    queryKey: ["etfs"],
+    queryFn: api.listEtfs,
     staleTime: 60 * 60 * 1_000,
   });
   const experiments = useQuery({
@@ -84,16 +94,29 @@ export function BacktestPage() {
     onRestore: restoreWorkspace,
   });
 
-  const stockOptions = useMemo(
-    () =>
-      (stocks.data ?? [])
-        .filter((stock) => securityTypeForInstrument(stock) === "stock")
-        .map(({ symbol, name }) => ({
+  const instrumentOptions = useMemo(
+    () => {
+      const unique = new Map(
+        [...(stocks.data ?? []), ...(etfs.data ?? [])].map((instrument) => [
+          instrument.symbol,
+          instrument,
+        ]),
+      );
+      return [...unique.values()]
+        .map((instrument) => ({
+          symbol: instrument.symbol,
+          name: instrument.name,
+          securityType: securityTypeForInstrument(instrument),
+        }))
+        .sort((left, right) => left.symbol.localeCompare(right.symbol))
+        .map(({ symbol, name, securityType }) => ({
           value: symbol,
           label: name,
-          searchText: `${name} ${symbol}`.toLocaleLowerCase("zh-CN"),
-        })),
-    [stocks.data],
+          securityType,
+          searchText: `${name} ${symbol} ${securityType === "etf" ? "ETF 基金" : "A股 股票"}`.toLocaleLowerCase("zh-CN"),
+        }));
+    },
+    [etfs.data, stocks.data],
   );
 
   const runBacktest = useMutation({
@@ -350,39 +373,50 @@ export function BacktestPage() {
               disabled={viewingReadonly}
               rangePreset={rangePreset}
               rulesExpanded={rulesExpanded}
-              stockOptions={stockOptions}
-              stocksLoading={stocks.isLoading}
-              stocksError={stocks.isError}
+              instrumentOptions={instrumentOptions}
+              catalogsLoading={stocks.isLoading || etfs.isLoading}
+              catalogsError={stocks.isError || etfs.isError}
               symbolPickerOpen={symbolPickerOpen}
               submitting={runBacktest.isPending}
               onPickerOpenChange={setSymbolPickerOpen}
               onBeginDraft={beginDraft}
               onRangePresetChange={setRangePreset}
-              onRetryStocks={() => void stocks.refetch()}
+              onRetryCatalogs={() => {
+                void stocks.refetch();
+                void etfs.refetch();
+              }}
               onSubmit={(request) => runBacktest.mutate(request)}
             />
           }
           metrics={<BacktestMetrics results={results} />}
           chart={
-            <BacktestChartPanel
-              results={results}
-              chartMetric={chartMetric}
-              candlePeriod={candlePeriod}
-              chartSymbol={chartSymbol}
-              marketBars={marketBars}
-              exporting={exportExperiment.isPending}
-              canExport={Boolean(active.activeExperiment)}
-              onMetricChange={setChartMetric}
-              onPeriodChange={setCandlePeriod}
-              onSymbolChange={setChartSymbol}
-              onExport={() => {
-                if (active.activeExperiment) {
-                  exportExperiment.mutate(
-                    active.activeExperiment.experimentId,
-                  );
-                }
-              }}
-            />
+            <Suspense
+              fallback={
+                <section className="workspace-panel backtest-chart-panel">
+                  <Skeleton active paragraph={{ rows: 6 }} title={false} />
+                </section>
+              }
+            >
+              <BacktestChartPanel
+                results={results}
+                chartMetric={chartMetric}
+                candlePeriod={candlePeriod}
+                chartSymbol={chartSymbol}
+                marketBars={marketBars}
+                exporting={exportExperiment.isPending}
+                canExport={Boolean(active.activeExperiment)}
+                onMetricChange={setChartMetric}
+                onPeriodChange={setCandlePeriod}
+                onSymbolChange={setChartSymbol}
+                onExport={() => {
+                  if (active.activeExperiment) {
+                    exportExperiment.mutate(
+                      active.activeExperiment.experimentId,
+                    );
+                  }
+                }}
+              />
+            </Suspense>
           }
           currentExperiment={
             <CurrentExperimentTable

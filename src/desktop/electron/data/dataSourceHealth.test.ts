@@ -116,18 +116,19 @@ function dependencies(): DataSourceHealthDependencies {
 }
 
 describe("checkDataSourceHealth", () => {
-  it("七项真实来源都通过时返回 available，并分别验证停复牌主备源", async () => {
+  it("八项产品能力都通过时返回 available，并分别验证停复牌主备源", async () => {
     const deps = dependencies();
     const result = await checkDataSourceHealth(deps);
 
     expect(result.status).toBe("available");
-    expect(result.items).toHaveLength(7);
+    expect(result.items).toHaveLength(8);
     expect(result.items.map((item) => item.id)).toEqual([
       "a_stock_directory",
       "etf_directory",
       "tencent_market",
       "sina_market",
-      "eastmoney_corporate_actions",
+      "stock_corporate_actions",
+      "etf_corporate_actions",
       "eastmoney_suspensions",
       "baidu_suspensions",
     ]);
@@ -155,7 +156,7 @@ describe("checkDataSourceHealth", () => {
     );
   });
 
-  it("ETF 目录明确显示新浪单一主源", async () => {
+  it("ETF 目录明确显示新浪主源与官方校验备用", async () => {
     const deps = dependencies();
     const result = await checkDataSourceHealth(deps);
 
@@ -163,9 +164,53 @@ describe("checkDataSourceHealth", () => {
       .toMatchObject({
         status: "available",
         source: "新浪 ETF",
-        route: "新浪财经单一主源",
-        detail: expect.stringContaining("新浪目录"),
+        route: "新浪主源 + 沪深交易所官方校验 / 整段备用",
+        detail: expect.stringContaining("官方目录校验"),
       });
+  });
+
+  it("新浪目录失败后使用官方目录时显示 degraded", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.fetchDomesticEtfUniverse).mockResolvedValueOnce({
+      rows: ETFS,
+      source: "沪深交易所官方 ETF 目录",
+      primarySource: "sina",
+      fallbackUsed: true,
+      fallbackReason: "新浪 HTTP 503",
+      fetchedAt: NOW.toISOString(),
+    });
+
+    const result = await checkDataSourceHealth(deps);
+
+    expect(result.status).toBe("degraded");
+    expect(result.items.find((item) => item.id === "etf_directory"))
+      .toMatchObject({
+        status: "degraded",
+        fallbackReason: "新浪 HTTP 503",
+        detail: expect.stringContaining("使用沪深交易所官方完整目录"),
+      });
+  });
+
+  it("公司行动任一来源失败时显示 degraded 与失败原因", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.fetchCorporateActions).mockResolvedValueOnce({
+      rows: [{ date: "2026-06-26" }],
+      reportedActions: [],
+      provenance: {
+        ...PROVENANCE,
+        fallbackReason: "同花顺 F10 校验源失败：HTTP 503",
+      },
+    });
+
+    const result = await checkDataSourceHealth(deps);
+
+    expect(result.status).toBe("degraded");
+    expect(
+      result.items.find((item) => item.id === "stock_corporate_actions"),
+    ).toMatchObject({
+      status: "degraded",
+      fallbackReason: "同花顺 F10 校验源失败：HTTP 503",
+    });
   });
 
   it("单点停复牌接口失败时返回结构化 unavailable，不掩盖其他来源", async () => {
@@ -178,7 +223,7 @@ describe("checkDataSourceHealth", () => {
 
     expect(result.status).toBe("unavailable");
     expect(result.items.filter((item) => item.status === "available"))
-      .toHaveLength(6);
+      .toHaveLength(7);
     expect(
       result.items.find((item) => item.id === "eastmoney_suspensions"),
     ).toMatchObject({

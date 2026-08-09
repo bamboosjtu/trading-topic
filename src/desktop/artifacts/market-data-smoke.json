@@ -1,21 +1,20 @@
 {
-  "executedAt": "2026-08-08T05:25:06.814Z",
+  "executedAt": "2026-08-09T04:55:34.857Z",
   "requestRange": {
     "startDate": "2026-07-20",
     "endDate": "2026-07-24"
   },
   "instrumentCatalog": {
-    "etfCount": 1624,
+    "etfCount": 1600,
     "verifiedSymbols": [
       "510300",
       "159915"
     ],
     "provenance": {
-      "source": "新浪财经境内交易所 ETF 代码表",
-      "primarySource": "eastmoney",
-      "fallbackUsed": true,
-      "fallbackReason": "fetch failed",
-      "fetchedAt": "2026-08-08T05:25:04.037Z"
+      "source": "新浪财经 ETF 主目录；沪深交易所官方目录校验并补全（重合 1600/1600）",
+      "primarySource": "sina",
+      "fallbackUsed": false,
+      "fetchedAt": "2026-08-09T04:55:20.932Z"
     }
   },
   "checks": [
@@ -99,8 +98,145 @@
       "requestedCutoff": "2026-08-07",
       "dataCutoff": "2026-08-07",
       "fallbackUsed": false
+    },
+    {
+      "label": "差异化分红官方校准回归向量",
+      "symbol": "600900",
+      "source": "东方财富公司行动 + 同花顺 F10 实施记录合并；分红重合 17 条、东财独有 0 条、同花顺独有 0 条；官方差异化分红校准 600900:2016-07-19（巨潮资讯公告 1202468389）；配股重合 0 条、东财独有 0 条、同花顺独有 0 条",
+      "requestRange": "2011-07-25..2026-07-24",
+      "officialDocumentId": "1202468389",
+      "exDate": "2016-07-19",
+      "recordDate": "2016-07-18",
+      "secondaryMarketPerShare": 0.4
+    },
+    {
+      "label": "历史停牌回归向量",
+      "symbols": [
+        "601398",
+        "601857"
+      ],
+      "source": "东方财富个股日历（历史停牌事件）",
+      "requestRange": "2011-07-25..2026-07-24",
+      "verifiedDates": [
+        "601398:2011-11-29",
+        "601398:2012-02-23",
+        "601857:2011-10-20",
+        "601857:2012-05-23",
+        "601857:2013-08-27"
+      ],
+      "returnedRows": 6
+    },
+    {
+      "label": "15 年严格行情完整性",
+      "symbol": "601398",
+      "source": "tencent",
+      "startDate": "2011-07-25",
+      "dataCutoff": "2026-07-24",
+      "rows": 3640,
+      "errorIssues": 0
+    },
+    {
+      "label": "15 年严格行情完整性",
+      "symbol": "601857",
+      "source": "tencent",
+      "startDate": "2011-07-25",
+      "dataCutoff": "2026-07-24",
+      "rows": 3640,
+      "errorIssues": 0
     }
   ],
+  "sourceHealth": {
+    "checkedAt": "2026-08-09T04:55:30.894Z",
+    "status": "available",
+    "items": [
+      {
+        "id": "a_stock_directory",
+        "capability": "沪深京 A 股目录",
+        "route": "上交所 + 深交所 + 北交所复合主源",
+        "source": "上交所、深交所、北交所 A 股代码表（产品域独立适配）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:26.366Z",
+        "latencyMs": 2658,
+        "detail": "5539 只，三地复合目录通过完整性门槛"
+      },
+      {
+        "id": "etf_directory",
+        "capability": "境内 ETF 目录",
+        "route": "新浪主源 + 沪深交易所官方校验 / 整段备用",
+        "source": "新浪财经 ETF 主目录；沪深交易所官方目录校验并补全（重合 1600/1600）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:26.610Z",
+        "latencyMs": 244,
+        "detail": "1600 只，新浪主目录与沪深交易所官方目录校验通过"
+      },
+      {
+        "id": "tencent_market",
+        "capability": "不复权 / 前复权日线",
+        "route": "腾讯主源",
+        "source": "腾讯财经 newfqkline（产品域独立适配）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:23.847Z",
+        "latencyMs": 135,
+        "detail": "600519 2026-07-19..2026-08-08：不复权 15 行，前复权 15 行",
+        "dataCutoff": "2026-08-07"
+      },
+      {
+        "id": "sina_market",
+        "capability": "不复权 / 前复权日线",
+        "route": "新浪整段备用",
+        "source": "新浪财经 K 线（产品域独立适配）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:24.123Z",
+        "latencyMs": 410,
+        "detail": "600519 2026-07-19..2026-08-08：不复权 15 行，前复权 15 行",
+        "dataCutoff": "2026-08-07"
+      },
+      {
+        "id": "stock_corporate_actions",
+        "capability": "分红送转 / 配股",
+        "route": "东方财富 + 同花顺已实施记录合并 / 互为整段备用",
+        "source": "东方财富公司行动 + 同花顺 F10 实施记录合并；分红重合 5 条、东财独有 0 条、同花顺独有 1 条；配股重合 0 条、东财独有 0 条、同花顺独有 0 条",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:28.124Z",
+        "latencyMs": 311,
+        "detail": "600519 2023-08-09..2026-08-08：分红送转 6 条，配股 0 条",
+        "dataCutoff": "2026-06-26"
+      },
+      {
+        "id": "etf_corporate_actions",
+        "capability": "ETF 现金分红",
+        "route": "新浪累计分红 + 东方财富基金 F10 记录合并 / 互为整段备用",
+        "source": "新浪 ETF 累计分红 + 东方财富基金 F10 实施记录合并；重合 3 条，新浪独有 0 条，东财独有 0 条",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:29.553Z",
+        "latencyMs": 222,
+        "detail": "510050 2023-08-09..2026-08-08：现金分红 3 条",
+        "dataCutoff": "2025-12-17"
+      },
+      {
+        "id": "eastmoney_suspensions",
+        "capability": "证券停复牌",
+        "route": "东方财富按证券历史事件主源",
+        "source": "东方财富个股日历（历史停牌事件）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:30.831Z",
+        "latencyMs": 77,
+        "detail": "603221 2026-08-03..2026-08-06：1 条，证券级历史全分页、事件类型和全天时段解析通过",
+        "dataCutoff": "2026-08-06"
+      },
+      {
+        "id": "baidu_suspensions",
+        "capability": "证券停复牌备用",
+        "route": "百度股市通独立备用源",
+        "source": "百度股市通交易提醒（停复牌）",
+        "status": "available",
+        "checkedAt": "2026-08-09T04:55:30.894Z",
+        "latencyMs": 139,
+        "detail": "603221 2026-08-03..2026-08-06：1 条，独立备用源日期覆盖和分页通过",
+        "dataCutoff": "2026-08-06"
+      }
+    ]
+  },
   "fallback": {
     "source": "sina",
     "primarySource": "tencent",

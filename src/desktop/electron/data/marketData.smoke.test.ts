@@ -17,6 +17,9 @@ import {
 import { fetchDomesticEtfUniverse } from "./stockUniverse";
 import { latestWeekdayCandidate } from "../domain/marketCalendar";
 import { addDays } from "../domain/dateUtils";
+import { checkDataSourceHealth } from "./dataSourceHealth";
+import { fetchVerifiedCorporateActions } from "./corporateActions";
+import { fetchEastmoneyTradingSuspensions } from "./tradingSuspensions";
 
 const RUN_SMOKE = process.env["RUN_MARKET_SMOKE"] === "1";
 const START_DATE = "2026-07-20";
@@ -30,7 +33,7 @@ const CASES = [
 
 describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
   it(
-    "验证沪深京与 ETF、两源不复权/前复权、整段兜底及来源落库",
+    "验证目录、行情、公司行动、停复牌主备路由及来源落库",
     async () => {
       const checks: Array<Record<string, unknown>> = [];
       const etfUniverse = await fetchDomesticEtfUniverse();
@@ -250,6 +253,117 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
         fallbackUsed: currentPrices.provenance.fallbackUsed,
       });
 
+      const sourceHealth = await checkDataSourceHealth();
+      if (sourceHealth.status !== "available") {
+        const failures = sourceHealth.items
+          .filter((item) => item.status !== "available")
+          .map(
+            (item) =>
+              `${item.id}=${item.status}：${item.detail}${item.fallbackReason ? `；主源失败：${item.fallbackReason}` : ""}`,
+          )
+          .join("；");
+        throw new Error(`数据源健康门禁未通过：${failures}`);
+      }
+      expect(sourceHealth.items).toHaveLength(8);
+      expect(sourceHealth.items.map((item) => item.id)).toEqual(
+        expect.arrayContaining([
+          "etf_directory",
+          "stock_corporate_actions",
+          "etf_corporate_actions",
+          "eastmoney_suspensions",
+          "baidu_suspensions",
+        ]),
+      );
+
+      const differentiatedDividend = await fetchVerifiedCorporateActions(
+        "600900",
+        "stock",
+        longRangeStart,
+        longRangeEnd,
+      );
+      expect(differentiatedDividend.rows).toContainEqual(
+        expect.objectContaining({
+          date: "2016-07-19",
+          recordDate: "2016-07-18",
+          paymentDate: "2016-07-19",
+          perShare: 0.4,
+          transferRatio: 0,
+          bonusRatio: 0,
+        }),
+      );
+      expect(differentiatedDividend.provenance.source).toContain(
+        "1202468389",
+      );
+      checks.push({
+        label: "差异化分红官方校准回归向量",
+        symbol: "600900",
+        source: differentiatedDividend.provenance.source,
+        requestRange: `${longRangeStart}..${longRangeEnd}`,
+        officialDocumentId: "1202468389",
+        exDate: "2016-07-19",
+        recordDate: "2016-07-18",
+        secondaryMarketPerShare: 0.4,
+      });
+
+      const historicalSuspensions = await fetchEastmoneyTradingSuspensions(
+        ["601398", "601857"],
+        longRangeStart,
+        longRangeEnd,
+      );
+      const historicalRegressionVector = [
+        ["601398", "2011-11-29"],
+        ["601398", "2012-02-23"],
+        ["601857", "2011-10-20"],
+        ["601857", "2012-05-23"],
+        ["601857", "2013-08-27"],
+      ] as const;
+      for (const [symbol, date] of historicalRegressionVector) {
+        expect(historicalSuspensions.rows).toContainEqual(
+          expect.objectContaining({
+            symbol,
+            startDate: date,
+            endDate: date,
+          }),
+        );
+      }
+      checks.push({
+        label: "历史停牌回归向量",
+        symbols: ["601398", "601857"],
+        source: historicalSuspensions.source,
+        requestRange: `${longRangeStart}..${longRangeEnd}`,
+        verifiedDates: historicalRegressionVector.map(
+          ([symbol, date]) => `${symbol}:${date}`,
+        ),
+        returnedRows: historicalSuspensions.rows.length,
+      });
+      for (const symbol of ["601398", "601857"] as const) {
+        const strictHistory = await fetchWithProviderFallback<PricePoint>(
+          "prices",
+          symbol,
+          longRangeStart,
+          longRangeEnd,
+          tencentProvider,
+          sinaProvider,
+          undefined,
+          new Date("2026-07-25T08:00:00Z"),
+          historicalSuspensions.rows.filter((row) => row.symbol === symbol),
+        );
+        expect(
+          strictHistory.issues.filter((issue) => issue.severity === "error"),
+        ).toEqual([]);
+        expect(strictHistory.rows.length).toBeGreaterThan(3_000);
+        expect(strictHistory.rows.at(-1)?.date).toBe(longRangeEnd);
+        checks.push({
+          label: "15 年严格行情完整性",
+          symbol,
+          source: strictHistory.provenance.source,
+          startDate: longRangeStart,
+          dataCutoff: strictHistory.dataCutoff,
+          rows: strictHistory.rows.length,
+          errorIssues: 0,
+        });
+      }
+
       const databasePath = join(
         tmpdir(),
         `stock-income-market-smoke-${process.pid}-${Date.now()}.sqlite`,
@@ -305,6 +419,7 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
               },
             },
             checks,
+            sourceHealth,
             fallback: fallback.provenance,
             persistence: "passed",
           },
