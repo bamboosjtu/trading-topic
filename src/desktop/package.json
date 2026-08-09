@@ -16,7 +16,7 @@
     "prebuild": "npm run check:market-calendar && npm run check:domain-boundaries",
     "build": "electron-vite build",
     "rebuild": "electron-builder install-app-deps",
-    "pack:portable": "npm run build && electron-builder --win portable --x64",
+    "pack:portable": "npm run build && node scripts/pack-portable.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "npm run check:domain-boundaries",
     "test": "vitest run --project=unit --project=contract --project=integration",

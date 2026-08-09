@@ -15,6 +15,7 @@ import type {
   PendingDividendDiscoveryIssue,
   PendingDividendDiscoveryResult,
   SecurityTradingInterruption,
+  SecurityTradingInterruptionView,
   SimpleBacktestResult,
   BacktestWorkspaceState,
   IncomeCalendarQuery,
@@ -1459,10 +1460,22 @@ export class AppService {
   }
 
   /** P1：列出全部证券级停复牌证据，可选按 symbol 过滤。 */
-  listTradingInterruptions(symbol?: string): SecurityTradingInterruption[] {
-    return symbol
+  listTradingInterruptions(
+    symbol?: string,
+  ): SecurityTradingInterruptionView[] {
+    const names = new Map(
+      this.localStockUniverse().map((instrument) => [
+        instrument.symbol,
+        instrument.name,
+      ]),
+    );
+    const interruptions = symbol
       ? this.database.listTradingInterruptionsBySymbol(symbol)
       : this.database.listTradingInterruptions();
+    return interruptions.map((interruption) => ({
+      ...interruption,
+      securityName: names.get(interruption.symbol) ?? "未收录",
+    }));
   }
 
   /** P1：手工录入停复牌证据。 */

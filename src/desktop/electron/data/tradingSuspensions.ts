@@ -79,6 +79,11 @@ function dateValue(value: unknown): string {
   return validDate(valueText) ? valueText : "";
 }
 
+function clockValue(value: unknown): string | null {
+  const match = textValue(value).match(/\b(\d{2}):(\d{2})(?::(\d{2}))?\b/);
+  return match ? `${match[1]}:${match[2]}:${match[3] ?? "00"}` : null;
+}
+
 function firstValue(
   row: Record<string, unknown>,
   fields: readonly string[],
@@ -159,7 +164,7 @@ export function parseSuspensionRow(
   fetchedAt: string,
   observedThroughDate?: string,
 ): SecurityTradingInterruption | null {
-  const startDate = dateValue(
+  let startDate = dateValue(
     firstValue(row, [
       "SUSPEND_START_DATE",
       "SUSPEND_START_TIME",
@@ -178,10 +183,29 @@ export function parseSuspensionRow(
   const resumeDate = dateValue(
     firstValue(row, ["RESUME_DATE", "PREDICT_RESUME_DATE"]),
   );
-  const endDate =
+  let endDate =
     explicitEndDate ||
     (resumeDate ? addDays(resumeDate, -1) : observedThroughDate ?? "");
   if (!endDate || endDate < startDate) return null;
+
+  // 日线完整性只能使用覆盖完整交易日的证据。盘中停牌若被压成日期区间，
+  // 会错误地掩盖当天本应存在的收盘行情；边界日未覆盖全天时将其移出区间。
+  const startClock = clockValue(row["SUSPEND_START_TIME"]);
+  const endClock = clockValue(row["SUSPEND_END_TIME"]);
+  if (startClock && startClock > "09:30:00" && startClock <= "15:00:00") {
+    startDate = addDays(startDate, 1);
+  }
+  if (endClock && endClock >= "09:30:00" && endClock < "15:00:00") {
+    endDate = addDays(endDate, -1);
+  }
+  if (
+    !startClock &&
+    !endClock &&
+    /半天|小时/.test(textValue(row["SUSPEND_EXPIRE"]))
+  ) {
+    return null;
+  }
+  if (endDate < startDate) return null;
 
   const sourceId =
     firstValue(row, ["NOTICE_DATE", "ANNOUNCE_DATE"]) ||
@@ -213,7 +237,22 @@ export function parseTradingSuspensions(
       parseSuspensionRow(row, symbol, fetchedAt, observedThroughDate),
     )
     .filter((row): row is SecurityTradingInterruption => row !== null);
-  if (rawRows.length > 0 && interruptions.length === 0) {
+  const recognizedStartFields = rawRows.some((row) =>
+    Boolean(
+      dateValue(
+        firstValue(row, [
+          "SUSPEND_START_DATE",
+          "SUSPEND_START_TIME",
+          "SUSPEND_DATE",
+        ]),
+      ),
+    ),
+  );
+  if (
+    rawRows.length > 0 &&
+    interruptions.length === 0 &&
+    !recognizedStartFields
+  ) {
     throw new Error(
       `停复牌响应存在 ${rawRows.length} 行数据，但未识别到有效日期字段（可能字段命名已变化）`,
     );

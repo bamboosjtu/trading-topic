@@ -100,6 +100,7 @@ export type {
   PerformancePeriod,
   PositionView,
   SecurityTradingInterruption,
+  SecurityTradingInterruptionView,
   SecurityType,
   SimpleBacktestRow,
   StockInfo,

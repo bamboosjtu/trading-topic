@@ -713,6 +713,12 @@ export interface SecurityTradingInterruption {
   fetchedAt: string;
 }
 
+/** 设置页展示模型；名称来自本地证券目录，不写入停复牌事实表。 */
+export interface SecurityTradingInterruptionView
+  extends SecurityTradingInterruption {
+  securityName: string;
+}
+
 interface HealthResponse {
   status: "ok";
   version: string;
@@ -1011,7 +1017,9 @@ export interface DesktopApi {
   ): Promise<LedgerEntry>;
   ignorePendingDividend(id: string): Promise<void>;
   /** P1：列出全部证券级停复牌证据，可选按 symbol 过滤。 */
-  listTradingInterruptions(symbol?: string): Promise<SecurityTradingInterruption[]>;
+  listTradingInterruptions(
+    symbol?: string,
+  ): Promise<SecurityTradingInterruptionView[]>;
   /** P1：手工录入停复牌证据（如公告披露的临时停牌）。 */
   addTradingInterruption(
     input: Omit<SecurityTradingInterruption, "fetchedAt"> & {

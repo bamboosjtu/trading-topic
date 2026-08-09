@@ -235,6 +235,36 @@ describe("AppService 停复牌自动同步", () => {
   });
 });
 
+describe("AppService 停复牌展示", () => {
+  it("用本地证券目录补充名称且不污染持久化事实", async () => {
+    const { service, database } = await serviceWithDatabase();
+    seedStockUniverse(
+      database,
+      [{ symbol: "601857", name: "中国石油", securityType: "stock" }],
+      "official-exchanges",
+      "2026-08-08T00:00:00Z",
+    );
+    database.insertTradingInterruption({
+      symbol: "601857",
+      startDate: "2013-09-09",
+      endDate: "2013-09-09",
+      reason: "suspension",
+      source: EASTMONEY_SUSPEND_SOURCE,
+      fetchedAt: "2026-08-08T00:00:00Z",
+    });
+
+    expect(service.listTradingInterruptions()).toEqual([
+      expect.objectContaining({
+        symbol: "601857",
+        securityName: "中国石油",
+      }),
+    ]);
+    expect(database.listTradingInterruptions()[0]).not.toHaveProperty(
+      "securityName",
+    );
+  });
+});
+
 describe("AppService 股票目录", () => {
   it("七天内直接使用完整 A 股 SQLite 快照，不重复联网", async () => {
     const { service, database } = await serviceWithDatabase();

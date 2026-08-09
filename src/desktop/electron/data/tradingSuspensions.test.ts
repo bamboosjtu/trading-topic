@@ -6,6 +6,7 @@ import {
   fetchTradingSuspensions,
   parseBaiduTradingSuspensions,
   parseSuspensionRow,
+  parseTradingSuspensions,
 } from "./tradingSuspensions";
 
 const NOW = new Date("2026-08-08T05:00:00.000Z");
@@ -63,6 +64,26 @@ describe("停复牌主备适配器", () => {
       endDate: "2026-08-08",
       source: EASTMONEY_SUSPEND_SOURCE,
     });
+  });
+
+  it("东方财富盘中停牌不伪装成整日行情缺口证据", () => {
+    const raw = {
+      SECURITY_CODE: "601857",
+      SECURITY_NAME_ABBR: "中国石油",
+      SUSPEND_START_TIME: "2013-09-09 09:30:00",
+      SUSPEND_END_TIME: "2013-09-09 11:30:00",
+      SUSPEND_EXPIRE: "停牌半天",
+    };
+    const row = parseSuspensionRow(
+      raw,
+      "601857",
+      NOW.toISOString(),
+    );
+
+    expect(row).toBeNull();
+    expect(
+      parseTradingSuspensions([raw], "601857", NOW.toISOString()),
+    ).toEqual([]);
   });
 
   it("百度把复牌日换算成最后停牌日，并跳过未闭合区间", () => {

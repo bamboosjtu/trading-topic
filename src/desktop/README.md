@@ -1,8 +1,6 @@
 # 投资研究实验室 R1 桌面应用
 
-R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见
-[PRD_R1.md](../../docs/product/PRD_R1.md)，进程与隔离边界见
-[ARCHITECTURE.md](../../docs/product/ARCHITECTURE.md)。
+R1 是纯 Node.js/TypeScript 的本地 Electron 应用。范围见 [PRD_R1.md](../../docs/product/PRD_R1.md)，进程与隔离边界见 [ARCHITECTURE.md](../../docs/product/ARCHITECTURE.md)。
 
 ## 技术栈
 
@@ -40,7 +38,7 @@ npm run build
 # 发布前受控联网验证沪深京、ETF、腾讯/新浪和来源落库；
 # 成功证据写入并保留在 artifacts/market-data-smoke.json
 npm run smoke:market-data
-# 生成 release/投资研究实验室-<版本>-portable-x64.exe
+# 生成 release/portable-build-<时间戳>-<进程号>/投资研究实验室-<版本>-portable-x64.exe
 npm run pack:portable
 ```
 
@@ -48,8 +46,7 @@ npm run pack:portable
 
 ## 已实现的 R1 能力
 
-- 沪深京全 A 股与境内交易所 ETF 代码/名称检索（完整分页目录、本地完整快照）；
-  回测只使用 A 股，实盘录入按资产类型筛选股票或 ETF；单次回测最多 10 个标的；
+- 沪深京全 A 股与境内交易所 ETF 代码/名称检索（完整分页目录、本地完整快照）；回测只使用 A 股，实盘录入按资产类型筛选股票或 ETF；单次回测最多 10 个标的；
 - 每次点击创建一份不可变回测试验，相同参数重跑也保留独立历史记录；
 - 历史回测分“运行回测 / 历史结果”，当前对比只展示同一次实验的标的；
 - 退出后恢复上次标的、参数、图表选项和当前实验；首次读取失败时暂停自动保存，可重试或明确进入默认工作区；

@@ -34,6 +34,7 @@ import {
   type DirectoryProvenance,
   type MarketCalendarDiagnostic,
   type SecurityTradingInterruption,
+  type SecurityTradingInterruptionView,
 } from "../api/client";
 import { beijingTimestamp } from "./_shared/format";
 
@@ -256,12 +257,17 @@ function TradingInterruptionSection() {
     onError: (error) => message.error(error.message),
   });
 
-  const columns: ColumnsType<SecurityTradingInterruption> = [
+  const columns: ColumnsType<SecurityTradingInterruptionView> = [
     {
       title: "证券代码",
       dataIndex: "symbol",
       width: 110,
       render: (v: string) => <span className="tabular-nums">{v}</span>,
+    },
+    {
+      title: "证券名称",
+      dataIndex: "securityName",
+      width: 140,
     },
     {
       title: "起始日",
@@ -285,7 +291,7 @@ function TradingInterruptionSection() {
     {
       title: "操作",
       width: 80,
-      render: (_: unknown, record: SecurityTradingInterruption) => (
+      render: (_: unknown, record: SecurityTradingInterruptionView) => (
         <Popconfirm
           title="确认删除这条停牌证据？"
           onConfirm={() =>

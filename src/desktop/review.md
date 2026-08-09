@@ -12,6 +12,31 @@
 
 本轮已修复自动停复牌：删除对已下线 `RPT_SUSPENDDATA` 的调用，新增专用市场级批量适配器直连 `RPT_CUSTOM_SUSPEND_DATA_INTERFACE` 并执行全分页；主源失败后整段切换到不同域名和风控面的百度股市通 `notify_suspend`。服务层只在来源声明的完整覆盖范围内原子替换自动证据，人工公告与范围外历史保持不变。
 
+## 浏览器证据复核与打包修复
+
+### 停复牌证据复核
+
+2026-08-08 使用浏览器进入上交所官方“股票和可转债停复牌信息”页面、上交所站内公告搜索和深交所公告正文页，并按官方页面实际使用的 `GW_PL_JYTS_TFPXX` 查询口径逐条复核设置页截图中的六条记录；东方财富只作为发现源，交易所页面与公告作为独立证据。
+
+| 证券代码 | 证券名称 | 设置页区间 | 官方核验结果 | 结论 |
+| --- | --- | --- | --- | --- |
+| 000002 | 万科A | 2017-07-17..2017-07-17 | 深交所 2017-07-15 发布重大事项停牌公告，2017-07-18 发布复牌公告；东财原始时段为 09:30..15:00 | 整日区间准确 |
+| 600900 | 长江电力 | 2022-10-26..2022-10-26 | 上交所官方停复牌口径为全天、起止日均为 2022-10-26，原因“重要公告”；站内搜索命中同日停牌公告 | 整日区间准确 |
+| 601166 | 兴业银行 | 2016-07-25..2016-07-29 | 上交所官方起止日为 2016-07-25..2016-07-29，类型为连续停牌，2016-08-01 复牌 | 连续区间准确 |
+| 601288 | 农业银行 | 2012-06-08..2012-06-08 | 上交所官方口径为全天停牌，原因“召开股东大会” | 整日区间准确 |
+| 601398 | 工商银行 | 2012-05-31..2012-05-31 | 上交所官方口径为全天停牌，原因“召开股东大会” | 整日区间准确 |
+| 601857 | 中国石油 | 2013-09-09..2013-09-09 | 上交所官方 `stopTime=AM`，说明“自下午开市时复牌”；东财原始时段为 09:30..11:30、`停牌半天` | 事件存在，但不能作为整日日线缺口豁免 |
+
+浏览器证据入口为[上交所股票和可转债停复牌信息](https://www.sse.com.cn/disclosure/dealinstruc/suspension/stock/)、[长江电力 2022-10-26 停牌公告](https://www.sse.com.cn/disclosure/listedinfo/announcement/c/new/2022-10-26/600900_20221026_1_tToNYc0Z.pdf)、[万科A重大事项停牌公告](https://www.szse.cn/disclosure/listed/bulletinDetail/index.html?aabc5cd9-b873-430b-a34c-2ef61f4e40e9)和[万科A复牌公告](https://www.szse.cn/disclosure/listed/bulletinDetail/index.html?7b35e2c9-51c3-4efd-8452-cfad0c9c41cc)。
+
+解析器现按 09:30..15:00 的完整交易日边界归一化证据：首日从盘中才停牌时移除首日，末日在收盘前已复牌时移除末日，没有任何完整交易日的事件不写入日线完整性证据。设置页新增“证券名称”列，名称在服务层由本地证券目录投影，停复牌事实表、备份格式和数据库 Schema 均不增加名称列。
+
+### 打包失败修复
+
+截图中的失败发生在 Vite 构建完成之后：electron-builder 重用固定的 `release/win-unpacked`，尝试覆盖旧 `resources/app.asar` 时遇到 Windows `EBUSY` 文件锁。`pack:portable` 现由 `scripts/pack-portable.mjs` 为每次运行创建 `release/portable-build-<UTC时间戳>-<进程号>/`，不删除旧目录、不终止正在运行的应用，也不再覆盖可能被占用的旧 ASAR。
+
+真实打包于 2026-08-08 22:55（Asia/Shanghai）成功完成，产物为 `release/portable-build-20260808T145149Z-19196/投资研究实验室-0.1.0-portable-x64.exe`，大小 87,007,230 字节，SHA-256 为 `14F282F334514D256DC372577E64718B9E40A6B1BA3B6F9FB15A6E062DDB2D62`；对应 `win-unpacked/resources/app.asar` 存在，未再出现 `EBUSY`。
+
 ## 数据源可用性验证
 
 ### 验证方法
@@ -115,8 +140,9 @@ AKShare `1.18.82` 的有效实现改用 `reportName=RPT_CUSTOM_SUSPEND_DATA_INTE
 | 设置页最终健康检查真实联网验收 | PASS；7/7 available，新浪 ETF 1,624 只，东财与百度停复牌固定样本各 1 条 |
 | 停复牌受控主源故障联网验收 | PASS；东财 HTTP 503 后切换百度，返回 1 条证据并保留 `fallbackReason` |
 | `npm run typecheck` | PASS |
-| `npm test` | PASS；22 files / 249 tests |
+| `npm test` | PASS；22 files / 251 tests |
 | `npm run build` | PASS；main、preload、renderer、backup worker 均生成 |
+| `npm run pack:portable` | PASS；独立输出目录真实生成 87,007,230 字节 portable x64 可执行文件，未出现 `app.asar EBUSY` |
 | `npm run check:domain-boundaries` | PASS；产品运行时没有指向 `labs/` 或 `research/` 的引用 |
 
 本轮没有执行 `npm run smoke:market-data`：现有脚本会重写 `artifacts/market-data-smoke.json`，且尚未包含新的停复牌主备端点。改用不落盘的产品适配器完成真实联网验收，并额外覆盖三交易所目录、东方财富公司行动、停复牌主源、停复牌备用源和受控主源故障切换；历史 smoke 证据文件保持不变。
