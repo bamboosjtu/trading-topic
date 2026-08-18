@@ -1,0 +1,80 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "TENDER EVIDENCE"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 760, 47]
+    content: {style: "$slideTitle", wrap: false, text: "代表项目覆盖GPU、全栈、租赁、变电站与EPC"}
+  - elementId: warning
+    elementType: text
+    bounds: [818, 49, 88, 32]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$primary", align: [right, middle], text: "金额不可相加"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: tender-table
+    elementType: table
+    bounds: [54, 127, 852, 326]
+    columnWidths: [0.34, 0.17, 0.27, 0.22]
+    rowHeights: [0.12, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11]
+    style: "$researchTable"
+    rows:
+      - - text: "项目"
+        - text: "采购形态"
+        - text: "公开金额及口径"
+        - text: "阶段"
+      - - text: "中国科技云GPU服务器"
+        - text: "硬件"
+        - text: "中标798万元"
+        - text: "2025-05 中标"
+      - - text: "全总AI行业模型算力租用"
+        - text: "整包服务"
+        - text: "中标686万元"
+        - text: "2025-10 中标"
+      - - text: "教育部GPU算力服务"
+        - text: "年租服务"
+        - text: "中标522.9万元"
+        - text: "2026-06 中标"
+      - - text: "协和医院智算一体化平台"
+        - text: "全栈平台"
+        - text: "中标1569.7万元"
+        - text: "2026-06 中标"
+      - - text: "中国邮政AI服务器 / 集群"
+        - text: "硬件+网络"
+        - text: "含税最高限价1440 / 5185万元"
+        - text: "2025-04 招标"
+      - - text: "南方电网AI中试基础设施一期"
+        - text: "框架全栈"
+        - text: "框架10643.54万元"
+        - text: "2025-10 结果"
+      - - text: "移动苏州汾湖智算中心一期"
+        - text: "EPC"
+        - text: "合同估算17090.33万元"
+        - text: "2025-03 招标"
+      - - text: "联通吴江智算中心机房楼"
+        - text: "EPC"
+        - text: "合同估算27769.29万元"
+        - text: "2026-07 招标"
+  - elementId: source
+    elementType: text
+    bounds: [54, 463, 822, 41]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.ccgp.gov.cn/cggg/zygg/zbgg/202505/t20250507_24550380.htm">中国政府采购网（中国科技云）</a>、<a href="https://www.ccgp.gov.cn/cggg/zygg/zbgg/202510/t20251022_25550107.htm">全总算力租用</a>、<a href="https://www.ccgp.gov.cn/cggg/zygg/zbgg/202606/t20260626_26820338.htm">协和医院</a>、<a href="https://www.chinapost.com.cn/xhtml1/report/25042/3329-1.htm">中国邮政</a>；</p>
+        <p><a href="https://www.bidding.csg.cn/zbgg/1200408768.jhtml">南方电网</a>、<a href="https://jsggzy.jszwfw.gov.cn/jyxx/003001/003001001/20250307/523f8485-42f0-43f9-b8b2-3764c513651c.html">江苏公共资源（苏州）</a>。预算、限价、框架、中标和合同估算严格分列。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "12"}

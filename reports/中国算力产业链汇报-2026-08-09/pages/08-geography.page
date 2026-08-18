@@ -1,0 +1,114 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "GEOGRAPHY & TASK FIT"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "西部承接训练与离线任务，东部仍控制低时延需求"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: region-chart
+    elementType: chart
+    bounds: [54, 132, 382, 312]
+    data:
+      cols: [region, share]
+      rows:
+        - ["东部", 55.9]
+        - ["西部", 32.6]
+        - ["中部", 10.6]
+        - ["东北", 0.9]
+    series:
+      - type: pie
+        encode: {category: region, value: share}
+        innerRadius: 0.60
+        startAngle: 270
+        fill: ["#1769AA", "#4E8FBD", "#9BC2DD", "#D9E1E8"]
+        border: {style: solid, width: 1, color: "#FFFFFF"}
+        dataLabels: {show: true, content: percentage, fontSize: 14, color: "$navy", numberFormat: "0.0%"}
+    legend: {show: true, position: bottom, fontSize: 13, color: "$muted"}
+    fontFamily: "Microsoft YaHei"
+  - elementId: chart-label
+    elementType: text
+    bounds: [128, 247, 232, 68]
+    content:
+      align: [center, middle]
+      text: |
+        <p><span style="font-size:32px; color:$navy;"><strong>2026 H1</strong></span></p>
+        <p><span style="font-size:13px; color:$muted;">智能算力区域结构</span></p>
+  - elementId: right-head
+    elementType: text
+    bounds: [480, 130, 426, 28]
+    content: {style: "$bodyStrong", text: "8个国家枢纽 · 10个数据中心集群"}
+  - elementId: hub-line
+    elementType: shape
+    bounds: [480, 169, 426, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: hubs-left
+    elementType: text
+    bounds: [480, 187, 202, 205]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>京津冀</strong>｜张家口</p>
+        <p><strong>长三角</strong>｜示范区、芜湖</p>
+        <p><strong>粤港澳</strong>｜韶关</p>
+        <p><strong>成渝</strong>｜天府、重庆</p>
+  - elementId: hubs-right
+    elementType: text
+    bounds: [704, 187, 202, 205]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>内蒙古</strong>｜和林格尔</p>
+        <p><strong>贵州</strong>｜贵安</p>
+        <p><strong>甘肃</strong>｜庆阳</p>
+        <p><strong>宁夏</strong>｜中卫</p>
+  - elementId: fit-rule
+    elementType: shape
+    bounds: [480, 405, 426, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: fit-left
+    elementType: text
+    bounds: [480, 420, 204, 70]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>靠近需求</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:15px; color:$ink;">推理、金融、工业控制、实时交互</span></p>
+  - elementId: fit-right
+    elementType: text
+    bounds: [704, 420, 202, 70]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>靠近能源</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:15px; color:$ink;">大训练、离线分析、渲染、备份</span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.miit.gov.cn/xwfb/bldhd/art/2026/art_bc4cf76777cb4fd2896082ca2ff7039d.html">工信部，2026年6月底地区占比</a>；<a href="https://www.ndrc.gov.cn/xxgk/jd/jd/202202/t20220217_1315795_ext.html">国家发改委，任务分层</a>。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "08"}

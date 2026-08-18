@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BAIDU_SUSPEND_SOURCE,
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
   EASTMONEY_SUSPEND_SOURCE,
   fetchBaiduTradingSuspensions,
+  fetchEastmoneyFundAnnouncementSuspensions,
   fetchTradingSuspensions,
+  isEtfSymbol,
   parseBaiduTradingSuspensions,
+  parseFundAnnouncementSuspensionInterval,
+  parseFundAnnouncementSuspensionStart,
   parseSuspensionRow,
   parseTradingSuspensions,
 } from "./tradingSuspensions";
@@ -360,5 +365,208 @@ describe("停复牌主备适配器", () => {
         { now: () => NOW, sleep: vi.fn() },
       ),
     ).rejects.toThrow("不能证明最终复牌日");
+  });
+});
+
+describe("ETF 基金公告停牌适配器", () => {
+  function fundAnnouncementListPayload(
+    rows: Array<Record<string, unknown>>,
+    totalCount?: number,
+  ): string {
+    return `cb({"Data":${JSON.stringify(rows)},"TotalCount":${totalCount ?? rows.length},"ErrCode":0})`;
+  }
+
+  function fundAnnouncementContentPayload(
+    title: string,
+    content: string,
+  ): string {
+    return JSON.stringify({
+      success: 1,
+      data: { notice_title: title, notice_content: content },
+    });
+  }
+
+  it.each([
+    ["159211", true],
+    ["510300", true],
+    ["588000", true],
+    ["562500", true],
+    ["600519", false],
+    ["000001", false],
+    ["300750", false],
+    ["688981", false],
+    ["500001", false],
+    ["501001", false],
+  ] as const)("isEtfSymbol(%s) === %s", (symbol, expected) => {
+    expect(isEtfSymbol(symbol)).toBe(expected);
+  });
+
+  it("从会议情况公告正文解析完整停牌区间（复牌日不在区间内）", () => {
+    const content =
+      "二、重要提示\n\n  1、本基金已于 2026 年 8 月 3 日开市起停牌，并将自 2026 年 8 月 4 日 10:30 起复牌。\n\n  2、基金管理人将就本次会议情况报中国证券监督管理委员会备案。";
+    expect(parseFundAnnouncementSuspensionInterval(content)).toEqual({
+      startDate: "2026-08-03",
+      endDate: "2026-08-03",
+    });
+  });
+
+  it("无法从不含复牌表述的正文解析完整区间", () => {
+    const content =
+      "为保护基金份额持有人利益，本基金自 2026 年 8 月 3 日开市起至决议生效公告日 10:30 停牌。";
+    expect(parseFundAnnouncementSuspensionInterval(content)).toBeNull();
+  });
+
+  it("从开始停牌提示性公告正文提取停牌开始日", () => {
+    const content =
+      "为保护基金份额持有人利益，本基金（自 2026 年 8 月 3 日）开市起至基金份额持有人大会决议生效公告日 10:30 停牌（如决议生效公告日为非交易日，则公告日后首个交易日开市起复牌）。";
+    expect(parseFundAnnouncementSuspensionStart(content)).toBe("2026-08-03");
+  });
+
+  it("从含完整停牌复牌表述的公告解析精确区间", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "api.fund.eastmoney.com") {
+        return new Response(
+          fundAnnouncementListPayload([
+            {
+              FUNDCODE: "159211",
+              TITLE:
+                "富国深证100交易型开放式指数证券投资基金停牌及复牌公告",
+              PUBLISHDATE: "2026-08-04T00:00:00",
+              ID: "AN202608031827589392",
+            },
+          ]),
+        );
+      }
+      if (url.hostname === "np-cnotice-fund.eastmoney.com") {
+        return new Response(
+          fundAnnouncementContentPayload(
+            "停牌及复牌公告",
+            "二、重要提示\n\n  1、本基金已于 2026 年 8 月 3 日开市起停牌，并将自 2026 年 8 月 4 日 10:30 起复牌。",
+          ),
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchEastmoneyFundAnnouncementSuspensions(
+      ["159211"],
+      "2026-08-01",
+      "2026-08-06",
+      { now: () => NOW, sleep: vi.fn() },
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({
+      symbol: "159211",
+      startDate: "2026-08-03",
+      endDate: "2026-08-03",
+      reason: "suspension",
+      source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+    });
+    expect(result.sourceKey).toBe(
+      EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+    );
+    expect(result.coverageStart).toBe("2026-08-01");
+    expect(result.coverageEnd).toBe("2026-08-06");
+  });
+
+  it("从开始停牌提示性公告回退单日假设并排除估值类公告", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === "api.fund.eastmoney.com") {
+        return new Response(
+          fundAnnouncementListPayload([
+            {
+              FUNDCODE: "159211",
+              TITLE:
+                "富国基金管理有限公司关于富国深证100交易型开放式指数证券投资基金基金份额持有人大会计票日开始停牌的提示性公告",
+              PUBLISHDATE: "2026-08-03T00:00:00",
+              ID: "AN202608021827568724",
+            },
+            {
+              FUNDCODE: "159211",
+              TITLE:
+                "富国基金管理有限公司关于调整旗下基金长期停牌股票估值方法的公告",
+              PUBLISHDATE: "2026-08-03T00:00:00",
+              ID: "AN202608021827568725",
+            },
+          ]),
+        );
+      }
+      if (url.hostname === "np-cnotice-fund.eastmoney.com") {
+        return new Response(
+          fundAnnouncementContentPayload(
+            "开始停牌提示性公告",
+            "为保护基金份额持有人利益，本基金（自 2026 年 8 月 3 日）开市起至基金份额持有人大会决议生效公告日 10:30 停牌。",
+          ),
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchEastmoneyFundAnnouncementSuspensions(
+      ["159211"],
+      "2026-08-03",
+      "2026-08-06",
+      { now: () => NOW, sleep: vi.fn() },
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({
+      symbol: "159211",
+      startDate: "2026-08-03",
+      endDate: "2026-08-03",
+      source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+    });
+    // 估值类公告被排除，只获取"开始停牌提示性公告"的正文
+    const contentCalls = fetchMock.mock.calls.filter((call) => {
+      const url = new URL(String(call[0]));
+      return url.hostname === "np-cnotice-fund.eastmoney.com";
+    });
+    expect(contentCalls).toHaveLength(1);
+  });
+
+  it("无停牌公告时返回空结果", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (input) => {
+        const url = new URL(String(input));
+        if (url.hostname === "api.fund.eastmoney.com") {
+          return new Response(fundAnnouncementListPayload([]));
+        }
+        throw new Error(`unexpected request: ${url}`);
+      }),
+    );
+
+    const result = await fetchEastmoneyFundAnnouncementSuspensions(
+      ["159211"],
+      "2026-08-03",
+      "2026-08-06",
+      { now: () => NOW, sleep: vi.fn() },
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.sourceKey).toBe(
+      EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+    );
+  });
+
+  it("JSONP 解析失败时抛结构错误", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("not a valid jsonp")),
+    );
+
+    await expect(
+      fetchEastmoneyFundAnnouncementSuspensions(
+        ["159211"],
+        "2026-08-03",
+        "2026-08-06",
+        { now: () => NOW, sleep: vi.fn() },
+      ),
+    ).rejects.toThrow("JSONP");
   });
 });

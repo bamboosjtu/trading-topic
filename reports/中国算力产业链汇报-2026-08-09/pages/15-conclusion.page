@@ -1,0 +1,102 @@
+pageType: final
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "FINAL JUDGMENT"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "研究重点应从规划P值转向有效、可调度与可付费"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: thesis
+    elementType: text
+    bounds: [54, 119, 852, 54]
+    content:
+      fontSize: 19
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$navy"
+      align: [center, middle]
+      text: "真正的回报来自一套能够稳定运行、跨域调用，并嵌入付费工作流的算力系统。"
+  - elementId: step-arrow-1
+    elementType: line
+    bounds: [277, 353, 64, 1]
+    viewBox: [64, 1]
+    points: "0,0 64,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: step-arrow-2
+    elementType: line
+    bounds: [539, 278, 64, 1]
+    viewBox: [64, 1]
+    points: "0,0 64,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: step-1
+    elementType: shape
+    bounds: [54, 316, 223, 112]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: step-2
+    elementType: shape
+    bounds: [341, 241, 198, 112]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: step-3
+    elementType: shape
+    bounds: [603, 166, 303, 112]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: step-1t
+    elementType: text
+    bounds: [66, 332, 205, 80]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:#9BC2DD;"><strong>01｜有效算力</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:18px; color:#FFFFFF;"><strong>芯·存·网·电·冷·软</strong></span></p>
+  - elementId: step-2t
+    elementType: text
+    bounds: [359, 257, 162, 80]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:#D8E8F2;"><strong>02｜可调度</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:22px; color:#FFFFFF;"><strong>标识 · 计量 · 结算 · SLA</strong></span></p>
+  - elementId: step-3t
+    elementType: text
+    bounds: [623, 182, 263, 80]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:#EAF2F8;"><strong>03｜可付费</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:22px; color:#FFFFFF;"><strong>续约 · Token/API · 行业ROI</strong></span></p>
+  - elementId: watch-rule
+    elementType: shape
+    bounds: [54, 452, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: watch-head
+    elementType: text
+    bounds: [54, 465, 130, 24]
+    content: {style: "$label", text: "季度领先指标"}
+  - elementId: watch-items
+    elementType: text
+    bounds: [194, 462, 712, 30]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [right, middle], text: "需求｜供给｜利用｜网络｜能源｜现金流"}
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "结论基于截至2026-08-09的公开政策、行业数据与招投标样本；不构成投资建议。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "15"}

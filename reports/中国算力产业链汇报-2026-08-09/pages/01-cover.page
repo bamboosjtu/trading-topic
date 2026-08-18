@@ -1,0 +1,118 @@
+pageType: cover
+background: {type: solid, color: "$navy"}
+elements:
+  - elementId: left-rail
+    elementType: shape
+    bounds: [58, 70, 6, 370]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: net-l1
+    elementType: line
+    bounds: [620, 120, 180, 82]
+    viewBox: [180, 82]
+    points: "0,82 180,0"
+    arrow: [null, null]
+    border: {style: solid, width: 1.2, color: "#4E8FBD88"}
+  - elementId: net-l2
+    elementType: line
+    bounds: [690, 198, 145, 112]
+    viewBox: [145, 112]
+    points: "0,0 145,112"
+    border: {style: solid, width: 1.2, color: "#4E8FBD88"}
+  - elementId: net-l3
+    elementType: line
+    bounds: [610, 305, 225, 65]
+    viewBox: [225, 65]
+    points: "0,65 225,0"
+    border: {style: solid, width: 1.2, color: "#4E8FBD88"}
+  - elementId: net-l4
+    elementType: line
+    bounds: [610, 185, 80, 185]
+    viewBox: [80, 185]
+    points: "0,0 80,185"
+    border: {style: solid, width: 1.2, color: "#4E8FBD66"}
+  - elementId: net-l5
+    elementType: line
+    bounds: [800, 120, 66, 250]
+    viewBox: [66, 250]
+    points: "0,0 66,250"
+    border: {style: solid, width: 1.2, color: "#4E8FBD66"}
+  - elementId: node-chip
+    elementType: shape
+    bounds: [592, 170, 74, 74]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: node-net
+    elementType: shape
+    bounds: [770, 92, 64, 64]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: node-power
+    elementType: shape
+    bounds: [785, 270, 92, 92]
+    shapeName: ellipse
+    fill: {type: solid, color: "#25557C"}
+  - elementId: node-cloud
+    elementType: shape
+    bounds: [640, 330, 76, 76]
+    shapeName: ellipse
+    fill: {type: solid, color: "#2F739F"}
+  - elementId: node-app
+    elementType: shape
+    bounds: [835, 352, 52, 52]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue3"}
+  - elementId: node-chip-t
+    elementType: text
+    bounds: [592, 170, 74, 74]
+    content: {fontSize: 23, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "芯"}
+  - elementId: node-net-t
+    elementType: text
+    bounds: [770, 92, 64, 64]
+    content: {fontSize: 21, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "网"}
+  - elementId: node-power-t
+    elementType: text
+    bounds: [785, 270, 92, 92]
+    content: {fontSize: 27, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "电"}
+  - elementId: node-cloud-t
+    elementType: text
+    bounds: [640, 330, 76, 76]
+    content: {fontSize: 23, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "算"}
+  - elementId: node-app-t
+    elementType: text
+    bounds: [835, 352, 52, 52]
+    content: {fontSize: 18, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "用"}
+  - elementId: cover-kicker
+    elementType: text
+    bounds: [86, 78, 400, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$blue3", letterSpacing: 1.8, wrap: false, text: "INDUSTRY RESEARCH · 2026"}
+  - elementId: cover-title
+    elementType: text
+    bounds: [86, 138, 500, 150]
+    content:
+      style: "$coverTitle"
+      text: |
+        <p>中国算力产业链</p>
+        <p>与招投标信号</p>
+  - elementId: cover-subtitle
+    elementType: text
+    bounds: [88, 315, 470, 58]
+    content:
+      style: "$coverSubtitle"
+      text: |
+        <p>从芯片、集群、电力到算力商品化</p>
+  - elementId: cover-meta
+    elementType: text
+    bounds: [88, 405, 470, 54]
+    content:
+      fontSize: 13
+      fontFamily: "Microsoft YaHei"
+      color: "#91A9BC"
+      lineHeight: 1.45
+      text: |
+        <p>数据截止：2026-08-09</p>
+        <p>研究范围：中国大陆｜公开招投标样本 2025—2026</p>
+  - elementId: cover-footer
+    elementType: text
+    bounds: [86, 497, 790, 18]
+    content: {fontSize: 9, fontFamily: "Microsoft YaHei", color: "#6F8AA1", wrap: false, text: "基于政府、监管部门、采购人与公共资源平台公开资料整理｜不构成投资或投标建议"}

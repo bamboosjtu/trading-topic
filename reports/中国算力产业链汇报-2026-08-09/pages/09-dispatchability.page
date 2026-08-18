@@ -1,0 +1,118 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "FROM VISIBILITY TO USABILITY"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "监测覆盖扩大，但可调度仍只是平台能力的一部分"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: left-head
+    elementType: text
+    bounds: [54, 129, 520, 25]
+    content: {style: "$bodyStrong", text: "全国一体化算力网平台｜2025年底披露"}
+  - elementId: bar-total
+    elementType: shape
+    bounds: [54, 184, 500, 54]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: bar-total-t
+    elementType: text
+    bounds: [70, 184, 470, 54]
+    content:
+      text: |
+        <p><span style="font-size:28px; color:#FFFFFF;"><strong>102万 PFLOPS</strong></span><span style="font-size:14px; color:#C7D8E6;"> 监测总算力</span></p>
+  - elementId: bar-smart
+    elementType: shape
+    bounds: [54, 258, 409, 54]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: bar-smart-t
+    elementType: text
+    bounds: [70, 258, 380, 54]
+    content:
+      text: |
+        <p><span style="font-size:28px; color:#FFFFFF;"><strong>83.4万 PFLOPS</strong></span><span style="font-size:14px; color:#D8E8F2;"> 其中智算</span></p>
+  - elementId: bar-dispatch
+    elementType: shape
+    bounds: [54, 332, 86, 54]
+    shapeName: rect
+    fill: {type: solid, color: "$blue3"}
+  - elementId: bar-dispatch-t
+    elementType: text
+    bounds: [154, 332, 370, 54]
+    content:
+      text: |
+        <p><span style="font-size:28px; color:$navy;"><strong>11万 PFLOPS</strong></span><span style="font-size:14px; color:$muted;"> 可调度</span></p>
+  - elementId: caveat-line
+    elementType: shape
+    bounds: [54, 421, 520, 2]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: caveat
+    elementType: text
+    bounds: [54, 434, 520, 54]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.35
+      text: |
+        <p><strong>11 / 102 ≈ 10.8% 不是利用率。</strong></p>
+        <p>它只提示异构适配、网络、计量、结算和商业责任仍需打通。</p>
+  - elementId: right-divider
+    elementType: shape
+    bounds: [610, 128, 1, 350]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: metric-a
+    elementType: text
+    bounds: [650, 139, 235, 68]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>1129</strong></span></p>
+        <p><span style="font-size:14px; color:$muted;">纳入监测的算力设施</span></p>
+  - elementId: metric-b
+    elementType: text
+    bounds: [650, 226, 235, 68]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>42</strong></span></p>
+        <p><span style="font-size:14px; color:$muted;">万卡智能计算集群</span></p>
+  - elementId: metric-c
+    elementType: text
+    bounds: [650, 313, 235, 68]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>1.34</strong></span></p>
+        <p><span style="font-size:14px; color:$muted;">超大型设施平均PUE</span></p>
+  - elementId: metric-d
+    elementType: text
+    bounds: [650, 400, 235, 68]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>1373万+</strong></span></p>
+        <p><span style="font-size:14px; color:$muted;">全国在用标准机架</span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.nda.gov.cn/sjj/ywpd/sjzg/0608/ff808081-9e81e847-019e-a7020a06-00a9.pdf">国家数据局《数字中国发展报告（2025年）》</a>。监测、智算和可调度口径不可视作漏斗转化。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "09"}

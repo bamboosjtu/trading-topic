@@ -1,0 +1,133 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "PROCUREMENT LANDSCAPE"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "四种采购模式并行，需求已从设备延伸到结果服务"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: flow-1
+    elementType: line
+    bounds: [254, 255, 42, 1]
+    viewBox: [42, 1]
+    points: "0,0 42,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: flow-2
+    elementType: line
+    bounds: [462, 255, 42, 1]
+    viewBox: [42, 1]
+    points: "0,0 42,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: flow-3
+    elementType: line
+    bounds: [670, 255, 42, 1]
+    viewBox: [42, 1]
+    points: "0,0 42,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: model-1
+    elementType: shape
+    bounds: [54, 167, 200, 174]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: model-2
+    elementType: shape
+    bounds: [296, 167, 166, 174]
+    shapeName: rect
+    fill: {type: solid, color: "$pale"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: model-3
+    elementType: shape
+    bounds: [504, 167, 166, 174]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: model-4
+    elementType: shape
+    bounds: [712, 167, 194, 174]
+    shapeName: rect
+    fill: {type: solid, color: "$pale"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: model-1t
+    elementType: text
+    bounds: [72, 184, 164, 140]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>01｜购买资产</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:21px; color:$navy;"><strong>服务器 / 存储 / 网络</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:14px; color:$muted;">科研、高校、安全敏感客户仍常见</span></p>
+  - elementId: model-2t
+    elementType: text
+    bounds: [314, 184, 130, 140]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>02｜购买系统</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:21px; color:$navy;"><strong>异构集群 + 平台</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:14px; color:$muted;">网络、存储、机柜与运维进入一包</span></p>
+  - elementId: model-3t
+    elementType: text
+    bounds: [522, 184, 130, 140]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>03｜购买基建</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:21px; color:$navy;"><strong>EPC / 变电 / 液冷</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:14px; color:$muted;">GPU需求外溢到电气与热管理</span></p>
+  - elementId: model-4t
+    elementType: text
+    bounds: [730, 184, 158, 140]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>04｜购买能力</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:21px; color:$navy;"><strong>服务器年 / 卡时 / Token</strong></span></p>
+        <p style="margin-top:12px"><span style="font-size:14px; color:$muted;">资本责任与使用弹性逐步分离</span></p>
+  - elementId: sample-metric
+    elementType: text
+    bounds: [54, 370, 300, 78]
+    content:
+      text: |
+        <p><span style="font-size:42px; color:$navy;"><strong>22 + 3</strong></span></p>
+        <p><span style="font-size:14px; color:$muted;">一手可核验样本 + 动态门户线索</span></p>
+  - elementId: channel-rule
+    elementType: shape
+    bounds: [392, 370, 1, 104]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: channel-head
+    elementType: text
+    bounds: [430, 370, 476, 24]
+    content: {style: "$label", text: "覆盖的原始渠道"}
+  - elementId: channels
+    elementType: text
+    bounds: [430, 405, 476, 68]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.45
+      text: |
+        <p>中国政府采购网　｜　全国及地方公共资源交易</p>
+        <p>三大运营商采购平台　｜　南方电网、中国邮政、东风、中国铁塔</p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "来源：本报告对2025-01-01至2026-08-09公开公告的目的抽样；项目生命周期按编号和标包去重。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "11"}

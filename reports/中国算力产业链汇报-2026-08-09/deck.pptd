@@ -1,0 +1,117 @@
+version: v2
+title: "中国算力产业链与招投标信号"
+size: [960, 540]
+theme:
+  colors:
+    navy: "#0B1F33"
+    primary: "#1769AA"
+    blue2: "#4E8FBD"
+    blue3: "#9BC2DD"
+    pale: "#EAF2F8"
+    bg: "#F5F7FA"
+    paper: "#FFFFFF"
+    ink: "#102334"
+    muted: "#5A6B7A"
+    line: "#D9E1E8"
+    soft: "#EEF3F6"
+  textStyles:
+    coverTitle:
+      fontSize: 58
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "#FFFFFF"
+      lineHeight: 1.08
+    coverSubtitle:
+      fontSize: 20
+      fontFamily: "Microsoft YaHei"
+      color: "#C7D8E6"
+    kicker:
+      fontSize: 11
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$primary"
+      letterSpacing: 1.5
+    slideTitle:
+      fontSize: 36
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$navy"
+      lineHeight: 1.05
+    subtitle:
+      fontSize: 18
+      fontFamily: "Microsoft YaHei"
+      color: "$muted"
+      lineHeight: 1.35
+    body:
+      fontSize: 16
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.35
+    bodyStrong:
+      fontSize: 18
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$navy"
+      lineHeight: 1.25
+    small:
+      fontSize: 11
+      fontFamily: "Microsoft YaHei"
+      color: "$muted"
+      lineHeight: 1.25
+    source:
+      fontSize: 9
+      fontFamily: "Microsoft YaHei"
+      color: "$muted"
+      lineHeight: 1.15
+    metric:
+      fontSize: 54
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$primary"
+      lineHeight: 1
+    metricSmall:
+      fontSize: 38
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$navy"
+      lineHeight: 1
+    label:
+      fontSize: 13
+      fontFamily: "Microsoft YaHei"
+      bold: true
+      color: "$primary"
+  tableStyles:
+    researchTable:
+      cellStyle:
+        fontSize: 12
+        fontFamily: "Microsoft YaHei"
+        color: "$ink"
+        lineHeight: 1.15
+        align: [left, middle]
+        border: [{style: solid, width: 0.7, color: "$line"}, null, {style: solid, width: 0.7, color: "$line"}, null]
+      firstRowStyle:
+        fill: {type: solid, color: "$navy"}
+        color: "#FFFFFF"
+        bold: true
+        fontSize: 12
+      firstColumnStyle:
+        bold: true
+      bodyStyles:
+        - {fill: {type: solid, color: "#FFFFFF"}}
+        - {fill: {type: solid, color: "$bg"}}
+pages:
+  - pages/01-cover.page
+  - pages/02-summary.page
+  - pages/03-metrics.page
+  - pages/04-causal-chain.page
+  - pages/05-industry-chain.page
+  - pages/06-bottlenecks.page
+  - pages/07-policy-timeline.page
+  - pages/08-geography.page
+  - pages/09-dispatchability.page
+  - pages/10-value-pools.page
+  - pages/11-procurement-models.page
+  - pages/12-tender-evidence.page
+  - pages/13-tender-signals.page
+  - pages/14-risks.page
+  - pages/15-conclusion.page

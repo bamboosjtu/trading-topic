@@ -1,0 +1,90 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "EXECUTIVE SUMMARY"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "规模扩张已验证，回报取决于有效算力与付费"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: metric-main
+    elementType: text
+    bounds: [54, 128, 430, 78]
+    content:
+      text: |
+        <p><span style="font-size:70px; color:$primary;"><strong>2185</strong></span><span style="font-size:24px; color:$navy;"> EFLOPS</span></p>
+  - elementId: metric-main-label
+    elementType: text
+    bounds: [58, 207, 385, 48]
+    content:
+      style: "$body"
+      text: |
+        <p><strong>2026年6月底智能算力（FP16）</strong></p>
+        <p><span style="font-size:13px; color:$muted;">同比增长177%，但不可与早期未标精度总算力混算</span></p>
+  - elementId: separator-v
+    elementType: shape
+    bounds: [493, 126, 1, 150]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: metric-2
+    elementType: text
+    bounds: [530, 134, 330, 48]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>71.4%</strong></span><span style="font-size:14px; color:$muted;"> 设施整体上架率</span></p>
+  - elementId: metric-3
+    elementType: text
+    bounds: [530, 208, 340, 48]
+    content:
+      text: |
+        <p><span style="font-size:40px; color:$navy;"><strong>22 + 3</strong></span><span style="font-size:14px; color:$muted;"> 招投标样本</span></p>
+  - elementId: lower-rule
+    elementType: shape
+    bounds: [54, 295, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: conclusion-1
+    elementType: text
+    bounds: [54, 320, 260, 128]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>01｜增量中心</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:18px; color:$navy;"><strong>瓶颈已转向芯片、内存、互连、电力和冷却</strong></span></p>
+  - elementId: conclusion-2
+    elementType: text
+    bounds: [350, 320, 260, 128]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>02｜利润分化</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:18px; color:$navy;"><strong>收入规模不等于经济租金，利用率与现金流更关键</strong></span></p>
+  - elementId: conclusion-3
+    elementType: text
+    bounds: [646, 320, 260, 128]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>03｜采购验证</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:17px; color:$navy;"><strong>需求从设备采购扩展到全栈</strong></span></p>
+        <p><span style="font-size:17px; color:$navy;"><strong>EPC 与按量服务</strong></span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.miit.gov.cn/xwfb/bldhd/art/2026/art_bc4cf76777cb4fd2896082ca2ff7039d.html">工信部，2026年上半年发布会</a>；招投标样本为本报告目的抽样，非市场规模。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "02"}

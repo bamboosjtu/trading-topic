@@ -1,0 +1,167 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "RISKS & CONTRARIAN VIEW"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "过建、折旧、供给限制与商业化不足可能同时发生"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: y-axis
+    elementType: line
+    bounds: [84, 142, 1, 306]
+    viewBox: [1, 306]
+    points: "0,306 0,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.5, color: "$muted"}
+  - elementId: x-axis
+    elementType: line
+    bounds: [84, 448, 554, 1]
+    viewBox: [554, 1]
+    points: "0,0 554,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.5, color: "$muted"}
+  - elementId: grid-h
+    elementType: line
+    bounds: [84, 295, 554, 1]
+    viewBox: [554, 1]
+    points: "0,0 554,0"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: grid-v
+    elementType: line
+    bounds: [361, 142, 1, 306]
+    viewBox: [1, 306]
+    points: "0,0 0,306"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: dot-overbuild
+    elementType: shape
+    bounds: [485, 165, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$navy"}
+  - elementId: dot-depr
+    elementType: shape
+    bounds: [532, 204, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: dot-commercial
+    elementType: shape
+    bounds: [442, 224, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: dot-supply
+    elementType: shape
+    bounds: [365, 183, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: dot-energy
+    elementType: shape
+    bounds: [320, 253, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: dot-cash
+    elementType: shape
+    bounds: [480, 321, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue3"}
+  - elementId: dot-standard
+    elementType: shape
+    bounds: [300, 341, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue3"}
+  - elementId: dot-data
+    elementType: shape
+    bounds: [235, 282, 24, 24]
+    shapeName: ellipse
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1.5, color: "$blue2"}
+  - elementId: label-overbuild
+    elementType: text
+    bounds: [452, 140, 112, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "结构性过建"}
+  - elementId: label-depr
+    elementType: text
+    bounds: [550, 205, 92, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "技术折旧"}
+  - elementId: label-commercial
+    elementType: text
+    bounds: [404, 249, 130, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "商业化不足"}
+  - elementId: label-supply
+    elementType: text
+    bounds: [329, 157, 126, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "芯片 / HBM供给"}
+  - elementId: label-energy
+    elementType: text
+    bounds: [276, 275, 112, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "能源与水"}
+  - elementId: label-cash
+    elementType: text
+    bounds: [444, 348, 128, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "验收 / 应收账款"}
+  - elementId: label-standard
+    elementType: text
+    bounds: [270, 369, 112, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "标准碎片化"}
+  - elementId: label-data
+    elementType: text
+    bounds: [192, 307, 112, 24]
+    content: {fontSize: 12, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "数据与安全"}
+  - elementId: y-label
+    elementType: text
+    bounds: [18, 238, 34, 120]
+    rotation: 270
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$muted", align: [center, middle], text: "潜在影响 →"}
+  - elementId: x-label
+    elementType: text
+    bounds: [260, 461, 220, 22]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$muted", align: [center, middle], text: "发生可能性 →"}
+  - elementId: right-divider
+    elementType: shape
+    bounds: [676, 132, 1, 348]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: counter-head
+    elementType: text
+    bounds: [710, 140, 196, 28]
+    content: {style: "$bodyStrong", text: "三条反方观点"}
+  - elementId: counter-1
+    elementType: text
+    bounds: [710, 187, 196, 78]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>01</strong></span></p>
+        <p><span style="font-size:15px; color:$ink;">智算增长不必然带来全产业利润同比例增长。</span></p>
+  - elementId: counter-2
+    elementType: text
+    bounds: [710, 286, 196, 78]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>02</strong></span></p>
+        <p><span style="font-size:15px; color:$ink;">全国上架率改善会掩盖区域与架构错配。</span></p>
+  - elementId: counter-3
+    elementType: text
+    bounds: [710, 385, 196, 78]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>03</strong></span></p>
+        <p><span style="font-size:15px; color:$ink;">西部低电价不是护城河，客户与网络同样必要。</span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "注：风险位置为定性研究判断；应以同口径利用率、合同、现金流、交付和应用付费持续验证。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "14"}

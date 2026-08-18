@@ -1,0 +1,166 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "VALUE POOLS"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "价值密度、经常性现金流与技术风险并不重合"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: y-axis
+    elementType: line
+    bounds: [86, 142, 1, 304]
+    viewBox: [1, 304]
+    points: "0,304 0,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.6, color: "$muted"}
+  - elementId: x-axis
+    elementType: line
+    bounds: [86, 446, 612, 1]
+    viewBox: [612, 1]
+    points: "0,0 612,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.6, color: "$muted"}
+  - elementId: grid-h1
+    elementType: line
+    bounds: [86, 345, 612, 1]
+    viewBox: [612, 1]
+    points: "0,0 612,0"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: grid-h2
+    elementType: line
+    bounds: [86, 244, 612, 1]
+    viewBox: [612, 1]
+    points: "0,0 612,0"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: grid-v1
+    elementType: line
+    bounds: [290, 142, 1, 304]
+    viewBox: [1, 304]
+    points: "0,0 0,304"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: grid-v2
+    elementType: line
+    bounds: [494, 142, 1, 304]
+    viewBox: [1, 304]
+    points: "0,0 0,304"
+    border: {style: dot, width: 0.8, color: "$line"}
+  - elementId: chip-dot
+    elementType: shape
+    bounds: [581, 312, 66, 66]
+    shapeName: ellipse
+    fill: {type: solid, color: "$navy"}
+  - elementId: cloud-dot
+    elementType: shape
+    bounds: [570, 169, 74, 74]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: app-dot
+    elementType: shape
+    bounds: [470, 132, 70, 70]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: idc-dot
+    elementType: shape
+    bounds: [427, 234, 64, 64]
+    shapeName: ellipse
+    fill: {type: solid, color: "#6BA0C4"}
+  - elementId: power-dot
+    elementType: shape
+    bounds: [327, 266, 60, 60]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue3"}
+  - elementId: optical-dot
+    elementType: shape
+    bounds: [385, 342, 56, 56]
+    shapeName: ellipse
+    fill: {type: solid, color: "#7FAECE"}
+  - elementId: server-dot
+    elementType: shape
+    bounds: [193, 375, 54, 54]
+    shapeName: ellipse
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1.5, color: "$blue2"}
+  - elementId: chip-label
+    elementType: text
+    bounds: [556, 380, 120, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "芯片 / HBM / 生态"}
+  - elementId: cloud-label
+    elementType: text
+    bounds: [552, 241, 112, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "云 / 调度"}
+  - elementId: app-label
+    elementType: text
+    bounds: [443, 202, 124, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "行业应用"}
+  - elementId: idc-label
+    elementType: text
+    bounds: [407, 296, 104, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "IDC / AIDC"}
+  - elementId: power-label
+    elementType: text
+    bounds: [294, 324, 126, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "电力 / 液冷"}
+  - elementId: optical-label
+    elementType: text
+    bounds: [355, 400, 116, 30]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "光互连 / PCB"}
+  - elementId: server-label
+    elementType: text
+    bounds: [160, 432, 120, 26]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "服务器 / 集成"}
+  - elementId: y-label
+    elementType: text
+    bounds: [22, 240, 32, 120]
+    rotation: 270
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$muted", align: [center, middle], text: "经常性现金流潜力"}
+  - elementId: x-label
+    elementType: text
+    bounds: [270, 461, 250, 22]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$muted", align: [center, middle], text: "技术 / 客户 / 生态壁垒 →"}
+  - elementId: right-divider
+    elementType: shape
+    bounds: [730, 132, 1, 344]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: insight-1
+    elementType: text
+    bounds: [758, 146, 148, 90]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>稀缺租金</strong></span></p>
+        <p style="margin-top:7px"><span style="font-size:15px; color:$ink;">器件与生态壁垒最高，同时承担最大技术与供给风险。</span></p>
+  - elementId: insight-2
+    elementType: text
+    bounds: [758, 259, 148, 90]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>合同质量</strong></span></p>
+        <p style="margin-top:7px"><span style="font-size:15px; color:$ink;">IDC和云的现金流取决于利用率、客户与资本成本。</span></p>
+  - elementId: insight-3
+    elementType: text
+    bounds: [758, 372, 148, 90]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>长期上限</strong></span></p>
+        <p style="margin-top:7px"><span style="font-size:15px; color:$ink;">应用最接近付费工作流，但商业胜负尚未确定。</span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "注：位置与圆点大小均为定性研究判断，不是量化评分、市场份额或投资建议。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "10"}

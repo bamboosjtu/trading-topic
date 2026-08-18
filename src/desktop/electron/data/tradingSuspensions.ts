@@ -14,6 +14,12 @@ const EASTMONEY_REPORT_NAME = "RPT_STOCKCALENDAR";
 const EASTMONEY_SUSPEND_EVENT_TYPE = "023";
 const EASTMONEY_PAGE_SIZE = 500;
 const EASTMONEY_EMPTY_RESULT_CODE = 9201;
+const EASTMONEY_FUND_ANNOUNCEMENT_LIST_URL =
+  "http://api.fund.eastmoney.com/f10/JJGG";
+const EASTMONEY_FUND_ANNOUNCEMENT_CONTENT_URL =
+  "https://np-cnotice-fund.eastmoney.com/api/content/ann";
+const EASTMONEY_FUND_ANNOUNCEMENT_PAGE_SIZE = 20;
+const EASTMONEY_FUND_ANNOUNCEMENT_MAX_PAGES = 30;
 const BAIDU_URL =
   "https://finance.pae.baidu.com/sapi/v1/financecalendar";
 const BAIDU_PAGE_SIZE = 100;
@@ -25,12 +31,15 @@ export const LEGACY_EASTMONEY_SUSPEND_SOURCE =
   "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE";
 export const EASTMONEY_SUSPEND_SOURCE =
   "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023";
+export const EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE =
+  "eastmoney_fund_announcement_suspend";
 export const BAIDU_SUSPEND_SOURCE =
   "baidu_financecalendar_notify_suspend";
 export const BAIDU_SUSPEND_COVERAGE_START = "2023-01-01";
 export const AUTOMATIC_SUSPEND_SOURCES = [
   LEGACY_EASTMONEY_SUSPEND_SOURCE,
   EASTMONEY_SUSPEND_SOURCE,
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
   BAIDU_SUSPEND_SOURCE,
 ] as const;
 
@@ -745,4 +754,359 @@ export async function fetchTradingSuspensions(
       );
     }
   }
+}
+
+/**
+ * 识别境内交易所 ETF 代码。
+ *
+ * 深市 ETF 以 159 开头；沪市 ETF 覆盖 510-518、520、561-563、588 等前缀。
+ * 500/501/502 是封闭式基金或分级/LOF，不属于 ETF，不在列表中。
+ *
+ * 用于停牌证据路由：股票走东财个股日历主源+百度备用，
+ * ETF 走东财基金公告源（RPT_STOCKCALENDAR 不收录 ETF 事件）。
+ */
+const ETF_CODE_PREFIXES = [
+  "159", // 深市 ETF
+  "510", "511", "512", "513", "514", "515", "516", "517", "518", // 沪市 ETF
+  "520", "561", "562", "563", "588",
+] as const;
+
+export function isEtfSymbol(symbol: string): boolean {
+  return (
+    /^\d{6}$/.test(symbol) &&
+    ETF_CODE_PREFIXES.some((prefix) => symbol.startsWith(prefix))
+  );
+}
+
+interface FundAnnouncementListItem {
+  fundCode: string;
+  title: string;
+  publishDate: string;
+  announcementId: string;
+}
+
+interface FundAnnouncementListPage {
+  rows: FundAnnouncementListItem[];
+  totalCount: number;
+}
+
+/**
+ * 去掉 JSONP 回调包装，解析内部 JSON。
+ *
+ * 东财基金公告列表 API 返回 `cb({...})` 格式，需剥掉 `cb(` 前缀和 `)` 后缀。
+ */
+function parseJsonpResponse(payload: string, label: string): unknown {
+  const match = payload.match(/^[a-zA-Z_$][\w$]*\s*\(([\s\S]*)\)\s*;?\s*$/);
+  if (!match) {
+    throw new Error(`${label}响应不是合法的 JSONP 格式`);
+  }
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    throw new Error(`${label}响应 JSONP 内部 JSON 解析失败`);
+  }
+}
+
+function parseFundAnnouncementListPage(
+  payload: unknown,
+): FundAnnouncementListPage {
+  if (!isRecord(payload)) {
+    throw new Error("东方财富基金公告列表响应不是对象");
+  }
+  const errCode = payload["ErrCode"];
+  if (errCode !== undefined && Number(errCode) !== 0) {
+    throw new Error(
+      `东方财富基金公告列表请求失败：${textValue(payload["ErrMsg"]) || `ErrCode=${String(errCode)}`}`,
+    );
+  }
+  const data = payload["Data"];
+  if (!Array.isArray(data)) {
+    throw new Error("东方财富基金公告列表响应结构已变化：缺少 Data 数组");
+  }
+  const rows: FundAnnouncementListItem[] = [];
+  for (const item of data) {
+    if (!isRecord(item)) {
+      throw new Error("东方财富基金公告列表 Data 行不是对象");
+    }
+    const fundCode = textValue(item["FUNDCODE"]);
+    const title = textValue(item["TITLE"]);
+    const publishDate = textValue(item["PUBLISHDATE"]).slice(0, 10);
+    const announcementId = textValue(item["ID"]);
+    if (!fundCode || !title || !publishDate || !announcementId) {
+      throw new Error(
+        "东方财富基金公告列表行缺少 FUNDCODE/TITLE/PUBLISHDATE/ID",
+      );
+    }
+    if (!validDate(publishDate)) {
+      throw new Error(
+        `东方财富基金公告列表行 PUBLISHDATE 不是合法日期：${publishDate}`,
+      );
+    }
+    rows.push({ fundCode, title, publishDate, announcementId });
+  }
+  const totalCount = Number(payload["TotalCount"]);
+  if (!Number.isInteger(totalCount) || totalCount < 0) {
+    throw new Error("东方财富基金公告列表响应缺少有效 TotalCount");
+  }
+  return { rows, totalCount };
+}
+
+async function fetchFundAnnouncementListPage(
+  fundCode: string,
+  pageIndex: number,
+): Promise<FundAnnouncementListPage> {
+  const url = new URL(EASTMONEY_FUND_ANNOUNCEMENT_LIST_URL);
+  url.searchParams.set("callback", "cb");
+  url.searchParams.set("fundcode", fundCode);
+  url.searchParams.set("pageIndex", String(pageIndex));
+  url.searchParams.set(
+    "pageSize",
+    String(EASTMONEY_FUND_ANNOUNCEMENT_PAGE_SIZE),
+  );
+  url.searchParams.set("type", "0");
+  const response = await fetchWithTimeout(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    label: "东方财富基金公告列表",
+    headers: {
+      Referer: `http://fundf10.eastmoney.com/jjgg_${fundCode}.html`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`东方财富基金公告列表请求失败：HTTP ${response.status}`);
+  }
+  return parseFundAnnouncementListPage(
+    parseJsonpResponse(await response.text(), "东方财富基金公告列表"),
+  );
+}
+
+interface FundAnnouncementContent {
+  title: string;
+  content: string;
+}
+
+function parseFundAnnouncementContent(
+  payload: unknown,
+): FundAnnouncementContent {
+  if (!isRecord(payload)) {
+    throw new Error("东方财富基金公告正文响应不是对象");
+  }
+  if (Number(payload["success"]) !== 1 || !isRecord(payload["data"])) {
+    throw new Error(
+      `东方财富基金公告正文请求失败：success=${String(payload["success"])}`,
+    );
+  }
+  const title = textValue(payload["data"]["notice_title"]);
+  const content = textValue(payload["data"]["notice_content"]);
+  if (!title || !content) {
+    throw new Error(
+      "东方财富基金公告正文缺少 notice_title/notice_content",
+    );
+  }
+  return { title, content };
+}
+
+async function fetchFundAnnouncementContent(
+  announcementId: string,
+): Promise<FundAnnouncementContent> {
+  const url = new URL(EASTMONEY_FUND_ANNOUNCEMENT_CONTENT_URL);
+  url.searchParams.set("client_source", "web_fund");
+  url.searchParams.set("show_all", "1");
+  url.searchParams.set("art_code", announcementId);
+  const response = await fetchWithTimeout(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    label: "东方财富基金公告正文",
+    headers: {
+      Referer: `http://fund.eastmoney.com/gonggao/${announcementId}.html`,
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`东方财富基金公告正文请求失败：HTTP ${response.status}`);
+  }
+  return parseFundAnnouncementContent(await response.json());
+}
+
+interface ParsedFundSuspensionInterval {
+  startDate: string;
+  endDate: string;
+}
+
+/**
+ * 从基金公告正文解析"已于...停牌...自...起复牌"的完整停牌区间。
+ *
+ * 复牌日不在停牌区间内（endDate = 复牌日 - 1），与百度备用源和
+ * 东财个股日历的区间语义一致：盘中复牌当日有行情，不作为整日停牌。
+ */
+export function parseFundAnnouncementSuspensionInterval(
+  content: string,
+): ParsedFundSuspensionInterval | null {
+  const fullRange = content.match(
+    /已于\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^。]*?停牌[^。]*?自\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^。]*?起?复牌/,
+  );
+  if (!fullRange) return null;
+  const startDate = calendarDate(fullRange[1], fullRange[2], fullRange[3]);
+  const resumeDate = calendarDate(fullRange[4], fullRange[5], fullRange[6]);
+  if (!startDate || !resumeDate) return null;
+  const endDate = addDays(resumeDate, -1);
+  if (endDate < startDate) return null;
+  return { startDate, endDate };
+}
+
+/**
+ * 从"开始停牌"提示性公告正文提取停牌开始日。
+ *
+ * 这类公告通常含"YYYY年M月D日...开市起...停牌"表述，但无法确定最终复牌日，
+ * 调用方应将 endDate 设为 startDate（单日停牌假设）；多日停牌需等待后续
+ * "会议情况"或"复牌"公告补证。少算会触发行情缺失错误，可由用户手工补证。
+ */
+export function parseFundAnnouncementSuspensionStart(
+  content: string,
+): string | null {
+  const start = content.match(
+    /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^。]*?开市起[^。]*?停牌/,
+  );
+  if (!start) return null;
+  return calendarDate(start[1], start[2], start[3]) || null;
+}
+
+/**
+ * 判断公告标题是否与 ETF 自身停牌相关。
+ *
+ * "长期停牌股票估值方法"等公告是基金持仓股票的停牌估值，与 ETF 自身停牌无关，
+ * 需排除。仅保留含"停牌"且不含"估值"和"停牌股票"的标题。
+ */
+function isFundSelfSuspensionTitle(title: string): boolean {
+  if (!title.includes("停牌")) return false;
+  if (title.includes("估值")) return false;
+  if (title.includes("停牌股票")) return false;
+  return true;
+}
+
+/**
+ * 东方财富基金公告 ETF 停牌证据适配器。
+ *
+ * 东财个股日历 RPT_STOCKCALENDAR 不收录 ETF 停牌事件（对 ETF 返回
+ * code=9201 数据为空），ETF 停牌证据从基金公告 API 获取。
+ *
+ * 流程：
+ * 1. 按 ETF 代码分页获取基金公告列表（最多 30 页 = 600 条）；
+ * 2. 筛选标题含"停牌"且与 ETF 自身停牌相关的公告；
+ * 3. 获取筛选公告的正文，从正文解析停牌起止区间；
+ * 4. 优先采用含完整"停牌...复牌"表述的正文，回退到"开始停牌"公告的单日假设。
+ *
+ * 与股票停牌主备路由独立：fetchTradingSuspensions 只处理股票，
+ * appService 按 isEtfSymbol 分流后调用本函数。
+ */
+export async function fetchEastmoneyFundAnnouncementSuspensions(
+  symbols: readonly string[],
+  startDate: string,
+  endDate: string,
+  options: FetchOptions = {},
+): Promise<TradingSuspensionSourceResult> {
+  const now = options.now?.() ?? new Date();
+  const sleep =
+    options.sleep ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const normalizedSymbols = normalizeSymbols(symbols);
+  validateRange(startDate, endDate, now);
+  const fetchedAt = now.toISOString();
+  if (!normalizedSymbols.length) {
+    return {
+      rows: [],
+      source: "东方财富基金公告（ETF 停牌事件）",
+      sourceKey: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+      fetchedAt,
+      coverageStart: startDate,
+      coverageEnd: endDate,
+      partialCoverage: false,
+      unresolvedOpenIntervals: 0,
+    };
+  }
+
+  const parsedRows: SecurityTradingInterruption[] = [];
+  let requestCount = 0;
+  for (const symbol of normalizedSymbols) {
+    const allListRows: FundAnnouncementListItem[] = [];
+    let pageIndex = 1;
+    for (;;) {
+      if (requestCount > 0) await sleep(DATA_SOURCE_THROTTLE_MS);
+      requestCount += 1;
+      const page = await fetchFundAnnouncementListPage(symbol, pageIndex);
+      allListRows.push(...page.rows);
+      if (
+        allListRows.length >= page.totalCount ||
+        page.rows.length < EASTMONEY_FUND_ANNOUNCEMENT_PAGE_SIZE ||
+        pageIndex >= EASTMONEY_FUND_ANNOUNCEMENT_MAX_PAGES
+      ) {
+        break;
+      }
+      pageIndex += 1;
+    }
+
+    const suspensionAnnouncements = allListRows.filter((row) =>
+      isFundSelfSuspensionTitle(row.title),
+    );
+    if (!suspensionAnnouncements.length) continue;
+
+    const symbolInterruptions: SecurityTradingInterruption[] = [];
+    let hasUnparsedAnnouncement = false;
+    for (const announcement of suspensionAnnouncements) {
+      if (requestCount > 0) await sleep(DATA_SOURCE_THROTTLE_MS);
+      requestCount += 1;
+      const detail = await fetchFundAnnouncementContent(
+        announcement.announcementId,
+      );
+      const fullInterval = parseFundAnnouncementSuspensionInterval(
+        detail.content,
+      );
+      if (fullInterval) {
+        symbolInterruptions.push({
+          symbol,
+          startDate: fullInterval.startDate,
+          endDate: fullInterval.endDate,
+          reason: "suspension",
+          source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+          sourceId: `http://fund.eastmoney.com/gonggao/${symbol},${announcement.announcementId}.html`,
+          fetchedAt,
+        });
+        continue;
+      }
+      const startOnly = parseFundAnnouncementSuspensionStart(detail.content);
+      if (startOnly) {
+        symbolInterruptions.push({
+          symbol,
+          startDate: startOnly,
+          endDate: startOnly,
+          reason: "suspension",
+          source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+          sourceId: `http://fund.eastmoney.com/gonggao/${symbol},${announcement.announcementId}.html`,
+          fetchedAt,
+        });
+        continue;
+      }
+      hasUnparsedAnnouncement = true;
+    }
+
+    if (hasUnparsedAnnouncement && !symbolInterruptions.length) {
+      throw new Error(
+        `东方财富基金公告 ${symbol} 存在停牌公告但正文无法解析停牌区间（公告正文结构可能已变化）`,
+      );
+    }
+    parsedRows.push(
+      ...symbolInterruptions.filter(
+        (row) => row.startDate <= endDate && row.endDate >= startDate,
+      ),
+    );
+  }
+
+  return {
+    rows: deduplicateInterruptions(parsedRows),
+    source: "东方财富基金公告（ETF 停牌事件）",
+    sourceKey: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+    fetchedAt,
+    coverageStart: startDate,
+    coverageEnd: endDate,
+    partialCoverage: false,
+    unresolvedOpenIntervals: 0,
+  };
 }

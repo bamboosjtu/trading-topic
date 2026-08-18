@@ -19,7 +19,11 @@ import { latestWeekdayCandidate } from "../domain/marketCalendar";
 import { addDays } from "../domain/dateUtils";
 import { checkDataSourceHealth } from "./dataSourceHealth";
 import { fetchVerifiedCorporateActions } from "./corporateActions";
-import { fetchEastmoneyTradingSuspensions } from "./tradingSuspensions";
+import {
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+  fetchEastmoneyFundAnnouncementSuspensions,
+  fetchEastmoneyTradingSuspensions,
+} from "./tradingSuspensions";
 
 const RUN_SMOKE = process.env["RUN_MARKET_SMOKE"] === "1";
 const START_DATE = "2026-07-20";
@@ -335,6 +339,32 @@ describe.skipIf(!RUN_SMOKE)("真实行情受控联网冒烟", () => {
           ([symbol, date]) => `${symbol}:${date}`,
         ),
         returnedRows: historicalSuspensions.rows.length,
+      });
+
+      // ETF 停牌证据回归向量：159211 在 2026-08-03 因基金份额持有人大会计票日停牌，
+      // 当日复牌。验证东方财富基金公告源（RPT_STOCKCALENDAR 对 ETF 返回空）。
+      const etfSuspensionRangeStart = "2026-08-01";
+      const etfSuspensionRangeEnd = "2026-08-06";
+      const etfSuspensions = await fetchEastmoneyFundAnnouncementSuspensions(
+        ["159211"],
+        etfSuspensionRangeStart,
+        etfSuspensionRangeEnd,
+      );
+      expect(etfSuspensions.rows).toContainEqual(
+        expect.objectContaining({
+          symbol: "159211",
+          startDate: "2026-08-03",
+          endDate: "2026-08-03",
+          source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+        }),
+      );
+      checks.push({
+        label: "ETF 基金公告停牌回归向量",
+        symbols: ["159211"],
+        source: etfSuspensions.source,
+        requestRange: `${etfSuspensionRangeStart}..${etfSuspensionRangeEnd}`,
+        verifiedDates: ["159211:2026-08-03"],
+        returnedRows: etfSuspensions.rows.length,
       });
       for (const symbol of ["601398", "601857"] as const) {
         const strictHistory = await fetchWithProviderFallback<PricePoint>(

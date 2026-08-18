@@ -1,0 +1,205 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "CAUSAL CHAIN"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "需求、政策与资源约束共同决定资本开支方向"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: demand-line-1
+    elementType: line
+    bounds: [205, 186, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: demand-line-2
+    elementType: line
+    bounds: [382, 186, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: demand-line-3
+    elementType: line
+    bounds: [559, 186, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: demand-line-4
+    elementType: line
+    bounds: [736, 186, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: policy-line-1
+    elementType: line
+    bounds: [205, 337, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: policy-line-2
+    elementType: line
+    bounds: [382, 337, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: policy-line-3
+    elementType: line
+    bounds: [559, 337, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: policy-line-4
+    elementType: line
+    bounds: [736, 337, 54, 1]
+    viewBox: [54, 1]
+    points: "0,0 54,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 1.8, color: "$blue2"}
+  - elementId: demand-label
+    elementType: text
+    bounds: [54, 126, 110, 24]
+    content: {style: "$label", text: "需求链"}
+  - elementId: d1
+    elementType: shape
+    bounds: [54, 158, 151, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: d2
+    elementType: shape
+    bounds: [259, 158, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: d3
+    elementType: shape
+    bounds: [436, 158, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: d4
+    elementType: shape
+    bounds: [613, 158, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: d5
+    elementType: shape
+    bounds: [790, 158, 116, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$blue3"}
+  - elementId: d1t
+    elementType: text
+    bounds: [54, 158, 151, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "模型 / 智能体"}
+  - elementId: d2t
+    elementType: text
+    bounds: [259, 158, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "Token 与并发"}
+  - elementId: d3t
+    elementType: text
+    bounds: [436, 158, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "芯片 / 存储 / 网"}
+  - elementId: d4t
+    elementType: text
+    bounds: [613, 158, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "电力 / 冷却"}
+  - elementId: d5t
+    elementType: text
+    bounds: [790, 158, 116, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "利用率 / 现金流"}
+  - elementId: policy-label
+    elementType: text
+    bounds: [54, 277, 110, 24]
+    content: {style: "$label", text: "政策链"}
+  - elementId: p1
+    elementType: shape
+    bounds: [54, 309, 151, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: p2
+    elementType: shape
+    bounds: [259, 309, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: p3
+    elementType: shape
+    bounds: [436, 309, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: p4
+    elementType: shape
+    bounds: [613, 309, 123, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: p5
+    elementType: shape
+    bounds: [790, 309, 116, 58]
+    shapeName: rect
+    fill: {type: solid, color: "$blue3"}
+  - elementId: p1t
+    elementType: text
+    bounds: [54, 309, 151, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "8枢纽 / 10集群"}
+  - elementId: p2t
+    elementType: text
+    bounds: [259, 309, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "1 / 5 / 20ms"}
+  - elementId: p3t
+    elementType: text
+    bounds: [436, 309, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "异构互联"}
+  - elementId: p4t
+    elementType: text
+    bounds: [613, 309, 123, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "计量 / 结算"}
+  - elementId: p5t
+    elementType: text
+    bounds: [790, 309, 116, 58]
+    content: {fontSize: 15, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "算电协同"}
+  - elementId: bottom-rule
+    elementType: shape
+    bounds: [54, 405, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: tension-left
+    elementType: text
+    bounds: [54, 426, 380, 62]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary;"><strong>效率约束</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:16px; color:$ink;">模型压缩与芯片能效提升，降低单位任务算力</span></p>
+  - elementId: tension-right
+    elementType: text
+    bounds: [526, 426, 380, 62]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary;"><strong>需求反弹</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:16px; color:$ink;">价格下降扩大调用，Token 增长不等于收入同比例增长</span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.ndrc.gov.cn/xxgk/zcfb/tz/202312/t20231229_1363000_ext.html">国家发改委等，全国一体化算力网实施意见</a>；需求链为本报告研究归纳。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "04"}

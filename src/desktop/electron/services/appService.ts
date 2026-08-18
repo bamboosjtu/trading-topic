@@ -46,7 +46,10 @@ import { fetchVerifiedCorporateActions } from "../data/corporateActions";
 import {
   AUTOMATIC_SUSPEND_SOURCES,
   BAIDU_SUSPEND_SOURCE,
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+  fetchEastmoneyFundAnnouncementSuspensions,
   fetchTradingSuspensions,
+  isEtfSymbol,
 } from "../data/tradingSuspensions";
 import {
   fetchMarketAdjustedBars,
@@ -903,47 +906,89 @@ export class AppService {
     endDate: string,
   ): Promise<void> {
     if (!symbols.length) return;
-    try {
-      const result = await fetchTradingSuspensions(
-        symbols,
-        startDate,
-        endDate,
-      );
-      const sourcesToReplace = result.fallbackUsed
-        ? [BAIDU_SUSPEND_SOURCE]
-        : AUTOMATIC_SUSPEND_SOURCES;
-      for (const symbol of [...new Set(symbols)]) {
-        const interruptions = result.rows.filter(
-          (row) => row.symbol === symbol,
+    const uniqueSymbols = [...new Set(symbols)];
+    const etfSymbols = uniqueSymbols.filter(isEtfSymbol);
+    const stockSymbols = uniqueSymbols.filter(
+      (symbol) => !isEtfSymbol(symbol),
+    );
+
+    // 股票停牌证据：东财个股日历主源 + 百度备用（主备路由）
+    if (stockSymbols.length) {
+      try {
+        const result = await fetchTradingSuspensions(
+          stockSymbols,
+          startDate,
+          endDate,
         );
-        this.database.replaceTradingInterruptionsInRangeBySourcesAtomically({
-          symbol,
-          sources: sourcesToReplace,
-          startDate: result.coverageStart,
-          endDate: result.coverageEnd,
-          interruptions,
-        });
-        this.database.log(
-          "info",
-          `自动获取停牌证据：${symbol} ${interruptions.length} 条，来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}`,
-        );
-      }
-      if (
-        result.fallbackUsed ||
-        result.partialCoverage ||
-        result.unresolvedOpenIntervals > 0
-      ) {
+        const sourcesToReplace = result.fallbackUsed
+          ? [BAIDU_SUSPEND_SOURCE]
+          : AUTOMATIC_SUSPEND_SOURCES;
+        for (const symbol of stockSymbols) {
+          const interruptions = result.rows.filter(
+            (row) => row.symbol === symbol,
+          );
+          this.database.replaceTradingInterruptionsInRangeBySourcesAtomically({
+            symbol,
+            sources: sourcesToReplace,
+            startDate: result.coverageStart,
+            endDate: result.coverageEnd,
+            interruptions,
+          });
+          this.database.log(
+            "info",
+            `自动获取停牌证据：${symbol} ${interruptions.length} 条，来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}`,
+          );
+        }
+        if (
+          result.fallbackUsed ||
+          result.partialCoverage ||
+          result.unresolvedOpenIntervals > 0
+        ) {
+          this.database.log(
+            "warn",
+            `停牌证据自动同步降级：来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}，未闭合区间=${result.unresolvedOpenIntervals}${result.fallbackReason ? `，主源失败=${result.fallbackReason}` : ""}`,
+          );
+        }
+      } catch (error) {
+        // 主备源均失败或结构不完整时不进入替换事务，全部旧证据保留。
         this.database.log(
           "warn",
-          `停牌证据自动同步降级：来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}，未闭合区间=${result.unresolvedOpenIntervals}${result.fallbackReason ? `，主源失败=${result.fallbackReason}` : ""}`,
+          `股票停牌证据获取失败(${stockSymbols.join(",")})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
         );
       }
-    } catch (error) {
-      // 主备源均失败或结构不完整时不进入替换事务，全部旧证据保留。
-      this.database.log(
-        "warn",
-        `停牌证据获取失败(${[...new Set(symbols)].join(",")})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
-      );
+    }
+
+    // ETF 停牌证据：东财基金公告源（RPT_STOCKCALENDAR 不收录 ETF 事件）
+    if (etfSymbols.length) {
+      try {
+        const result = await fetchEastmoneyFundAnnouncementSuspensions(
+          etfSymbols,
+          startDate,
+          endDate,
+        );
+        for (const symbol of etfSymbols) {
+          const interruptions = result.rows.filter(
+            (row) => row.symbol === symbol,
+          );
+          this.database.replaceTradingInterruptionsInRangeBySourcesAtomically({
+            symbol,
+            sources: [EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE],
+            startDate: result.coverageStart,
+            endDate: result.coverageEnd,
+            interruptions,
+          });
+          this.database.log(
+            "info",
+            `自动获取ETF停牌证据：${symbol} ${interruptions.length} 条，来源=${result.sourceKey}，覆盖=${result.coverageStart}..${result.coverageEnd}`,
+          );
+        }
+      } catch (error) {
+        // 基金公告源失败时不进入替换事务，旧证据保留。
+        this.database.log(
+          "warn",
+          `ETF停牌证据获取失败(${etfSymbols.join(",")})，旧证据保留：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
   }
 

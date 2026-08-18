@@ -1,0 +1,123 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "BOTTLENECKS & ECONOMICS"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "高密度智算把瓶颈推向芯片、互连、电力和冷却"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: left-head
+    elementType: text
+    bounds: [54, 126, 235, 26]
+    content: {style: "$bodyStrong", text: "稀缺性与系统影响"}
+  - elementId: bar-1
+    elementType: shape
+    bounds: [54, 174, 238, 34]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: bar-1t
+    elementType: text
+    bounds: [65, 174, 220, 34]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "AI芯片 / HBM / 软件生态"}
+  - elementId: bar-2
+    elementType: shape
+    bounds: [54, 222, 210, 34]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: bar-2t
+    elementType: text
+    bounds: [65, 222, 194, 34]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "高速互连 / 光模块 / PCB"}
+  - elementId: bar-3
+    elementType: shape
+    bounds: [54, 270, 183, 34]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: bar-3t
+    elementType: text
+    bounds: [65, 270, 168, 34]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "供配电 / 液冷"}
+  - elementId: bar-4
+    elementType: shape
+    bounds: [54, 318, 156, 34]
+    shapeName: rect
+    fill: {type: solid, color: "$blue3"}
+  - elementId: bar-4t
+    elementType: text
+    bounds: [65, 318, 142, 34]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [left, middle], text: "服务器 / 集成"}
+  - elementId: bar-5
+    elementType: shape
+    bounds: [54, 366, 129, 34]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$blue3"}
+  - elementId: bar-5t
+    elementType: text
+    bounds: [65, 366, 115, 34]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [left, middle], text: "IDC / 云服务"}
+  - elementId: left-note
+    elementType: text
+    bounds: [54, 425, 245, 56]
+    content:
+      style: "$small"
+      text: |
+        <p>条形长度仅表达系统影响和短期稀缺性的相对判断，不代表收入、利润率或估值。</p>
+  - elementId: econ-table
+    elementType: table
+    bounds: [330, 132, 576, 318]
+    columnWidths: [0.23, 0.30, 0.47]
+    rowHeights: [0.14, 0.172, 0.172, 0.172, 0.172, 0.172]
+    style: "$researchTable"
+    rows:
+      - - text: "环节"
+        - text: "收入模式"
+        - text: "最应跟踪的变量"
+      - - text: "芯片与生态"
+        - text: "芯片、板卡、软件支持"
+        - text: "供货、性能/功耗、编译器/算子、客户迁移成本"
+      - - text: "互连与PCB"
+        - text: "模块、交换机、板卡"
+        - text: "400G/800G/1.6T代际、良率、客户结构与扩产"
+      - - text: "供配电与液冷"
+        - text: "设备销售 + 运维"
+        - text: "单柜kW、液冷渗透、可靠性、PUE/WUE与存量改造"
+      - - text: "服务器与集成"
+        - text: "硬件、整柜、交付"
+        - text: "集群效率、验收、部件转售占比、毛利与应收账款"
+      - - text: "IDC / 云 / 调度"
+        - text: "kW/MW、实例、Token"
+        - text: "签约、利用率、价格、资本成本、续约与跨平台成交"
+  - elementId: key-line
+    elementType: shape
+    bounds: [330, 468, 576, 2]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: key-copy
+    elementType: text
+    bounds: [330, 476, 576, 26]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", text: "服务器销售额常含部件转售；IDC价值取决于客户、利用率与融资成本。"}
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>参考：<a href="https://www.caict.ac.cn/english/research/whitepapers/202509/P020250903609386521052.pdf">中国信通院《绿色算力发展研究报告（2025）》</a>；经济性判断为本报告归纳。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "06"}

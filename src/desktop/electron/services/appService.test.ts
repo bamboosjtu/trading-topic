@@ -21,9 +21,12 @@ import {
 import { fetchVerifiedCorporateActions } from "../data/corporateActions";
 import {
   BAIDU_SUSPEND_SOURCE,
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
   EASTMONEY_SUSPEND_SOURCE,
   LEGACY_EASTMONEY_SUSPEND_SOURCE,
+  fetchEastmoneyFundAnnouncementSuspensions,
   fetchTradingSuspensions,
+  isEtfSymbol,
 } from "../data/tradingSuspensions";
 import {
   fetchMarketAdjustedBars,
@@ -44,12 +47,40 @@ vi.mock("../data/tradingSuspensions", () => ({
     "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
   LEGACY_EASTMONEY_SUSPEND_SOURCE:
     "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
+  EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE:
+    "eastmoney_fund_announcement_suspend",
   BAIDU_SUSPEND_SOURCE: "baidu_financecalendar_notify_suspend",
   AUTOMATIC_SUSPEND_SOURCES: [
     "eastmoney_datacenter_RPT_CUSTOM_SUSPEND_DATA_INTERFACE",
     "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
+    "eastmoney_fund_announcement_suspend",
     "baidu_financecalendar_notify_suspend",
   ],
+  isEtfSymbol: vi.fn(
+    (symbol: string): boolean => {
+      const prefixes = [
+        "159",
+        "510",
+        "511",
+        "512",
+        "513",
+        "514",
+        "515",
+        "516",
+        "517",
+        "518",
+        "520",
+        "561",
+        "562",
+        "563",
+        "588",
+      ];
+      return (
+        /^\d{6}$/.test(symbol) &&
+        prefixes.some((prefix) => symbol.startsWith(prefix))
+      );
+    },
+  ),
   fetchTradingSuspensions: vi.fn(
     async (_symbols: readonly string[], startDate: string, endDate: string) => ({
       rows: [],
@@ -64,6 +95,18 @@ vi.mock("../data/tradingSuspensions", () => ({
       primarySource:
         "eastmoney_datacenter_RPT_STOCKCALENDAR_event_023",
       fallbackUsed: false,
+    }),
+  ),
+  fetchEastmoneyFundAnnouncementSuspensions: vi.fn(
+    async (_symbols: readonly string[], startDate: string, endDate: string) => ({
+      rows: [],
+      source: "东方财富基金公告（ETF 停牌事件）",
+      sourceKey: "eastmoney_fund_announcement_suspend",
+      fetchedAt: "2026-08-08T00:00:00.000Z",
+      coverageStart: startDate,
+      coverageEnd: endDate,
+      partialCoverage: false,
+      unresolvedOpenIntervals: 0,
     }),
   ),
 }));
@@ -251,6 +294,92 @@ describe("AppService 停复牌自动同步", () => {
             row.startDate === "2025-08-05",
         ),
     ).toBe(false);
+  });
+
+  it("按证券类型分流：股票走个股日历，ETF 走基金公告源", async () => {
+    const { service } = await serviceWithDatabase();
+    vi.mocked(fetchTradingSuspensions).mockClear();
+    vi.mocked(fetchEastmoneyFundAnnouncementSuspensions).mockClear();
+    vi.mocked(fetchEastmoneyFundAnnouncementSuspensions).mockResolvedValueOnce({
+      rows: [
+        {
+          symbol: "159211",
+          startDate: "2026-08-03",
+          endDate: "2026-08-03",
+          reason: "suspension",
+          source: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+          fetchedAt: "2026-08-04T00:00:00Z",
+        },
+      ],
+      source: "东方财富基金公告（ETF 停牌事件）",
+      sourceKey: EASTMONEY_FUND_ANNOUNCEMENT_SUSPEND_SOURCE,
+      fetchedAt: "2026-08-04T00:00:00Z",
+      coverageStart: "2026-08-01",
+      coverageEnd: "2026-08-06",
+      partialCoverage: false,
+      unresolvedOpenIntervals: 0,
+    });
+
+    await service.refreshTradingInterruptions(
+      ["601088", "159211"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+
+    // 股票分流：只有 601088 走个股日历主备路由
+    expect(fetchTradingSuspensions).toHaveBeenCalledWith(
+      ["601088"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+    expect(fetchTradingSuspensions).toHaveBeenCalledTimes(1);
+    // ETF 分流：只有 159211 走基金公告源
+    expect(fetchEastmoneyFundAnnouncementSuspensions).toHaveBeenCalledWith(
+      ["159211"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+    expect(fetchEastmoneyFundAnnouncementSuspensions).toHaveBeenCalledTimes(1);
+    // 路由判定函数被调用（验证 isEtfSymbol 是分流入口）
+    expect(isEtfSymbol).toHaveBeenCalled();
+  });
+
+  it("只有 ETF 标的时不调用股票停牌主备路由", async () => {
+    const { service } = await serviceWithDatabase();
+    vi.mocked(fetchTradingSuspensions).mockClear();
+    vi.mocked(fetchEastmoneyFundAnnouncementSuspensions).mockClear();
+
+    await service.refreshTradingInterruptions(
+      ["159211", "510300"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+
+    expect(fetchTradingSuspensions).not.toHaveBeenCalled();
+    expect(fetchEastmoneyFundAnnouncementSuspensions).toHaveBeenCalledWith(
+      ["159211", "510300"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+  });
+
+  it("只有股票标的不调用 ETF 基金公告源", async () => {
+    const { service } = await serviceWithDatabase();
+    vi.mocked(fetchTradingSuspensions).mockClear();
+    vi.mocked(fetchEastmoneyFundAnnouncementSuspensions).mockClear();
+
+    await service.refreshTradingInterruptions(
+      ["601088", "300750"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+
+    expect(fetchTradingSuspensions).toHaveBeenCalledWith(
+      ["601088", "300750"],
+      "2026-08-01",
+      "2026-08-06",
+    );
+    expect(fetchEastmoneyFundAnnouncementSuspensions).not.toHaveBeenCalled();
   });
 });
 

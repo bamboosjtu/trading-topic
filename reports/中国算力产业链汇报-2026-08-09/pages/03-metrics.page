@@ -1,0 +1,163 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "MEASUREMENT BASIS"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "同名“算力”并非同一指标，口径错配会制造虚假增长"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: col-line-1
+    elementType: shape
+    bounds: [299, 126, 1, 348]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: col-line-2
+    elementType: shape
+    bounds: [654, 126, 1, 348]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: left-head
+    elementType: text
+    bounds: [54, 126, 210, 28]
+    content: {style: "$bodyStrong", text: "精度决定算力数字的含义"}
+  - elementId: prec-1
+    elementType: shape
+    bounds: [54, 177, 190, 30]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: prec-1t
+    elementType: text
+    bounds: [64, 177, 180, 30]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "FP64｜科学计算"}
+  - elementId: prec-2
+    elementType: shape
+    bounds: [54, 220, 165, 30]
+    shapeName: rect
+    fill: {type: solid, color: "#25557C"}
+  - elementId: prec-2t
+    elementType: text
+    bounds: [64, 220, 155, 30]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "FP32｜通用浮点"}
+  - elementId: prec-3
+    elementType: shape
+    bounds: [54, 263, 140, 30]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: prec-3t
+    elementType: text
+    bounds: [64, 263, 130, 30]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "FP16/BF16｜AI"}
+  - elementId: prec-4
+    elementType: shape
+    bounds: [54, 306, 115, 30]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: prec-4t
+    elementType: text
+    bounds: [64, 306, 105, 30]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [left, middle], text: "INT8｜推理"}
+  - elementId: left-note
+    elementType: text
+    bounds: [54, 365, 210, 82]
+    content:
+      style: "$small"
+      text: |
+        <p>相同设备在不同精度下的峰值可相差数倍。</p>
+        <p style="margin-top:8px"><strong>结论：</strong>不同精度、不同统计范围不可拼成单一增长曲线。</p>
+  - elementId: mid-head
+    elementType: text
+    bounds: [330, 126, 290, 28]
+    content: {style: "$bodyStrong", text: "供给到使用至少跨越四层"}
+  - elementId: flow-line
+    elementType: line
+    bounds: [361, 205, 226, 0.8]
+    viewBox: [226, 1]
+    points: "0,0 226,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: stage-1
+    elementType: shape
+    bounds: [328, 180, 70, 52]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: stage-2
+    elementType: shape
+    bounds: [409, 180, 70, 52]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: stage-3
+    elementType: shape
+    bounds: [490, 180, 70, 52]
+    shapeName: rect
+    fill: {type: solid, color: "$blue2"}
+  - elementId: stage-4
+    elementType: shape
+    bounds: [571, 180, 70, 52]
+    shapeName: rect
+    fill: {type: solid, color: "$blue3"}
+  - elementId: stage-1t
+    elementType: text
+    bounds: [328, 180, 70, 52]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "已建"}
+  - elementId: stage-2t
+    elementType: text
+    bounds: [409, 180, 70, 52]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "监测"}
+  - elementId: stage-3t
+    elementType: text
+    bounds: [490, 180, 70, 52]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "可调度"}
+  - elementId: stage-4t
+    elementType: text
+    bounds: [571, 180, 70, 52]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "实际使用"}
+  - elementId: mid-copy
+    elementType: text
+    bounds: [330, 268, 290, 170]
+    content:
+      style: "$body"
+      text: |
+        <p><strong>机架上架率</strong>只说明设备安装；</p>
+        <p style="margin-top:12px"><strong>功率使用率</strong>反映 IT 负载；</p>
+        <p style="margin-top:12px"><strong>GPU 利用率 / MFU</strong>才接近模型有效计算；</p>
+        <p style="margin-top:12px"><strong>收入与现金流</strong>还取决于价格、合同和回款。</p>
+  - elementId: right-head
+    elementType: text
+    bounds: [686, 126, 210, 28]
+    content: {style: "$bodyStrong", text: "三条研究禁令"}
+  - elementId: right-copy
+    elementType: text
+    bounds: [686, 176, 220, 260]
+    content:
+      fontSize: 17
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.5
+      text: |
+        <p><span style="color:$primary;"><strong>01</strong></span> 不混用不同精度的 EFLOPS</p>
+        <p style="margin-top:20px"><span style="color:$primary;"><strong>02</strong></span> 不用上架率推断 GPU 满载</p>
+        <p style="margin-top:20px"><span style="color:$primary;"><strong>03</strong></span> 不把预算、框架额和合同额相加</p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>口径参考：<a href="https://www.nda.gov.cn/sjj/ywpd/sjzg/0608/ff808081-9e81e847-019e-a7020a06-00a9.pdf">《数字中国发展报告（2025年）》</a>；本页为研究方法说明。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "03"}

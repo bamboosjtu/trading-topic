@@ -1,0 +1,142 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "POLICY EVOLUTION"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "政策重心已转向互联、调度、交易与算电协同"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: timeline
+    elementType: line
+    bounds: [76, 252, 806, 1]
+    viewBox: [806, 1]
+    points: "0,0 806,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2.2, color: "$blue2"}
+  - elementId: tick-1
+    elementType: shape
+    bounds: [92, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$navy"}
+  - elementId: tick-2
+    elementType: shape
+    bounds: [218, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: tick-3
+    elementType: shape
+    bounds: [344, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: tick-4
+    elementType: shape
+    bounds: [470, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$primary"}
+  - elementId: tick-5
+    elementType: shape
+    bounds: [596, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: tick-6
+    elementType: shape
+    bounds: [722, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue2"}
+  - elementId: tick-7
+    elementType: shape
+    bounds: [848, 244, 17, 17]
+    shapeName: ellipse
+    fill: {type: solid, color: "$blue3"}
+  - elementId: t1
+    elementType: text
+    bounds: [60, 142, 92, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2020</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">全国一体化数据中心体系</span></p>
+  - elementId: t2
+    elementType: text
+    bounds: [178, 286, 110, 90]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2021</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">国家枢纽骨架成型</span></p>
+  - elementId: t3
+    elementType: text
+    bounds: [304, 142, 110, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2022</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">东数西算：8枢纽10集群</span></p>
+  - elementId: t4
+    elementType: text
+    bounds: [430, 286, 110, 90]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2023</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">量化目标 + 1/5/20ms算力网</span></p>
+  - elementId: t5
+    elementType: text
+    bounds: [556, 142, 110, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2024</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">上架率、PUE与绿电约束</span></p>
+  - elementId: t6
+    elementType: text
+    bounds: [682, 286, 110, 90]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2025</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">互联标识、计量与结算</span></p>
+  - elementId: t7
+    elementType: text
+    bounds: [806, 142, 100, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>2026</strong></span></p>
+        <p style="margin-top:6px"><span style="font-size:14px; color:$ink;">毫秒用算、普惠算力、零碳</span></p>
+  - elementId: lower-rule
+    elementType: shape
+    bounds: [54, 410, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: milestone-1
+    elementType: text
+    bounds: [54, 428, 390, 58]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary;"><strong>已发生</strong></span></p>
+        <p style="margin-top:5px"><span style="font-size:17px; color:$navy;"><strong>2025年八大枢纽新增算力与智算占比均超过80%</strong></span></p>
+  - elementId: milestone-2
+    elementType: text
+    bounds: [516, 428, 390, 58]
+    content:
+      text: |
+        <p><span style="font-size:14px; color:$primary;"><strong>仍是目标</strong></span></p>
+        <p style="margin-top:5px"><span style="font-size:17px; color:$navy;"><strong>2028年公共算力标准化互联尚未完成</strong></span></p>
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content:
+      style: "$source"
+      text: |
+        <p>来源：<a href="https://www.ndrc.gov.cn/xxgk/jd/jd/202202/t20220217_1315795_ext.html">国家发改委“东数西算”答记者问</a>；<a href="https://www.miit.gov.cn/cms_files/filemanager/1226211233/attach/20255/897c5bbdf9384c4bac38a74b5a7cfa4b.pdf">工信部算力互联互通行动计划</a>。</p>
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "07"}

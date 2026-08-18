@@ -1,0 +1,186 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "INDUSTRY CHAIN"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "算力产业链已形成“器件—集群—服务—应用”闭环"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: arrow-1
+    elementType: line
+    bounds: [209, 280, 32, 1]
+    viewBox: [32, 1]
+    points: "0,0 32,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: arrow-2
+    elementType: line
+    bounds: [385, 280, 32, 1]
+    viewBox: [32, 1]
+    points: "0,0 32,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: arrow-3
+    elementType: line
+    bounds: [561, 280, 32, 1]
+    viewBox: [32, 1]
+    points: "0,0 32,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: arrow-4
+    elementType: line
+    bounds: [737, 280, 32, 1]
+    viewBox: [32, 1]
+    points: "0,0 32,0"
+    arrow: [null, stealth]
+    border: {style: solid, width: 2, color: "$blue2"}
+  - elementId: lane-1
+    elementType: shape
+    bounds: [54, 140, 155, 280]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: lane-2
+    elementType: shape
+    bounds: [230, 140, 155, 280]
+    shapeName: rect
+    fill: {type: solid, color: "$pale"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: lane-3
+    elementType: shape
+    bounds: [406, 140, 155, 280]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: lane-4
+    elementType: shape
+    bounds: [582, 140, 155, 280]
+    shapeName: rect
+    fill: {type: solid, color: "$pale"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: lane-5
+    elementType: shape
+    bounds: [758, 140, 148, 280]
+    shapeName: rect
+    fill: {type: solid, color: "$soft"}
+    border: {style: solid, width: 1, color: "$line"}
+  - elementId: lane-1-head
+    elementType: text
+    bounds: [66, 156, 130, 26]
+    content: {style: "$label", align: [center, middle], text: "资源与半导体"}
+  - elementId: lane-1-body
+    elementType: text
+    bounds: [68, 199, 127, 188]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>电力 / 绿电</strong></p>
+        <p>土地 · 水 · 资本</p>
+        <p style="margin-top:16px"><strong>EDA / IP</strong></p>
+        <p>设备 · 材料</p>
+        <p>晶圆 · 先进封装</p>
+  - elementId: lane-2-head
+    elementType: text
+    bounds: [242, 156, 130, 26]
+    content: {style: "$label", align: [center, middle], text: "核心器件"}
+  - elementId: lane-2-body
+    elementType: text
+    bounds: [244, 199, 127, 188]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>CPU / GPU / NPU</strong></p>
+        <p>DPU · 交换 ASIC</p>
+        <p style="margin-top:16px"><strong>HBM / DDR / SSD</strong></p>
+        <p>光芯片 · DSP</p>
+        <p>PCB · 覆铜板</p>
+  - elementId: lane-3-head
+    elementType: text
+    bounds: [418, 156, 130, 26]
+    content: {style: "$label", align: [center, middle], text: "系统与设施"}
+  - elementId: lane-3-body
+    elementType: text
+    bounds: [420, 199, 127, 188]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>AI服务器 / 超节点</strong></p>
+        <p>交换机 · 光模块</p>
+        <p>存储系统</p>
+        <p style="margin-top:16px"><strong>UPS / HVDC</strong></p>
+        <p>液冷 · 消防</p>
+  - elementId: lane-4-head
+    elementType: text
+    bounds: [594, 156, 130, 26]
+    content: {style: "$label", align: [center, middle], text: "建设与运营"}
+  - elementId: lane-4-body
+    elementType: text
+    bounds: [596, 199, 127, 188]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>设计 / EPC / 集成</strong></p>
+        <p>IDC · AIDC</p>
+        <p>云 · 算力租赁</p>
+        <p style="margin-top:16px"><strong>算力网络</strong></p>
+        <p>监测 · 调度 · 结算</p>
+  - elementId: lane-5-head
+    elementType: text
+    bounds: [770, 156, 124, 26]
+    content: {style: "$label", align: [center, middle], text: "模型与应用"}
+  - elementId: lane-5-body
+    elementType: text
+    bounds: [772, 199, 120, 188]
+    content:
+      fontSize: 15
+      fontFamily: "Microsoft YaHei"
+      color: "$ink"
+      lineHeight: 1.55
+      text: |
+        <p><strong>基础模型 / MaaS</strong></p>
+        <p>训练 · 推理 · API</p>
+        <p style="margin-top:16px"><strong>行业应用</strong></p>
+        <p>政务 · 金融 · 制造</p>
+        <p>科研 · 汽车 · 机器人</p>
+  - elementId: support-bar
+    elementType: shape
+    bounds: [54, 444, 852, 38]
+    shapeName: rect
+    fill: {type: solid, color: "$navy"}
+  - elementId: support-text
+    elementType: text
+    bounds: [70, 444, 820, 38]
+    content: {fontSize: 14, fontFamily: "Microsoft YaHei", bold: true, color: "#FFFFFF", align: [center, middle], text: "横向支撑：数据 · 安全 · 标准 · 测试评测 · 运维 · 融资与合规"}
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "来源：基于公开产品资料、行业标准与本报告产业链研究归纳；公司仅作产业位置示例。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "05"}

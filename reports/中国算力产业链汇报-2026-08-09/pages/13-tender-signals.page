@@ -1,0 +1,102 @@
+pageType: content
+background: {type: solid, color: "$paper"}
+elements:
+  - elementId: top-bar
+    elementType: shape
+    bounds: [0, 0, 960, 6]
+    shapeName: rect
+    fill: {type: solid, color: "$primary"}
+  - elementId: kicker
+    elementType: text
+    bounds: [54, 20, 260, 16]
+    content: {style: "$kicker", wrap: false, text: "WHAT TENDERS REVEAL"}
+  - elementId: title
+    elementType: text
+    bounds: [54, 42, 850, 47]
+    content: {style: "$slideTitle", wrap: false, text: "采购对象正在升级为算力全栈和持续运营能力"}
+  - elementId: title-rule
+    elementType: shape
+    bounds: [54, 100, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: divider
+    elementType: shape
+    bounds: [488, 130, 1, 342]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: row1-line
+    elementType: shape
+    bounds: [54, 242, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: row2-line
+    elementType: shape
+    bounds: [54, 358, 852, 1]
+    shapeName: rect
+    fill: {type: solid, color: "$line"}
+  - elementId: n1
+    elementType: text
+    bounds: [54, 137, 46, 40]
+    content: {fontSize: 28, fontFamily: "Microsoft YaHei", bold: true, color: "$primary", text: "01"}
+  - elementId: s1
+    elementType: text
+    bounds: [108, 137, 340, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>单台设备 → 全栈交付</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:15px; color:$muted;">协和医院、南方电网将服务器、网络、存储、机柜及运维纳入同一标包。</span></p>
+  - elementId: i1
+    elementType: text
+    bounds: [525, 137, 350, 86]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>研究含义</strong></span></p>
+        <p style="margin-top:8px"><span style="font-size:17px; color:$ink;">系统集成、异构适配和持续运营比单一硬件转售更重要。</span></p>
+  - elementId: n2
+    elementType: text
+    bounds: [54, 257, 46, 40]
+    content: {fontSize: 28, fontFamily: "Microsoft YaHei", bold: true, color: "$primary", text: "02"}
+  - elementId: s2
+    elementType: text
+    bounds: [108, 257, 340, 86]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>GPU扩张 → 电气与热管理</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:15px; color:$muted;">苏州汾湖包含动力、变电和湖水冷却；芜湖单独采购126 MVA变电站。</span></p>
+  - elementId: i2
+    elementType: text
+    bounds: [525, 257, 350, 86]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>研究含义</strong></span></p>
+        <p style="margin-top:8px"><span style="font-size:17px; color:$ink;">供配电、液冷和机电是高密智算的必要条件，不是附属支出。</span></p>
+  - elementId: n3
+    elementType: text
+    bounds: [54, 373, 46, 40]
+    content: {fontSize: 28, fontFamily: "Microsoft YaHei", bold: true, color: "$primary", text: "03"}
+  - elementId: s3
+    elementType: text
+    bounds: [108, 373, 340, 92]
+    content:
+      text: |
+        <p><span style="font-size:20px; color:$navy;"><strong>资产采购 → 年租 / 卡时</strong></span></p>
+        <p style="margin-top:10px"><span style="font-size:15px; color:$muted;">教育部、全总、东风日产分别采购裸金属年租、整包算力和AI/超算服务。</span></p>
+  - elementId: i3
+    elementType: text
+    bounds: [525, 373, 350, 92]
+    content:
+      text: |
+        <p><span style="font-size:13px; color:$primary;"><strong>研究含义</strong></span></p>
+        <p style="margin-top:8px"><span style="font-size:17px; color:$ink;">收入可能更经常性，但必须比较卡型、SLA、期限、网络和税口径。</span></p>
+  - elementId: lower-copy
+    elementType: text
+    bounds: [54, 474, 852, 28]
+    content: {fontSize: 13, fontFamily: "Microsoft YaHei", bold: true, color: "$navy", align: [center, middle], text: "补充信号：国产化进入参数｜算力超市成为软件标的｜连续批次比一次性大单更有信息量"}
+  - elementId: source
+    elementType: text
+    bounds: [54, 507, 822, 20]
+    content: {style: "$source", text: "来源：本报告公开招投标样本归纳；框架入围、候选人和预计数量均不等于实际订单与收入。"}
+  - elementId: page-no
+    elementType: text
+    bounds: [892, 507, 24, 18]
+    content: {style: "$source", align: [right, top], text: "13"}
